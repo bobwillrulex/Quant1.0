@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import os
 import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Sequence, Tuple
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
 
 Row = Dict[str, float]
 FeatureFn = Callable[[Row], float]
+MODEL_DIR = "saved_models"
 
 
 @dataclass
@@ -154,6 +157,32 @@ def accuracy(y_true: Sequence[int], y_prob: Sequence[float], threshold: float = 
     return correct / max(1, len(y_true))
 
 
+def classification_metrics(y_true: Sequence[int], y_prob: Sequence[float], threshold: float = 0.5) -> Dict[str, float]:
+    preds = [1 if p >= threshold else 0 for p in y_prob]
+    tp = sum(1 for a, b in zip(y_true, preds) if a == 1 and b == 1)
+    tn = sum(1 for a, b in zip(y_true, preds) if a == 0 and b == 0)
+    fp = sum(1 for a, b in zip(y_true, preds) if a == 0 and b == 1)
+    fn = sum(1 for a, b in zip(y_true, preds) if a == 1 and b == 0)
+
+    precision = tp / max(1, tp + fp)
+    recall = tp / max(1, tp + fn)
+    f1 = (2.0 * precision * recall) / max(1e-12, precision + recall)
+    return {
+        "accuracy": (tp + tn) / max(1, len(y_true)),
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": float(tp),
+        "tn": float(tn),
+        "fp": float(fp),
+        "fn": float(fn),
+    }
+
+
+def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
+    return sum(abs(a - b) for a, b in zip(y_true, y_pred)) / max(1, len(y_true))
+
+
 def load_csv(path: str) -> List[Row]:
     rows: List[Row] = []
     with open(path, "r", newline="", encoding="utf-8") as f:
@@ -161,11 +190,13 @@ def load_csv(path: str) -> List[Row]:
         for record in reader:
             row: Row = {
                 "stoch_rsi": float(record["stoch_rsi"]),
-                "macd": float(record["macd"]),
                 "macd_hist": float(record["macd_hist"]),
+                "macd_hist_delta": float(record.get("macd_hist_delta", 0.0)),
                 "fvg_green_size": float(record["fvg_green_size"]),
+                "fvg_red_size": float(record.get("fvg_red_size", 0.0)),
                 "fvg_red_above_green": float(record["fvg_red_above_green"]),
                 "first_green_fvg_dip": float(record["first_green_fvg_dip"]),
+                "first_red_fvg_touch": float(record.get("first_red_fvg_touch", 0.0)),
                 "return_next": float(record["return_next"]),
             }
             rows.append(row)
@@ -177,33 +208,42 @@ def synthetic_data(n: int = 1200, seed: int = 42) -> List[Row]:
     rows: List[Row] = []
     for _ in range(n):
         stoch_rsi = random.uniform(0, 100)
-        macd = random.uniform(-2.0, 2.0)
         macd_hist = random.uniform(-1.0, 1.0)
+        macd_hist_delta = random.uniform(-0.4, 0.4)
         fvg_green_size = max(0.0, random.gauss(0.5, 0.6))
+        fvg_red_size = max(0.0, random.gauss(0.45, 0.6))
         fvg_red_above_green = 1.0 if random.random() < 0.35 else 0.0
         first_green_fvg_dip = 1.0 if random.random() < 0.25 else 0.0
+        first_red_fvg_touch = 1.0 if random.random() < 0.23 else 0.0
 
         stoch_extreme = 1.0 if (stoch_rsi > 80 or stoch_rsi < 20) else 0.0
-        macd_weakening = 1.0 if (macd_hist < 0 and macd > 0) or (macd_hist < -0.2) else 0.0
-        macd_improving_red = 1.0 if (macd < 0 and macd_hist > 0) else 0.0
+        macd_green_increasing = 1.0 if (macd_hist > 0 and macd_hist_delta > 0) else 0.0
+        macd_red_recovering = 1.0 if (macd_hist < 0 and macd_hist_delta > 0) else 0.0
+        macd_green_falling = 1.0 if (macd_hist > 0 and macd_hist_delta < 0) else 0.0
+        macd_red_deepening = 1.0 if (macd_hist < 0 and macd_hist_delta < 0) else 0.0
 
         alpha = (
             0.0035 * stoch_extreme
-            - 0.0025 * macd_weakening
-            + 0.0017 * macd_improving_red
+            + 0.0032 * macd_green_increasing
+            + 0.0012 * macd_red_recovering
+            - 0.0025 * macd_green_falling
+            - 0.0040 * macd_red_deepening
             + 0.0030 * first_green_fvg_dip * min(fvg_green_size, 3.0)
             - 0.0020 * fvg_red_above_green * min(fvg_green_size, 3.0)
+            - 0.0030 * first_red_fvg_touch * min(fvg_red_size, 3.0)
             + random.gauss(0, 0.0018)
         )
 
         rows.append(
             {
                 "stoch_rsi": stoch_rsi,
-                "macd": macd,
                 "macd_hist": macd_hist,
+                "macd_hist_delta": macd_hist_delta,
                 "fvg_green_size": fvg_green_size,
+                "fvg_red_size": fvg_red_size,
                 "fvg_red_above_green": fvg_red_above_green,
                 "first_green_fvg_dip": first_green_fvg_dip,
+                "first_red_fvg_touch": first_red_fvg_touch,
                 "return_next": alpha,
             }
         )
@@ -216,17 +256,27 @@ def build_default_strategy_features() -> StrategyFeatureBuilder:
     # 1) Stoch RSI extremes imply setup urgency / likely expansion move.
     builder.add("stoch_extreme", lambda r: 1.0 if (r["stoch_rsi"] > 80 or r["stoch_rsi"] < 20) else 0.0)
 
-    # 2) MACD states: weakening green is a sell pressure, improving red is acceptable.
-    builder.add("macd_green", lambda r: 1.0 if r["macd"] > 0 else 0.0)
-    builder.add("macd_weakening", lambda r: 1.0 if (r["macd"] > 0 and r["macd_hist"] < 0) else 0.0)
-    builder.add("macd_red_improving", lambda r: 1.0 if (r["macd"] < 0 and r["macd_hist"] > 0) else 0.0)
+    # 2) MACD histogram-only regime features (best -> worst):
+    # green increasing > red improving > green fading > red deepening.
+    builder.add("macd_hist", lambda r: r["macd_hist"])
+    builder.add("macd_hist_delta", lambda r: r["macd_hist_delta"])
+    builder.add("macd_green_increasing", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] > 0) else 0.0)
+    builder.add("macd_red_recovering", lambda r: 1.0 if (r["macd_hist"] < 0 and r["macd_hist_delta"] > 0) else 0.0)
+    builder.add("macd_green_fading", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] < 0) else 0.0)
+    builder.add("macd_red_deepening", lambda r: 1.0 if (r["macd_hist"] < 0 and r["macd_hist_delta"] < 0) else 0.0)
 
-    # 3) FVG context and size weighting.
+    # 3) FVG context and size weighting for both green and red gaps.
     builder.add("first_green_fvg_dip", lambda r: r["first_green_fvg_dip"])
-    builder.add("fvg_size", lambda r: min(r["fvg_green_size"], 3.0))
+    builder.add("first_red_fvg_touch", lambda r: r["first_red_fvg_touch"])
+    builder.add("fvg_green_size", lambda r: min(r["fvg_green_size"], 3.0))
+    builder.add("fvg_red_size", lambda r: min(r["fvg_red_size"], 3.0))
     builder.add(
         "fvg_bull_signal",
         lambda r: r["first_green_fvg_dip"] * min(r["fvg_green_size"], 3.0),
+    )
+    builder.add(
+        "fvg_bear_signal",
+        lambda r: r["first_red_fvg_touch"] * min(r["fvg_red_size"], 3.0),
     )
     builder.add(
         "fvg_conflict_penalty",
@@ -258,55 +308,119 @@ def standardize_apply(x: Sequence[Sequence[float]], means: Sequence[float], stds
     return [[(row[j] - means[j]) / stds[j] for j in range(len(row))] for row in x]
 
 
-def run_model(rows: Sequence[Row]) -> None:
-    train_rows, test_rows = train_test_split(rows)
+def ensure_model_dir() -> None:
+    os.makedirs(MODEL_DIR, exist_ok=True)
 
+
+def train_strategy_models(rows: Sequence[Row]) -> Dict[str, object]:
+    train_rows, test_rows = train_test_split(rows)
     features = build_default_strategy_features()
     x_train_raw = features.transform(train_rows)
     x_test_raw = features.transform(test_rows)
-
     x_train, means, stds = standardize_fit(x_train_raw)
     x_test = standardize_apply(x_test_raw, means, stds)
 
     y_train_ret = [r["return_next"] for r in train_rows]
     y_test_ret = [r["return_next"] for r in test_rows]
-
-    lin = LinearRegressionGD(learning_rate=0.03, epochs=3000)
-    lin.fit(x_train, y_train_ret)
-    ret_pred = lin.predict(x_test)
-    ret_mse = mse(y_test_ret, ret_pred)
-
     y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
     y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
 
+    lin = LinearRegressionGD(learning_rate=0.03, epochs=3000)
+    lin.fit(x_train, y_train_ret)
+
     logit = LogisticRegressionGD(learning_rate=0.05, epochs=2500)
     logit.fit(x_train, y_train_dir)
-    up_prob = logit.predict_proba(x_test)
-    acc = accuracy(y_test_dir, up_prob)
 
-    print("=== Strategy Feature Set ===")
-    print(", ".join(features.names()))
+    return {
+        "feature_names": features.names(),
+        "means": means,
+        "stds": stds,
+        "lin_weights": lin.weights,
+        "lin_bias": lin.bias,
+        "logit_weights": logit.weights,
+        "logit_bias": logit.bias,
+        "train_size": len(train_rows),
+        "test_size": len(test_rows),
+        "x_test_raw": x_test_raw,
+        "y_test_ret": y_test_ret,
+        "y_test_dir": y_test_dir,
+    }
 
-    print("\n=== Linear Regression (predict next return) ===")
-    print(f"Test MSE: {ret_mse:.8f}")
-    print("Weights:")
-    for name, w in zip(features.names(), lin.weights):
-        print(f"  {name:>22}: {w:+.6f}")
-    print(f"  {'bias':>22}: {lin.bias:+.6f}")
 
-    print("\n=== Logistic Regression (predict P(up)) ===")
-    print(f"Test Accuracy: {acc:.4f}")
-    print("Weights:")
-    for name, w in zip(features.names(), logit.weights):
-        print(f"  {name:>22}: {w:+.6f}")
-    print(f"  {'bias':>22}: {logit.bias:+.6f}")
+def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[float]], y_test_ret: Sequence[float], y_test_dir: Sequence[int]) -> Dict[str, object]:
+    if not x_test_raw:
+        raise ValueError("No rows available for evaluation.")
+    if len(x_test_raw[0]) != len(bundle["feature_names"]):
+        raise ValueError("Saved model feature size does not match current strategy feature set.")
+    x_test = standardize_apply(x_test_raw, bundle["means"], bundle["stds"])
+    ret_pred = [
+        sum(w * v for w, v in zip(bundle["lin_weights"], row)) + bundle["lin_bias"]
+        for row in x_test
+    ]
+    up_prob = [
+        sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], row)) + bundle["logit_bias"])
+        for row in x_test
+    ]
+    cls = classification_metrics(y_test_dir, up_prob)
 
-    print("\n=== Example Predictions (first 5 test rows) ===")
+    preview = []
     for i in range(min(5, len(x_test))):
-        print(
-            f"Row {i+1}: expected_return={ret_pred[i]:+.4%}, "
-            f"p_up={up_prob[i]:.2%}, actual_return={y_test_ret[i]:+.4%}"
-        )
+        preview.append({"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]})
+
+    return {
+        "features": bundle["feature_names"],
+        "mse": mse(y_test_ret, ret_pred),
+        "mae": mae(y_test_ret, ret_pred),
+        "accuracy": cls["accuracy"],
+        "precision": cls["precision"],
+        "recall": cls["recall"],
+        "f1": cls["f1"],
+        "tp": int(cls["tp"]),
+        "tn": int(cls["tn"]),
+        "fp": int(cls["fp"]),
+        "fn": int(cls["fn"]),
+        "lin_weights": list(zip(bundle["feature_names"], bundle["lin_weights"])),
+        "lin_bias": bundle["lin_bias"],
+        "logit_weights": list(zip(bundle["feature_names"], bundle["logit_weights"])),
+        "logit_bias": bundle["logit_bias"],
+        "preview": preview,
+        "test_size": len(y_test_ret),
+    }
+
+
+def save_model_bundle(model_name: str, bundle: Dict[str, object]) -> str:
+    ensure_model_dir()
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in model_name).strip("_")
+    if not safe_name:
+        raise ValueError("Model name must include letters or numbers.")
+    path = os.path.join(MODEL_DIR, f"{safe_name}.json")
+    payload = {k: bundle[k] for k in ["feature_names", "means", "stds", "lin_weights", "lin_bias", "logit_weights", "logit_bias"]}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return path
+
+
+def list_saved_models() -> List[str]:
+    ensure_model_dir()
+    return sorted([f[:-5] for f in os.listdir(MODEL_DIR) if f.endswith(".json")])
+
+
+def load_model_bundle(model_name: str) -> Dict[str, object]:
+    path = os.path.join(MODEL_DIR, f"{model_name}.json")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def run_model(rows: Sequence[Row]) -> None:
+    bundle = train_strategy_models(rows)
+    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+    print("=== Strategy Feature Set ===")
+    print(", ".join(metrics["features"]))
+    print("\n=== Linear Regression (predict next return) ===")
+    print(f"Test MSE: {metrics['mse']:.8f}")
+    print(f"Test MAE: {metrics['mae']:.8f}")
+    print("\n=== Logistic Regression (predict P(up)) ===")
+    print(f"Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
 
 
 def ema(values: Sequence[float], span: int) -> List[float]:
@@ -351,6 +465,7 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     macd = [a - b for a, b in zip(ema_12, ema_26)]
     signal = ema(macd, 9)
     macd_hist = [m - s for m, s in zip(macd, signal)]
+    macd_hist_delta = [0.0] + [macd_hist[i] - macd_hist[i - 1] for i in range(1, len(macd_hist))]
 
     rows: List[Row] = []
     for i in range(2, n - 1):
@@ -359,11 +474,13 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         rows.append(
             {
                 "stoch_rsi": stoch_rsi[i],
-                "macd": macd[i],
                 "macd_hist": macd_hist[i],
+                "macd_hist_delta": macd_hist_delta[i],
                 "fvg_green_size": bullish_gap,
+                "fvg_red_size": bearish_gap,
                 "fvg_red_above_green": 1.0 if bearish_gap > 0 else 0.0,
                 "first_green_fvg_dip": 1.0 if (bullish_gap > 0 and lows[i + 1] <= highs[i - 2]) else 0.0,
+                "first_red_fvg_touch": 1.0 if (bearish_gap > 0 and highs[i + 1] >= lows[i - 2]) else 0.0,
                 "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
             }
         )
@@ -414,47 +531,10 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
 
 
 def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
-    train_rows, test_rows = train_test_split(rows)
-    features = build_default_strategy_features()
-    x_train_raw = features.transform(train_rows)
-    x_test_raw = features.transform(test_rows)
-    x_train, means, stds = standardize_fit(x_train_raw)
-    x_test = standardize_apply(x_test_raw, means, stds)
-
-    y_train_ret = [r["return_next"] for r in train_rows]
-    y_test_ret = [r["return_next"] for r in test_rows]
-    lin = LinearRegressionGD(learning_rate=0.03, epochs=3000)
-    lin.fit(x_train, y_train_ret)
-    ret_pred = lin.predict(x_test)
-    ret_mse = mse(y_test_ret, ret_pred)
-
-    y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
-    y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
-    logit = LogisticRegressionGD(learning_rate=0.05, epochs=2500)
-    logit.fit(x_train, y_train_dir)
-    up_prob = logit.predict_proba(x_test)
-    acc = accuracy(y_test_dir, up_prob)
-    preview = []
-    for i in range(min(5, len(x_test))):
-        preview.append(
-            {
-                "expected_return": ret_pred[i],
-                "p_up": up_prob[i],
-                "actual_return": y_test_ret[i],
-            }
-        )
-    return {
-        "features": features.names(),
-        "mse": ret_mse,
-        "accuracy": acc,
-        "lin_weights": list(zip(features.names(), lin.weights)),
-        "lin_bias": lin.bias,
-        "logit_weights": list(zip(features.names(), logit.weights)),
-        "logit_bias": logit.bias,
-        "preview": preview,
-        "train_size": len(train_rows),
-        "test_size": len(test_rows),
-    }
+    bundle = train_strategy_models(rows)
+    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+    metrics["train_size"] = bundle["train_size"]
+    return metrics
 
 
 def create_app() -> "Flask":
@@ -469,22 +549,50 @@ def create_app() -> "Flask":
         ticker = request.form.get("ticker", "AAPL").upper().strip()
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
+        model_name = request.form.get("model_name", "").strip()
+        selected_model = request.form.get("selected_model", "__new__")
+        saved_models = list_saved_models()
 
         if request.method == "POST":
             try:
                 row_count = int(rows)
                 dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
-                metrics = run_model_metrics(dataset)
+                if selected_model != "__new__":
+                    loaded = load_model_bundle(selected_model)
+                    features = build_default_strategy_features()
+                    x_raw = features.transform(dataset)
+                    y_ret = [r["return_next"] for r in dataset]
+                    y_dir = [1 if r > 0 else 0 for r in y_ret]
+                    metrics = evaluate_bundle(loaded, x_raw, y_ret, y_dir)
+                    metrics["train_size"] = "saved-model"
+                    metrics["loaded_model"] = selected_model
+                else:
+                    bundle = train_strategy_models(dataset)
+                    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+                    metrics["train_size"] = bundle["train_size"]
+                    if model_name:
+                        save_model_bundle(model_name, bundle)
+                        metrics["saved_model"] = model_name
+                        saved_models = list_saved_models()
 
                 preview_rows = "".join(
                     f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
                     for idx, p in enumerate(metrics["preview"])
                 )
+                model_msg = ""
+                if "saved_model" in metrics:
+                    model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
+                if "loaded_model" in metrics:
+                    model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
                 result_html = f"""
                 <h2>Results for {ticker} ({interval})</h2>
                 <p>Rows used: {row_count} (train={metrics['train_size']}, test={metrics['test_size']})</p>
+                {model_msg}
                 <p><strong>Linear Test MSE:</strong> {metrics['mse']:.8f}</p>
-                <p><strong>Logistic Test Accuracy:</strong> {metrics['accuracy']:.4f}</p>
+                <p><strong>Linear Test MAE:</strong> {metrics['mae']:.8f}</p>
+                <p><strong>Logistic Accuracy:</strong> {metrics['accuracy']:.4f}</p>
+                <p><strong>Precision:</strong> {metrics['precision']:.4f} | <strong>Recall:</strong> {metrics['recall']:.4f} | <strong>F1:</strong> {metrics['f1']:.4f}</p>
+                <p><strong>Confusion Matrix:</strong> TP={metrics['tp']}, FP={metrics['fp']}, TN={metrics['tn']}, FN={metrics['fn']}</p>
                 <h3>Feature Set</h3>
                 <p>{', '.join(metrics['features'])}</p>
                 <h3>Example Predictions</h3>
@@ -519,6 +627,17 @@ def create_app() -> "Flask":
                 <input type="number" min="50" name="rows" value="{rows}" required />
               </label>
               <br/><br/>
+              <label>Saved Model:
+                <select name="selected_model">
+                  <option value="__new__">Train new model</option>
+                  {"".join(f'<option value="{name}" {"selected" if selected_model == name else ""}>{name}</option>' for name in saved_models)}
+                </select>
+              </label>
+              <br/><br/>
+              <label>New Model Name (optional):
+                <input type="text" name="model_name" value="{model_name}" placeholder="momentum_v1" />
+              </label>
+              <br/><br/>
               <button type="submit">Download + Train</button>
             </form>
             {error_html}
@@ -536,7 +655,7 @@ def parse_args() -> argparse.Namespace:
         "--csv",
         type=str,
         default="",
-        help="Optional CSV path with columns: stoch_rsi, macd, macd_hist, fvg_green_size, fvg_red_above_green, first_green_fvg_dip, return_next",
+        help="Optional CSV path with columns: stoch_rsi, macd_hist, macd_hist_delta, fvg_green_size, fvg_red_size, fvg_red_above_green, first_green_fvg_dip, first_red_fvg_touch, return_next",
     )
     parser.add_argument("--ui", action="store_true", help="Run Flask UI.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Flask host when using --ui.")
