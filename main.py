@@ -375,29 +375,42 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
 def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
     import yfinance as yf
 
-    interval_map = {
-        "1d": ("1y", "daily"),
-        "1h": ("730d", "hourly"),
-        "15m": ("60d", "15min"),
-        "5m": ("60d", "5min"),
+    interval_periods = {
+        "1d": ["1y", "5y", "10y", "max"],
+        "1h": ["730d"],
+        "15m": ["60d"],
+        "5m": ["60d"],
     }
-    if interval not in interval_map:
+    if interval not in interval_periods:
         raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
-    period, _ = interval_map[interval]
-    history = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
-    if history.empty:
-        raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
-
-    highs = [float(v) for v in history["High"].tolist()]
-    lows = [float(v) for v in history["Low"].tolist()]
-    closes = [float(v) for v in history["Close"].tolist()]
-    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
-
     if row_count < 50:
         raise ValueError("Please request at least 50 rows.")
-    if row_count > len(rows):
-        raise ValueError(f"Requested {row_count} rows, but only {len(rows)} are available for {ticker} ({interval}).")
-    return rows[-row_count:]
+
+    ticker_obj = yf.Ticker(ticker)
+    rows: List[Row] = []
+    last_non_empty_count = 0
+
+    for period in interval_periods[interval]:
+        history = ticker_obj.history(period=period, interval=interval, auto_adjust=False)
+        if history.empty:
+            continue
+
+        highs = [float(v) for v in history["High"].tolist()]
+        lows = [float(v) for v in history["Low"].tolist()]
+        closes = [float(v) for v in history["Close"].tolist()]
+        rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+        last_non_empty_count = max(last_non_empty_count, len(rows))
+
+        if len(rows) >= row_count:
+            return rows[-row_count:]
+
+    if last_non_empty_count == 0:
+        raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
+
+    raise ValueError(
+        f"Requested {row_count} rows, but only {last_non_empty_count} are available for {ticker} ({interval}). "
+        "Try requesting fewer rows or using a larger timeframe."
+    )
 
 
 def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
