@@ -19,7 +19,10 @@ import csv
 import math
 import random
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Sequence, Tuple
+
+if TYPE_CHECKING:
+    from flask import Flask
 
 
 Row = Dict[str, float]
@@ -306,6 +309,214 @@ def run_model(rows: Sequence[Row]) -> None:
         )
 
 
+def ema(values: Sequence[float], span: int) -> List[float]:
+    if not values:
+        return []
+    alpha = 2.0 / (span + 1.0)
+    result = [values[0]]
+    for i in range(1, len(values)):
+        result.append(alpha * values[i] + (1.0 - alpha) * result[-1])
+    return result
+
+
+def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float]) -> List[Row]:
+    n = len(closes)
+    if n < 40:
+        raise ValueError("Not enough rows to compute indicators. Need at least 40 rows.")
+
+    deltas = [0.0] + [closes[i] - closes[i - 1] for i in range(1, n)]
+    gains = [max(d, 0.0) for d in deltas]
+    losses = [max(-d, 0.0) for d in deltas]
+    avg_gain = ema(gains, 14)
+    avg_loss = ema(losses, 14)
+    rsi: List[float] = []
+    for g, l in zip(avg_gain, avg_loss):
+        rs = g / l if l > 1e-12 else 100.0
+        rsi.append(100.0 - (100.0 / (1.0 + rs)))
+
+    stoch_rsi: List[float] = []
+    lookback = 14
+    for i in range(n):
+        start = max(0, i - lookback + 1)
+        window = rsi[start : i + 1]
+        lo = min(window)
+        hi = max(window)
+        if hi - lo < 1e-12:
+            stoch_rsi.append(50.0)
+        else:
+            stoch_rsi.append(100.0 * ((rsi[i] - lo) / (hi - lo)))
+
+    ema_12 = ema(closes, 12)
+    ema_26 = ema(closes, 26)
+    macd = [a - b for a, b in zip(ema_12, ema_26)]
+    signal = ema(macd, 9)
+    macd_hist = [m - s for m, s in zip(macd, signal)]
+
+    rows: List[Row] = []
+    for i in range(2, n - 1):
+        bullish_gap = max(0.0, lows[i] - highs[i - 2])
+        bearish_gap = max(0.0, lows[i - 2] - highs[i])
+        rows.append(
+            {
+                "stoch_rsi": stoch_rsi[i],
+                "macd": macd[i],
+                "macd_hist": macd_hist[i],
+                "fvg_green_size": bullish_gap,
+                "fvg_red_above_green": 1.0 if bearish_gap > 0 else 0.0,
+                "first_green_fvg_dip": 1.0 if (bullish_gap > 0 and lows[i + 1] <= highs[i - 2]) else 0.0,
+                "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
+            }
+        )
+    if not rows:
+        raise ValueError("Could not build feature rows from downloaded candles.")
+    return rows
+
+
+def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
+    import yfinance as yf
+
+    interval_map = {
+        "1d": ("1y", "daily"),
+        "1h": ("730d", "hourly"),
+        "15m": ("60d", "15min"),
+        "5m": ("60d", "5min"),
+    }
+    if interval not in interval_map:
+        raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
+    period, _ = interval_map[interval]
+    history = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+    if history.empty:
+        raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
+
+    highs = [float(v) for v in history["High"].tolist()]
+    lows = [float(v) for v in history["Low"].tolist()]
+    closes = [float(v) for v in history["Close"].tolist()]
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+
+    if row_count < 50:
+        raise ValueError("Please request at least 50 rows.")
+    if row_count > len(rows):
+        raise ValueError(f"Requested {row_count} rows, but only {len(rows)} are available for {ticker} ({interval}).")
+    return rows[-row_count:]
+
+
+def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
+    train_rows, test_rows = train_test_split(rows)
+    features = build_default_strategy_features()
+    x_train_raw = features.transform(train_rows)
+    x_test_raw = features.transform(test_rows)
+    x_train, means, stds = standardize_fit(x_train_raw)
+    x_test = standardize_apply(x_test_raw, means, stds)
+
+    y_train_ret = [r["return_next"] for r in train_rows]
+    y_test_ret = [r["return_next"] for r in test_rows]
+    lin = LinearRegressionGD(learning_rate=0.03, epochs=3000)
+    lin.fit(x_train, y_train_ret)
+    ret_pred = lin.predict(x_test)
+    ret_mse = mse(y_test_ret, ret_pred)
+
+    y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
+    y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+    logit = LogisticRegressionGD(learning_rate=0.05, epochs=2500)
+    logit.fit(x_train, y_train_dir)
+    up_prob = logit.predict_proba(x_test)
+    acc = accuracy(y_test_dir, up_prob)
+    preview = []
+    for i in range(min(5, len(x_test))):
+        preview.append(
+            {
+                "expected_return": ret_pred[i],
+                "p_up": up_prob[i],
+                "actual_return": y_test_ret[i],
+            }
+        )
+    return {
+        "features": features.names(),
+        "mse": ret_mse,
+        "accuracy": acc,
+        "lin_weights": list(zip(features.names(), lin.weights)),
+        "lin_bias": lin.bias,
+        "logit_weights": list(zip(features.names(), logit.weights)),
+        "logit_bias": logit.bias,
+        "preview": preview,
+        "train_size": len(train_rows),
+        "test_size": len(test_rows),
+    }
+
+
+def create_app() -> "Flask":
+    from flask import Flask, request
+
+    app = Flask(__name__)
+
+    @app.route("/", methods=["GET", "POST"])
+    def index() -> str:
+        result_html = ""
+        error_html = ""
+        ticker = request.form.get("ticker", "AAPL").upper().strip()
+        interval = request.form.get("interval", "1d")
+        rows = request.form.get("rows", "250")
+
+        if request.method == "POST":
+            try:
+                row_count = int(rows)
+                dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                metrics = run_model_metrics(dataset)
+
+                preview_rows = "".join(
+                    f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
+                    for idx, p in enumerate(metrics["preview"])
+                )
+                result_html = f"""
+                <h2>Results for {ticker} ({interval})</h2>
+                <p>Rows used: {row_count} (train={metrics['train_size']}, test={metrics['test_size']})</p>
+                <p><strong>Linear Test MSE:</strong> {metrics['mse']:.8f}</p>
+                <p><strong>Logistic Test Accuracy:</strong> {metrics['accuracy']:.4f}</p>
+                <h3>Feature Set</h3>
+                <p>{', '.join(metrics['features'])}</p>
+                <h3>Example Predictions</h3>
+                <table border="1" cellpadding="6">
+                  <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
+                  {preview_rows}
+                </table>
+                """
+            except Exception as exc:
+                error_html = f"<p style='color:red;'><strong>Error:</strong> {exc}</p>"
+
+        return f"""
+        <html>
+          <head><title>Quant Model Trainer</title></head>
+          <body style="font-family: Arial, sans-serif; margin: 2rem;">
+            <h1>Train Quant Model from Yahoo Data</h1>
+            <form method="post">
+              <label>Ticker:
+                <input type="text" name="ticker" value="{ticker}" required />
+              </label>
+              <br/><br/>
+              <label>Interval:
+                <select name="interval">
+                  <option value="1d" {"selected" if interval == "1d" else ""}>Daily</option>
+                  <option value="1h" {"selected" if interval == "1h" else ""}>Hourly</option>
+                  <option value="15m" {"selected" if interval == "15m" else ""}>15 min</option>
+                  <option value="5m" {"selected" if interval == "5m" else ""}>5 min</option>
+                </select>
+              </label>
+              <br/><br/>
+              <label>Rows:
+                <input type="number" min="50" name="rows" value="{rows}" required />
+              </label>
+              <br/><br/>
+              <button type="submit">Download + Train</button>
+            </form>
+            {error_html}
+            {result_html}
+          </body>
+        </html>
+        """
+
+    return app
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run quant strategy model with custom features.")
     parser.add_argument(
@@ -314,11 +525,18 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional CSV path with columns: stoch_rsi, macd, macd_hist, fvg_green_size, fvg_red_above_green, first_green_fvg_dip, return_next",
     )
+    parser.add_argument("--ui", action="store_true", help="Run Flask UI.")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Flask host when using --ui.")
+    parser.add_argument("--port", type=int, default=5000, help="Flask port when using --ui.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.ui:
+        app = create_app()
+        app.run(host=args.host, port=args.port, debug=False)
+        return
 
     if args.csv:
         rows = load_csv(args.csv)
