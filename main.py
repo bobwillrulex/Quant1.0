@@ -624,11 +624,15 @@ def create_app() -> "Flask":
                         ticker = tickers[0]
                     if len(tickers) == 1:
                         dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
-                        rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
-                        train_rows, test_rows = train_test_split(dataset, split_style=split_style)
                         features = build_default_strategy_features()
-                        x_test_raw = features.transform(test_rows)
-                        y_test_ret = [r["return_next"] for r in test_rows]
+                        if train_action == "evaluate":
+                            rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for evaluation."
+                            eval_rows = dataset
+                        else:
+                            rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
+                            _, eval_rows = train_test_split(dataset, split_style=split_style)
+                        x_test_raw = features.transform(eval_rows)
+                        y_test_ret = [r["return_next"] for r in eval_rows]
                         y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                         if selected_model != "__new__":
                             loaded = load_model_bundle(mode_key, selected_model)
