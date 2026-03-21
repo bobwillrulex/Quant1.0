@@ -21,7 +21,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Sequence, Tuple
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -67,7 +67,7 @@ def sigmoid(x: float) -> float:
 
 
 class LinearRegressionGD:
-    def __init__(self, learning_rate: float = 0.01, epochs: int = 2000) -> None:
+    def __init__(self, learning_rate: float = 0.01, epochs: int = 800) -> None:
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.weights: List[float] = []
@@ -103,7 +103,7 @@ class LinearRegressionGD:
 
 
 class LogisticRegressionGD:
-    def __init__(self, learning_rate: float = 0.05, epochs: int = 2000) -> None:
+    def __init__(self, learning_rate: float = 0.05, epochs: int = 700) -> None:
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.weights: List[float] = []
@@ -177,6 +177,14 @@ def classification_metrics(y_true: Sequence[int], y_prob: Sequence[float], thres
         "fp": float(fp),
         "fn": float(fn),
     }
+
+
+def stddev(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    mu = sum(values) / len(values)
+    var = sum((v - mu) ** 2 for v in values) / len(values)
+    return math.sqrt(var)
 
 
 def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
@@ -325,10 +333,10 @@ def train_strategy_models(rows: Sequence[Row]) -> Dict[str, object]:
     y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
     y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
 
-    lin = LinearRegressionGD(learning_rate=0.03, epochs=3000)
+    lin = LinearRegressionGD(learning_rate=0.03, epochs=800)
     lin.fit(x_train, y_train_ret)
 
-    logit = LogisticRegressionGD(learning_rate=0.05, epochs=2500)
+    logit = LogisticRegressionGD(learning_rate=0.05, epochs=700)
     logit.fit(x_train, y_train_dir)
 
     return {
@@ -347,7 +355,13 @@ def train_strategy_models(rows: Sequence[Row]) -> Dict[str, object]:
     }
 
 
-def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[float]], y_test_ret: Sequence[float], y_test_dir: Sequence[int]) -> Dict[str, object]:
+def evaluate_bundle(
+    bundle: Dict[str, object],
+    x_test_raw: Sequence[Sequence[float]],
+    y_test_ret: Sequence[float],
+    y_test_dir: Sequence[int],
+    eval_rows: Sequence[Row] | None = None,
+) -> Dict[str, object]:
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
     if len(x_test_raw[0]) != len(bundle["feature_names"]):
@@ -362,6 +376,16 @@ def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[flo
         for row in x_test
     ]
     cls = classification_metrics(y_test_dir, up_prob)
+    baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
+    baseline_zero = [0.0] * len(y_test_ret)
+    calibration = calibration_buckets(y_test_dir, up_prob)
+    confidence_edges = confidence_edge_analysis(y_test_dir, up_prob)
+    strategy = strategy_metrics(y_test_ret, up_prob, long_threshold=0.6, short_threshold=0.4, trade_cost=0.0005)
+    pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
+    pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
+    walk_forward = walk_forward_validation_rows(rows=eval_rows, max_windows=4) if eval_rows else []
+    ablation = feature_ablation_analysis(eval_rows, bundle["feature_names"]) if eval_rows else []
+    errors = error_analysis(y_test_ret, up_prob, ret_pred, top_n=5)
 
     preview = []
     for i in range(min(5, len(x_test))):
@@ -372,9 +396,15 @@ def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[flo
         "mse": mse(y_test_ret, ret_pred),
         "mae": mae(y_test_ret, ret_pred),
         "accuracy": cls["accuracy"],
+        "baseline_always_up_accuracy": baseline_up_accuracy,
+        "accuracy_vs_baseline": cls["accuracy"] - baseline_up_accuracy,
         "precision": cls["precision"],
         "recall": cls["recall"],
         "f1": cls["f1"],
+        "baseline_zero_mse": mse(y_test_ret, baseline_zero),
+        "baseline_zero_mae": mae(y_test_ret, baseline_zero),
+        "mse_vs_zero_baseline": mse(y_test_ret, baseline_zero) - mse(y_test_ret, ret_pred),
+        "mae_vs_zero_baseline": mae(y_test_ret, baseline_zero) - mae(y_test_ret, ret_pred),
         "tp": int(cls["tp"]),
         "tn": int(cls["tn"]),
         "fp": int(cls["fp"]),
@@ -385,7 +415,280 @@ def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[flo
         "logit_bias": bundle["logit_bias"],
         "preview": preview,
         "test_size": len(y_test_ret),
+        "calibration": calibration,
+        "confidence_edge": confidence_edges,
+        "strategy": strategy,
+        "pnl_by_signal_strength": pnl_by_signal,
+        "pnl_by_regime": pnl_by_regime,
+        "walk_forward": walk_forward,
+        "feature_ablation": ablation,
+        "error_analysis": errors,
     }
+
+
+def calibration_buckets(y_true: Sequence[int], y_prob: Sequence[float], bucket_size: float = 0.05) -> List[Dict[str, float]]:
+    bins: Dict[Tuple[float, float], List[int]] = {}
+    prob_bins: Dict[Tuple[float, float], List[float]] = {}
+    steps = int(1.0 / bucket_size)
+    for i in range(steps):
+        lo = i * bucket_size
+        hi = (i + 1) * bucket_size
+        bins[(lo, hi)] = []
+        prob_bins[(lo, hi)] = []
+    for actual, p in zip(y_true, y_prob):
+        idx = min(steps - 1, int(p / bucket_size))
+        lo = idx * bucket_size
+        hi = (idx + 1) * bucket_size
+        bins[(lo, hi)].append(int(actual))
+        prob_bins[(lo, hi)].append(float(p))
+    result: List[Dict[str, float]] = []
+    for (lo, hi), values in bins.items():
+        if not values:
+            continue
+        probs = prob_bins[(lo, hi)]
+        result.append(
+            {
+                "bucket_low": lo,
+                "bucket_high": hi,
+                "count": float(len(values)),
+                "predicted_mean": sum(probs) / len(probs),
+                "actual_win_rate": sum(values) / len(values),
+            }
+        )
+    return result
+
+
+def confidence_edge_analysis(y_true: Sequence[int], y_prob: Sequence[float]) -> Dict[str, Dict[str, float]]:
+    out: Dict[str, Dict[str, float]] = {}
+    for threshold in [0.6, 0.7]:
+        preds = [(a, p) for a, p in zip(y_true, y_prob) if p > threshold]
+        if preds:
+            acc = sum(1 for a, _ in preds if a == 1) / len(preds)
+            out[f"p_gt_{threshold:.1f}"] = {"count": float(len(preds)), "accuracy": acc}
+        else:
+            out[f"p_gt_{threshold:.1f}"] = {"count": 0.0, "accuracy": 0.0}
+    return out
+
+
+def strategy_metrics(
+    returns: Sequence[float],
+    probs: Sequence[float],
+    long_threshold: float = 0.6,
+    short_threshold: float = 0.4,
+    trade_cost: float = 0.0005,
+) -> Dict[str, float]:
+    positions: List[int] = []
+    for p in probs:
+        if p > long_threshold:
+            positions.append(1)
+        elif p < short_threshold:
+            positions.append(-1)
+        else:
+            positions.append(0)
+
+    pnl: List[float] = []
+    prev_pos = 0
+    wins = 0
+    trades = 0
+    for pos, ret in zip(positions, returns):
+        turnover = abs(pos - prev_pos)
+        cost = turnover * trade_cost
+        day_pnl = pos * ret - cost
+        pnl.append(day_pnl)
+        if pos != 0:
+            trades += 1
+            if day_pnl > 0:
+                wins += 1
+        prev_pos = pos
+    equity = 1.0
+    peak = 1.0
+    max_drawdown = 0.0
+    for r in pnl:
+        equity *= (1.0 + r)
+        peak = max(peak, equity)
+        dd = (peak - equity) / peak if peak > 0 else 0.0
+        max_drawdown = max(max_drawdown, dd)
+
+    sharpe = 0.0
+    sd = stddev(pnl)
+    if sd > 1e-12:
+        sharpe = (sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)
+    return {
+        "long_threshold": long_threshold,
+        "short_threshold": short_threshold,
+        "trade_cost": trade_cost,
+        "total_return": equity - 1.0,
+        "sharpe": sharpe,
+        "max_drawdown": max_drawdown,
+        "win_rate": (wins / trades) if trades else 0.0,
+        "trade_count": float(trades),
+    }
+
+
+def pnl_signal_strength_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005) -> List[Dict[str, float]]:
+    buckets = {
+        "weak_0.50_0.55": (0.50, 0.55),
+        "medium_0.55_0.65": (0.55, 0.65),
+        "strong_0.65_1.00": (0.65, 1.00),
+    }
+    out: List[Dict[str, float]] = []
+    for name, (lo, hi) in buckets.items():
+        pnl = []
+        for p, r in zip(probs, returns):
+            confidence = max(p, 1.0 - p)
+            if lo <= confidence < hi:
+                pos = 1 if p >= 0.5 else -1
+                pnl.append(pos * r - trade_cost)
+        if pnl:
+            out.append({"bucket": name, "count": float(len(pnl)), "avg_pnl": sum(pnl) / len(pnl), "total_pnl": sum(pnl)})
+    return out
+
+
+def pnl_market_regime_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005) -> List[Dict[str, float]]:
+    out = {"trending": [], "sideways": [], "high_volatility": []}
+    window = 20
+    for i in range(len(returns)):
+        start = max(0, i - window + 1)
+        r_win = returns[start : i + 1]
+        trend = abs(sum(r_win) / max(1, len(r_win)))
+        vol = stddev(r_win)
+        p = probs[i]
+        pos = 1 if p > 0.6 else (-1 if p < 0.4 else 0)
+        pnl = pos * returns[i] - (trade_cost if pos != 0 else 0.0)
+        if vol > 0.02:
+            out["high_volatility"].append(pnl)
+        elif trend > 0.002:
+            out["trending"].append(pnl)
+        else:
+            out["sideways"].append(pnl)
+    result: List[Dict[str, float]] = []
+    for regime, pnl_list in out.items():
+        if pnl_list:
+            result.append(
+                {
+                    "regime": regime,
+                    "count": float(len(pnl_list)),
+                    "avg_pnl": sum(pnl_list) / len(pnl_list),
+                    "total_pnl": sum(pnl_list),
+                }
+            )
+    return result
+
+
+def walk_forward_validation_rows(rows: Sequence[Row], max_windows: int = 4) -> List[Dict[str, float]]:
+    if len(rows) < 120:
+        return []
+    features = build_default_strategy_features()
+    chunk = len(rows) // (max_windows + 2)
+    results: List[Dict[str, float]] = []
+    for idx in range(max_windows):
+        train_end = chunk * (idx + 2)
+        test_end = min(len(rows), train_end + chunk)
+        train_rows = rows[:train_end]
+        test_rows = rows[train_end:test_end]
+        if len(test_rows) < 20:
+            continue
+        x_train_raw = features.transform(train_rows)
+        x_test_raw = features.transform(test_rows)
+        x_train, means, stds = standardize_fit(x_train_raw)
+        x_test = standardize_apply(x_test_raw, means, stds)
+        y_train_ret = [r["return_next"] for r in train_rows]
+        y_test_ret = [r["return_next"] for r in test_rows]
+        y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
+        y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+
+        lin = LinearRegressionGD(learning_rate=0.03, epochs=800)
+        lin.fit(x_train, y_train_ret)
+        logit = LogisticRegressionGD(learning_rate=0.05, epochs=700)
+        logit.fit(x_train, y_train_dir)
+        ret_pred = lin.predict(x_test)
+        up_prob = logit.predict_proba(x_test)
+        results.append(
+            {
+                "window": float(idx + 1),
+                "train_size": float(len(train_rows)),
+                "test_size": float(len(test_rows)),
+                "accuracy": accuracy(y_test_dir, up_prob),
+                "mse": mse(y_test_ret, ret_pred),
+            }
+        )
+    return results
+
+
+def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str]) -> List[Dict[str, float]]:
+    if len(rows) < 100:
+        return []
+    if len(rows) > 600:
+        rows = list(rows)[-600:]
+    train_rows, test_rows = train_test_split(rows)
+    features = build_default_strategy_features()
+    x_train_raw_full = features.transform(train_rows)
+    x_test_raw_full = features.transform(test_rows)
+    x_train_full, means_full, stds_full = standardize_fit(x_train_raw_full)
+    x_test_full = standardize_apply(x_test_raw_full, means_full, stds_full)
+    y_train_ret = [r["return_next"] for r in train_rows]
+    y_test_ret = [r["return_next"] for r in test_rows]
+    y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
+    y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+
+    lin_full = LinearRegressionGD(learning_rate=0.03, epochs=800)
+    lin_full.fit(x_train_full, y_train_ret)
+    logit_full = LogisticRegressionGD(learning_rate=0.05, epochs=700)
+    logit_full.fit(x_train_full, y_train_dir)
+    full_ret_pred = lin_full.predict(x_test_full)
+    full_prob = logit_full.predict_proba(x_test_full)
+    full_accuracy = accuracy(y_test_dir, full_prob)
+    full_mse = mse(y_test_ret, full_ret_pred)
+
+    out: List[Dict[str, float]] = []
+    for removed in feature_names:
+        builder = StrategyFeatureBuilder()
+        default_builder = build_default_strategy_features()
+        for feature in default_builder._features:
+            if feature.name != removed:
+                builder.add(feature.name, feature.fn)
+
+        train_rows, test_rows = train_test_split(rows)
+        x_train_raw = builder.transform(train_rows)
+        x_test_raw = builder.transform(test_rows)
+        x_train, means, stds = standardize_fit(x_train_raw)
+        x_test = standardize_apply(x_test_raw, means, stds)
+        y_train_ret_loop = [r["return_next"] for r in train_rows]
+        y_test_ret_loop = [r["return_next"] for r in test_rows]
+        y_train_dir_loop = [1 if r > 0 else 0 for r in y_train_ret_loop]
+        y_test_dir_loop = [1 if r > 0 else 0 for r in y_test_ret_loop]
+        lin = LinearRegressionGD(learning_rate=0.03, epochs=800)
+        lin.fit(x_train, y_train_ret_loop)
+        logit = LogisticRegressionGD(learning_rate=0.05, epochs=700)
+        logit.fit(x_train, y_train_dir_loop)
+
+        ret_pred = lin.predict(x_test)
+        up_prob = logit.predict_proba(x_test)
+        out.append(
+            {
+                "removed_feature": removed,
+                "accuracy_delta": accuracy(y_test_dir_loop, up_prob) - full_accuracy,
+                "mse_delta": mse(y_test_ret_loop, ret_pred) - full_mse,
+            }
+        )
+    return out
+
+
+def error_analysis(y_test_ret: Sequence[float], up_prob: Sequence[float], ret_pred: Sequence[float], top_n: int = 5) -> Dict[str, List[Dict[str, float]]]:
+    largest_errors = sorted(
+        [{"index": float(i), "abs_error": abs(y_test_ret[i] - ret_pred[i]), "actual_return": y_test_ret[i], "pred_return": ret_pred[i]} for i in range(len(y_test_ret))],
+        key=lambda x: x["abs_error"],
+        reverse=True,
+    )[:top_n]
+    high_conf_wrong = []
+    for i, (ret, p) in enumerate(zip(y_test_ret, up_prob)):
+        actual_up = 1 if ret > 0 else 0
+        pred_up = 1 if p >= 0.5 else 0
+        confidence = max(p, 1.0 - p)
+        if actual_up != pred_up and confidence >= 0.7:
+            high_conf_wrong.append({"index": float(i), "p_up": p, "actual_return": ret, "confidence": confidence})
+    high_conf_wrong = sorted(high_conf_wrong, key=lambda x: x["confidence"], reverse=True)[:top_n]
+    return {"largest_return_errors": largest_errors, "high_confidence_wrong_calls": high_conf_wrong}
 
 
 def save_model_bundle(model_name: str, bundle: Dict[str, object]) -> str:
@@ -413,7 +716,7 @@ def load_model_bundle(model_name: str) -> Dict[str, object]:
 
 def run_model(rows: Sequence[Row]) -> None:
     bundle = train_strategy_models(rows)
-    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=rows)
     print("=== Strategy Feature Set ===")
     print(", ".join(metrics["features"]))
     print("\n=== Linear Regression (predict next return) ===")
@@ -421,6 +724,15 @@ def run_model(rows: Sequence[Row]) -> None:
     print(f"Test MAE: {metrics['mae']:.8f}")
     print("\n=== Logistic Regression (predict P(up)) ===")
     print(f"Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
+    print(f"Always-UP baseline accuracy: {metrics['baseline_always_up_accuracy']:.4f} (edge: {metrics['accuracy_vs_baseline']:+.4f})")
+    print(f"Zero-return baseline MSE/MAE: {metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}")
+    print(f"Model improvement vs zero baseline (MSE/MAE): {metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}")
+    strat = metrics["strategy"]
+    print("\n=== Decision Strategy (long > 0.60, short < 0.40) ===")
+    print(
+        f"Total Return: {strat['total_return']:+.2%}, Sharpe: {strat['sharpe']:.3f}, "
+        f"Max Drawdown: {strat['max_drawdown']:.2%}, Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
+    )
 
 
 def ema(values: Sequence[float], span: int) -> List[float]:
@@ -532,7 +844,7 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
 
 def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
     bundle = train_strategy_models(rows)
-    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=rows)
     metrics["train_size"] = bundle["train_size"]
     return metrics
 
@@ -563,12 +875,12 @@ def create_app() -> "Flask":
                     x_raw = features.transform(dataset)
                     y_ret = [r["return_next"] for r in dataset]
                     y_dir = [1 if r > 0 else 0 for r in y_ret]
-                    metrics = evaluate_bundle(loaded, x_raw, y_ret, y_dir)
+                    metrics = evaluate_bundle(loaded, x_raw, y_ret, y_dir, eval_rows=dataset)
                     metrics["train_size"] = "saved-model"
                     metrics["loaded_model"] = selected_model
                 else:
                     bundle = train_strategy_models(dataset)
-                    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"])
+                    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=dataset)
                     metrics["train_size"] = bundle["train_size"]
                     if model_name:
                         save_model_bundle(model_name, bundle)
@@ -596,11 +908,34 @@ def create_app() -> "Flask":
                 {model_msg}
                 <p><strong>Linear Test MSE:</strong> {metrics['mse']:.8f}</p>
                 <p><strong>Linear Test MAE:</strong> {metrics['mae']:.8f}</p>
+                <p><strong>Zero-return baseline MSE/MAE:</strong> {metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
+                <p><strong>Model edge vs zero baseline (MSE/MAE):</strong> {metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
                 <p><strong>Logistic Accuracy:</strong> {metrics['accuracy']:.4f}</p>
+                <p><strong>Always-UP baseline accuracy:</strong> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
                 <p><strong>Precision:</strong> {metrics['precision']:.4f} | <strong>Recall:</strong> {metrics['recall']:.4f} | <strong>F1:</strong> {metrics['f1']:.4f}</p>
                 <p><strong>Confusion Matrix:</strong> TP={metrics['tp']}, FP={metrics['fp']}, TN={metrics['tn']}, FN={metrics['fn']}</p>
+                <h3>Decision Strategy (Long if P&gt;0.6, Short if P&lt;0.4, Cost=0.05%)</h3>
+                <p><strong>Total Return:</strong> {metrics['strategy']['total_return']:+.2%} |
+                   <strong>Sharpe:</strong> {metrics['strategy']['sharpe']:.3f} |
+                   <strong>Max Drawdown:</strong> {metrics['strategy']['max_drawdown']:.2%} |
+                   <strong>Win Rate:</strong> {metrics['strategy']['win_rate']:.2%} |
+                   <strong>Trades:</strong> {int(metrics['strategy']['trade_count'])}</p>
                 <h3>Feature Set</h3>
                 <p>{', '.join(metrics['features'])}</p>
+                <h3>Calibration Buckets</h3>
+                <pre>{json.dumps(metrics['calibration'], indent=2)}</pre>
+                <h3>Confidence Edge</h3>
+                <pre>{json.dumps(metrics['confidence_edge'], indent=2)}</pre>
+                <h3>PnL by Signal Strength</h3>
+                <pre>{json.dumps(metrics['pnl_by_signal_strength'], indent=2)}</pre>
+                <h3>PnL by Market Regime</h3>
+                <pre>{json.dumps(metrics['pnl_by_regime'], indent=2)}</pre>
+                <h3>Walk-forward Validation</h3>
+                <pre>{json.dumps(metrics['walk_forward'], indent=2)}</pre>
+                <h3>Feature Ablation</h3>
+                <pre>{json.dumps(metrics['feature_ablation'], indent=2)}</pre>
+                <h3>Error Analysis</h3>
+                <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
                 <h3>Linear Model Weights</h3>
                 <p><strong>Bias:</strong> {metrics['lin_bias']:+.6f}</p>
                 <table border="1" cellpadding="6">
