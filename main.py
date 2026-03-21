@@ -775,6 +775,8 @@ def create_app() -> "Flask":
                           <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
                           <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
                           <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
+                          <p><span class="muted">Average Gain per Trade</span> {metrics['strategy']['avg_gain_per_trade']:+.4%}</p>
+                          <p><span class="muted">Max Loss per Trade</span> {metrics['strategy']['max_loss_per_trade']:+.4%}</p>
                           <div style="margin-top:0.55rem;">
                             <p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>
                             {hold_time_boxplot}
