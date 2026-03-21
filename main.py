@@ -934,6 +934,47 @@ def predict_signal(bundle: Dict[str, object], row: Row) -> Dict[str, float | str
     return {"expected_return": expected_return, "p_up": p_up, "action": action}
 
 
+def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dict[str, object]]) -> str:
+    run_all_rows = ""
+    for model_name in saved_models:
+        cfg = get_model_config(model_name, model_configs)
+        if not cfg.get("include_in_run_all", True):
+            continue
+        try:
+            dataset = fetch_yahoo_rows(
+                ticker=str(cfg.get("ticker", "AAPL")),
+                interval=str(cfg.get("interval", "1d")),
+                row_count=int(cfg.get("rows", 250)),
+            )
+            latest_row = dataset[-1]
+            bundle = load_model_bundle(model_name)
+            prediction = predict_signal(bundle, latest_row)
+            run_all_rows += (
+                "<tr>"
+                f"<td>{model_name}</td>"
+                f"<td>{cfg.get('ticker')}</td>"
+                f"<td>{cfg.get('interval')}</td>"
+                f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{prediction['expected_return']:+.4%}</td>"
+                f"<td>{prediction['p_up']:.2%}</td>"
+                f"<td><strong>{prediction['action']}</strong></td>"
+                "</tr>"
+            )
+        except Exception as exc:
+            run_all_rows += (
+                "<tr>"
+                f"<td>{model_name}</td>"
+                f"<td>{cfg.get('ticker')}</td>"
+                f"<td>{cfg.get('interval')}</td>"
+                f"<td>{int(cfg.get('rows', 250))}</td>"
+                "<td colspan='3' style='color:#ff7b7b;'>"
+                f"Run failed: {exc}"
+                "</td>"
+                "</tr>"
+            )
+    return run_all_rows
+
+
 def create_app() -> "Flask":
     from flask import Flask, redirect, request, url_for
 
@@ -943,7 +984,6 @@ def create_app() -> "Flask":
     def manage_models() -> str:
         message_html = ""
         error_html = ""
-        run_all_requested = request.method == "GET"
         model_configs = load_model_configs()
         saved_models = list_saved_models()
         model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
@@ -972,8 +1012,6 @@ def create_app() -> "Flask":
                     }
                     save_model_configs(model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
-                elif action == "run_all":
-                    run_all_requested = True
                 elif action == "rename_model":
                     new_name = sanitize_model_name(request.form.get("new_name", "").strip())
                     if model_name not in saved_models:
@@ -1004,45 +1042,6 @@ def create_app() -> "Flask":
             saved_models = list_saved_models()
             model_configs = load_model_configs()
             model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
-
-        run_all_rows = ""
-        if run_all_requested:
-            for model_name in saved_models:
-                cfg = get_model_config(model_name, model_configs)
-                if not cfg.get("include_in_run_all", True):
-                    continue
-                try:
-                    dataset = fetch_yahoo_rows(
-                        ticker=str(cfg.get("ticker", "AAPL")),
-                        interval=str(cfg.get("interval", "1d")),
-                        row_count=int(cfg.get("rows", 250)),
-                    )
-                    latest_row = dataset[-1]
-                    bundle = load_model_bundle(model_name)
-                    prediction = predict_signal(bundle, latest_row)
-                    run_all_rows += (
-                        "<tr>"
-                        f"<td>{model_name}</td>"
-                        f"<td>{cfg.get('ticker')}</td>"
-                        f"<td>{cfg.get('interval')}</td>"
-                        f"<td>{int(cfg.get('rows', 250))}</td>"
-                        f"<td>{prediction['expected_return']:+.4%}</td>"
-                        f"<td>{prediction['p_up']:.2%}</td>"
-                        f"<td><strong>{prediction['action']}</strong></td>"
-                        "</tr>"
-                    )
-                except Exception as exc:
-                    run_all_rows += (
-                        "<tr>"
-                        f"<td>{model_name}</td>"
-                        f"<td>{cfg.get('ticker')}</td>"
-                        f"<td>{cfg.get('interval')}</td>"
-                        f"<td>{int(cfg.get('rows', 250))}</td>"
-                        "<td colspan='3' style='color:#ff7b7b;'>"
-                        f"Run failed: {exc}"
-                        "</td>"
-                        "</tr>"
-                    )
 
         model_cards = ""
         for model_name in saved_models:
@@ -1078,6 +1077,11 @@ def create_app() -> "Flask":
               * {{ box-sizing: border-box; }}
               body {{ margin: 0; background: radial-gradient(circle at top, #101425 0%, var(--bg) 50%); color: var(--text); font-family: Inter, Segoe UI, Arial, sans-serif; }}
               .container {{ max-width: 1100px; margin: 0 auto; padding: 2rem; }}
+              .topbar {{ position: sticky; top: 0; z-index: 50; background: rgba(10, 10, 15, 0.92); border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }}
+              .topbar-inner {{ max-width: 1100px; margin: 0 auto; padding: 0.9rem 2rem; display: flex; align-items: center; gap: 1rem; }}
+              .brand {{ font-weight: 700; color: #d8e6ff; text-decoration: none; margin-right: auto; }}
+              .tab-link {{ color: #9fb9ea; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
+              .tab-link:hover, .tab-link.active {{ color: #e6f0ff; border-color: var(--border); background: #121827; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
               .model-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }}
@@ -1102,9 +1106,16 @@ def create_app() -> "Flask":
               .primary {{ background: var(--accent); color: #081121; }}
               .secondary {{ background: #2c3555; color: #e8ecff; }}
             </style>
+            <nav class="topbar">
+              <div class="topbar-inner">
+                <a href="/" class="brand">Quant Trader</a>
+                <a href="/" class="tab-link">Model</a>
+                <a href="/manage-models" class="tab-link active">Manage Models</a>
+                <a href="/#present-mode" class="tab-link">Present Mode</a>
+              </div>
+            </nav>
             <div class="container">
               <h1>Manage Models</h1>
-              <a class="btn-link" href="/">← Back to Trainer</a>
               <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, include in Run All). Right-click a model for rename/delete.</p>
               {message_html}
               {error_html}
@@ -1113,18 +1124,6 @@ def create_app() -> "Flask":
                 <div class="model-grid">
                   {model_cards if model_cards else "<p class='muted'>No saved models yet. Train and save one from the main page.</p>"}
                 </div>
-              </div>
-              <div class="card">
-                <h2>Run All Present Models</h2>
-                <p class="muted">Outputs Expected Return (next candle), P(Up), and Action for each model that is included in Run All.</p>
-                <form method="post" style="margin-bottom:0.8rem;">
-                  <input type="hidden" name="action" value="run_all" />
-                  <button type="submit" style="border:none;border-radius:10px;padding:0.62rem 0.85rem;background:#66a3ff;color:#081121;font-weight:600;cursor:pointer;">Run All Present Models</button>
-                </form>
-                <table>
-                  <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
-                  {run_all_rows if run_all_rows else "<tr><td colspan='7' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
-                </table>
               </div>
             </div>
 
@@ -1199,7 +1198,7 @@ def create_app() -> "Flask":
 
               function openModel(card) {{
                 const model = card.dataset.model;
-                document.getElementById("modalTitle").textContent = `Preset Settings • ${model}`;
+                document.getElementById("modalTitle").textContent = `Preset Settings • ${{model}}`;
                 document.getElementById("cfgModelName").value = model;
                 document.getElementById("cfgTicker").value = card.dataset.ticker || "AAPL";
                 document.getElementById("cfgInterval").value = card.dataset.interval || "1d";
@@ -1218,7 +1217,7 @@ def create_app() -> "Flask":
 
               function deleteModel() {{
                 if (!menuModelName) return;
-                if (confirm(`Delete model "${menuModelName}"?`)) {{
+                if (confirm(`Delete model "${{menuModelName}}"?`)) {{
                   document.getElementById("deleteModelName").value = menuModelName;
                   document.getElementById("deleteForm").submit();
                 }}
@@ -1229,8 +1228,8 @@ def create_app() -> "Flask":
                 card.addEventListener("contextmenu", (evt) => {{
                   evt.preventDefault();
                   menuModelName = card.dataset.model;
-                  menu.style.left = `${evt.clientX}px`;
-                  menu.style.top = `${evt.clientY}px`;
+                  menu.style.left = `${{evt.clientX}}px`;
+                  menu.style.top = `${{evt.clientY}}px`;
                   menu.style.display = "block";
                 }});
               }});
@@ -1267,6 +1266,8 @@ def create_app() -> "Flask":
         train_action = request.form.get("train_action", "train")
         saved_models = list_saved_models()
         present_html = ""
+        run_all_html = ""
+        run_all_rows = ""
 
         if request.method == "POST":
             try:
@@ -1291,6 +1292,11 @@ def create_app() -> "Flask":
                       </article>
                     </section>
                     """
+                elif mode == "present_all":
+                    model_configs = load_model_configs()
+                    model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
+                    run_all_rows = build_run_all_rows(saved_models, model_configs)
+                    run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
                     row_count = int(rows)
                     if split_style not in ("shuffled", "chronological"):
@@ -1541,6 +1547,11 @@ def create_app() -> "Flask":
                 margin: 0 auto;
                 padding: 2rem;
               }}
+              .topbar {{ position: sticky; top: 0; z-index: 50; background: rgba(10, 10, 15, 0.92); border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }}
+              .topbar-inner {{ max-width: 1200px; margin: 0 auto; padding: 0.9rem 2rem; display: flex; align-items: center; gap: 1rem; }}
+              .brand {{ font-weight: 700; color: #d8e6ff; text-decoration: none; margin-right: auto; }}
+              .tab-link {{ color: #9fb9ea; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
+              .tab-link:hover, .tab-link.active {{ color: #e6f0ff; border-color: var(--border); background: #121827; }}
               h1, h2, h3 {{ margin-top: 0; }}
               .card {{
                 background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
@@ -1620,9 +1631,16 @@ def create_app() -> "Flask":
                 margin-bottom: 0.6rem;
               }}
             </style>
+            <nav class="topbar">
+              <div class="topbar-inner">
+                <a href="/" class="brand">Quant Trader</a>
+                <a href="/" class="tab-link active">Model</a>
+                <a href="/manage-models" class="tab-link">Manage Models</a>
+                <a href="#present-mode" class="tab-link">Present Mode</a>
+              </div>
+            </nav>
             <div class="container">
             <h1>Quant Model Trainer</h1>
-            <p><a href="/manage-models" style="color:#91bbff; text-decoration:none;">Manage Models →</a></p>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
@@ -1663,7 +1681,7 @@ def create_app() -> "Flask":
               </label>
               </div>
             </form>
-            <form method="post" class="card">
+            <form method="post" class="card" id="present-mode">
               <input type="hidden" name="mode" value="present" />
               <h2>Present Mode</h2>
               <p class="muted">Get current model call using the same thresholds used in testing (BUY &gt; 0.60, SELL &lt; 0.40, else HOLD).</p>
@@ -1692,6 +1710,17 @@ def create_app() -> "Flask":
                 <button type="submit">Run Present Mode</button>
               </label>
               </div>
+            </form>
+            <form method="post" class="card">
+              <input type="hidden" name="mode" value="present_all" />
+              <h2>Run All Present Models</h2>
+              <p class="muted">Runs each saved model that is enabled in Manage Models and shows the live prediction.</p>
+              <button type="submit">Run All Present Models</button>
+              {run_all_html}
+              <table>
+                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
+                {run_all_rows if run_all_rows else "<tr><td colspan='7' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
+              </table>
             </form>
             {error_html}
             {present_html}
