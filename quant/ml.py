@@ -322,6 +322,7 @@ def strategy_metrics(
     trades = 0
     in_trade = False
     trade_pnl = 0.0
+    closed_trade_pnls: List[float] = []
     for pos, ret in zip(positions, returns):
         turnover = abs(pos - prev_pos)
         day_pnl = pos * ret - turnover * trade_cost
@@ -333,6 +334,7 @@ def strategy_metrics(
             trade_pnl += day_pnl
         if prev_pos != 0 and pos == 0 and in_trade:
             trades += 1
+            closed_trade_pnls.append(trade_pnl)
             if trade_pnl > 0:
                 wins += 1
             in_trade = False
@@ -340,6 +342,7 @@ def strategy_metrics(
         prev_pos = pos
     if in_trade:
         trades += 1
+        closed_trade_pnls.append(trade_pnl)
         if trade_pnl > 0:
             wins += 1
     equity = 1.0
@@ -397,6 +400,8 @@ def strategy_metrics(
         "avg_drawdown": avg_drawdown,
         "win_rate": (wins / trades) if trades else 0.0,
         "trade_count": float(trades),
+        "avg_gain_per_trade": (sum(closed_trade_pnls) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0,
+        "max_loss_per_trade": min(closed_trade_pnls) if closed_trade_pnls else 0.0,
         "hold_time_stats": hold_time_stats,
     }
 
@@ -600,7 +605,8 @@ def run_model(rows: Sequence[Row]) -> None:
     print(
         f"Total Return: {strat['total_return']:+.2%}, Sharpe: {strat['sharpe']:.3f}, "
         f"Max Drawdown: {strat['max_drawdown']:.2%}, Avg Drawdown: {strat['avg_drawdown']:.2%}, "
-        f"Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
+        f"Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}, "
+        f"Avg Gain/Trade: {strat['avg_gain_per_trade']:+.4%}, Max Loss/Trade: {strat['max_loss_per_trade']:+.4%}"
     )
     print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
 
