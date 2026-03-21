@@ -916,6 +916,7 @@ def create_app() -> "Flask":
         present_rows = request.form.get("present_rows", rows)
         present_model = request.form.get("present_model", selected_model)
         mode = request.form.get("mode", "train")
+        train_action = request.form.get("train_action", "train")
         saved_models = list_saved_models()
         present_html = ""
 
@@ -975,7 +976,7 @@ def create_app() -> "Flask":
                             split_style=split_style,
                         )
                         metrics["train_size"] = bundle["train_size"]
-                        if model_name:
+                        if train_action == "train" and model_name:
                             save_model_bundle(model_name, bundle)
                             metrics["saved_model"] = model_name
                             saved_models = list_saved_models()
@@ -1223,6 +1224,16 @@ def create_app() -> "Flask":
                 border: none;
                 cursor: pointer;
               }}
+              .button-row {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.5rem;
+              }}
+              .secondary {{
+                background: #2b3250;
+                color: #e7e9f1;
+                border: 1px solid #3a4467;
+              }}
               .card-grid, .table-grid {{
                 display: grid;
                 gap: 1rem;
@@ -1296,7 +1307,10 @@ def create_app() -> "Flask":
                 <input type="text" name="model_name" value="{model_name}" placeholder="momentum_v1" />
               </label>
               <label>&nbsp;
-                <button type="submit">Download + Train</button>
+                <div class="button-row">
+                  <button type="submit" name="train_action" value="train">Download + Train</button>
+                  <button type="submit" name="train_action" value="evaluate" class="secondary">Evaluate Only</button>
+                </div>
               </label>
               </div>
             </form>
