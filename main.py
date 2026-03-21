@@ -1711,6 +1711,49 @@ def create_app() -> "Flask":
                 font-weight: 600;
                 margin-bottom: 0.6rem;
               }}
+              .loading-overlay {{
+                position: fixed;
+                inset: 0;
+                z-index: 1000;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                background: rgba(6, 8, 14, 0.78);
+                backdrop-filter: blur(4px);
+              }}
+              .loading-card {{
+                width: min(520px, 92vw);
+                background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 1rem 1.1rem;
+                box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
+              }}
+              .loading-title {{
+                margin: 0 0 0.55rem;
+                color: #dbe7ff;
+              }}
+              .progress-track {{
+                width: 100%;
+                height: 14px;
+                border-radius: 999px;
+                background: #0f1118;
+                border: 1px solid var(--border);
+                overflow: hidden;
+              }}
+              .progress-fill {{
+                width: 0%;
+                height: 100%;
+                background: linear-gradient(90deg, #66a3ff 0%, #7bd88f 100%);
+                transition: width 0.2s ease;
+              }}
+              .loading-meta {{
+                margin-top: 0.55rem;
+                display: flex;
+                justify-content: space-between;
+                color: var(--muted);
+                font-size: 0.92rem;
+              }}
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
@@ -1819,6 +1862,82 @@ def create_app() -> "Flask":
             {present_html}
             {result_html}
             </div>
+            <div id="loadingOverlay" class="loading-overlay" aria-live="polite" aria-busy="true">
+              <div class="loading-card">
+                <h3 id="loadingTitle" class="loading-title">Working...</h3>
+                <div class="progress-track">
+                  <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div class="loading-meta">
+                  <span id="progressText">0%</span>
+                  <span id="etaText">Estimating...</span>
+                </div>
+              </div>
+            </div>
+            <script>
+              const loadingOverlay = document.getElementById("loadingOverlay");
+              const loadingTitle = document.getElementById("loadingTitle");
+              const progressFill = document.getElementById("progressFill");
+              const progressText = document.getElementById("progressText");
+              const etaText = document.getElementById("etaText");
+              let loadingTimer = null;
+
+              function formatEta(seconds) {{
+                const sec = Math.max(0, Math.ceil(seconds));
+                if (sec < 60) {{
+                  return `${{sec}}s remaining`;
+                }}
+                const mins = Math.floor(sec / 60);
+                const rem = sec % 60;
+                return `${{mins}}m ${{rem}}s remaining`;
+              }}
+
+              function showLoading(title, estimatedSeconds) {{
+                if (loadingTimer) {{
+                  window.clearInterval(loadingTimer);
+                  loadingTimer = null;
+                }}
+                loadingTitle.textContent = title;
+                loadingOverlay.style.display = "flex";
+                const started = Date.now();
+                const estimateMs = Math.max(1000, estimatedSeconds * 1000);
+
+                const update = () => {{
+                  const elapsedMs = Date.now() - started;
+                  const rawPct = (elapsedMs / estimateMs) * 100;
+                  const pct = Math.min(99, rawPct);
+                  progressFill.style.width = `${{pct.toFixed(1)}}%`;
+                  progressText.textContent = `${{Math.floor(pct)}}%`;
+                  const etaSeconds = Math.max(0, (estimateMs - elapsedMs) / 1000);
+                  etaText.textContent = pct >= 99 ? "Finalizing..." : formatEta(etaSeconds);
+                }};
+
+                update();
+                loadingTimer = window.setInterval(update, 220);
+              }}
+
+              document.querySelectorAll("form").forEach((form) => {{
+                form.addEventListener("submit", (evt) => {{
+                  const mode = form.querySelector('input[name="mode"]')?.value || "";
+                  const submitter = evt.submitter;
+                  const action = submitter?.value || "";
+
+                  if (mode === "train" && action === "train") {{
+                    const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
+                    const seconds = Math.min(95, Math.max(12, Math.round(rows / 7)));
+                    showLoading("Downloading data and training model...", seconds);
+                  }} else if (mode === "train" && action === "evaluate") {{
+                    const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
+                    const seconds = Math.min(70, Math.max(8, Math.round(rows / 10)));
+                    showLoading("Downloading data and evaluating model...", seconds);
+                  }} else if (mode === "present_all") {{
+                    const modelCount = Math.max(1, document.querySelectorAll('table tr').length - 1);
+                    const seconds = Math.min(120, Math.max(10, modelCount * 8));
+                    showLoading("Running all present-mode models...", seconds);
+                  }}
+                }});
+              }});
+            </script>
           </body>
         </html>
         """
