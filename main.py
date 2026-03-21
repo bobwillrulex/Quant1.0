@@ -198,6 +198,13 @@ def stddev(values: Sequence[float]) -> float:
     return math.sqrt(var)
 
 
+def compounded_return(returns: Sequence[float]) -> float:
+    equity = 1.0
+    for ret in returns:
+        equity *= 1.0 + ret
+    return equity - 1.0
+
+
 def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     return sum(abs(a - b) for a, b in zip(y_true, y_pred)) / max(1, len(y_true))
 
@@ -451,6 +458,7 @@ def evaluate_bundle(
         long_threshold=buy_threshold,
         short_threshold=sell_threshold,
         trade_cost=0.0005,
+        buy_hold_returns=[r["return_next"] for r in eval_rows] if eval_rows else None,
     )
     pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
@@ -548,6 +556,7 @@ def strategy_metrics(
     long_threshold: float = 0.6,
     short_threshold: float = 0.4,
     trade_cost: float = 0.0005,
+    buy_hold_returns: Sequence[float] | None = None,
 ) -> Dict[str, float]:
     positions: List[int] = []
     for p in probs:
@@ -585,11 +594,14 @@ def strategy_metrics(
     sd = stddev(pnl)
     if sd > 1e-12:
         sharpe = (sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)
+    buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
+    buy_hold_total_return = compounded_return(buy_hold_source)
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
         "trade_cost": trade_cost,
         "total_return": equity - 1.0,
+        "buy_hold_total_return": buy_hold_total_return,
         "sharpe": sharpe,
         "max_drawdown": max_drawdown,
         "win_rate": (wins / trades) if trades else 0.0,
@@ -820,6 +832,7 @@ def run_model(rows: Sequence[Row]) -> None:
         f"Total Return: {strat['total_return']:+.2%}, Sharpe: {strat['sharpe']:.3f}, "
         f"Max Drawdown: {strat['max_drawdown']:.2%}, Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
     )
+    print(f"Buy & Hold Return (evaluation rows): {strat['buy_hold_total_return']:+.2%}")
 
 
 def ema(values: Sequence[float], span: int) -> List[float]:
@@ -1502,6 +1515,7 @@ def create_app() -> "Flask":
                       <h3>Decision Strategy</h3>
                       <p class="muted">Long P&gt;{metrics['strategy']['long_threshold']:.2f} · Short P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
                       <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
+                      <p><span class="muted">Buy &amp; Hold Return (requested rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                       <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                       <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
                       <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
