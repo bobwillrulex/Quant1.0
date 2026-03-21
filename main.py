@@ -902,57 +902,173 @@ def create_app() -> "Flask":
                 logistic_weight_rows = "".join(
                     f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
                 )
+                calibration_rows = "".join(
+                    "<tr>"
+                    f"<td>{item['bucket_low']:.2f} - {item['bucket_high']:.2f}</td>"
+                    f"<td>{int(item['count'])}</td>"
+                    f"<td>{item['predicted_mean']:.4f}</td>"
+                    f"<td>{item['actual_win_rate']:.4f}</td>"
+                    "</tr>"
+                    for item in metrics["calibration"]
+                )
+                pnl_signal_rows = "".join(
+                    "<tr>"
+                    f"<td>{item['bucket']}</td>"
+                    f"<td>{int(item['count'])}</td>"
+                    f"<td>{item['avg_pnl']:+.4%}</td>"
+                    f"<td>{item['total_pnl']:+.2%}</td>"
+                    "</tr>"
+                    for item in metrics["pnl_by_signal_strength"]
+                )
+                pnl_regime_rows = "".join(
+                    "<tr>"
+                    f"<td>{item['regime']}</td>"
+                    f"<td>{int(item['count'])}</td>"
+                    f"<td>{item['avg_pnl']:+.4%}</td>"
+                    f"<td>{item['total_pnl']:+.2%}</td>"
+                    "</tr>"
+                    for item in metrics["pnl_by_regime"]
+                )
+                walk_forward_rows = "".join(
+                    "<tr>"
+                    f"<td>{int(item['window'])}</td>"
+                    f"<td>{int(item['train_size'])}</td>"
+                    f"<td>{int(item['test_size'])}</td>"
+                    f"<td>{item['accuracy']:.4f}</td>"
+                    f"<td>{item['mse']:.8f}</td>"
+                    "</tr>"
+                    for item in metrics["walk_forward"]
+                )
+                ablation_rows = "".join(
+                    "<tr>"
+                    f"<td>{item['removed_feature']}</td>"
+                    f"<td>{item['accuracy_delta']:+.4f}</td>"
+                    f"<td>{item['mse_delta']:+.8f}</td>"
+                    "</tr>"
+                    for item in metrics["feature_ablation"]
+                )
                 result_html = f"""
-                <h2>Results for {ticker} ({interval})</h2>
-                <p>Rows used: {row_count} (train={metrics['train_size']}, test={metrics['test_size']})</p>
-                {model_msg}
-                <p><strong>Linear Test MSE:</strong> {metrics['mse']:.8f}</p>
-                <p><strong>Linear Test MAE:</strong> {metrics['mae']:.8f}</p>
-                <p><strong>Zero-return baseline MSE/MAE:</strong> {metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
-                <p><strong>Model edge vs zero baseline (MSE/MAE):</strong> {metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
-                <p><strong>Logistic Accuracy:</strong> {metrics['accuracy']:.4f}</p>
-                <p><strong>Always-UP baseline accuracy:</strong> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
-                <p><strong>Precision:</strong> {metrics['precision']:.4f} | <strong>Recall:</strong> {metrics['recall']:.4f} | <strong>F1:</strong> {metrics['f1']:.4f}</p>
-                <p><strong>Confusion Matrix:</strong> TP={metrics['tp']}, FP={metrics['fp']}, TN={metrics['tn']}, FN={metrics['fn']}</p>
-                <h3>Decision Strategy (Long if P&gt;0.6, Short if P&lt;0.4, Cost=0.05%)</h3>
-                <p><strong>Total Return:</strong> {metrics['strategy']['total_return']:+.2%} |
-                   <strong>Sharpe:</strong> {metrics['strategy']['sharpe']:.3f} |
-                   <strong>Max Drawdown:</strong> {metrics['strategy']['max_drawdown']:.2%} |
-                   <strong>Win Rate:</strong> {metrics['strategy']['win_rate']:.2%} |
-                   <strong>Trades:</strong> {int(metrics['strategy']['trade_count'])}</p>
-                <h3>Feature Set</h3>
-                <p>{', '.join(metrics['features'])}</p>
-                <h3>Calibration Buckets</h3>
-                <pre>{json.dumps(metrics['calibration'], indent=2)}</pre>
-                <h3>Confidence Edge</h3>
-                <pre>{json.dumps(metrics['confidence_edge'], indent=2)}</pre>
-                <h3>PnL by Signal Strength</h3>
-                <pre>{json.dumps(metrics['pnl_by_signal_strength'], indent=2)}</pre>
-                <h3>PnL by Market Regime</h3>
-                <pre>{json.dumps(metrics['pnl_by_regime'], indent=2)}</pre>
-                <h3>Walk-forward Validation</h3>
-                <pre>{json.dumps(metrics['walk_forward'], indent=2)}</pre>
-                <h3>Feature Ablation</h3>
-                <pre>{json.dumps(metrics['feature_ablation'], indent=2)}</pre>
-                <h3>Error Analysis</h3>
-                <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
-                <h3>Linear Model Weights</h3>
-                <p><strong>Bias:</strong> {metrics['lin_bias']:+.6f}</p>
-                <table border="1" cellpadding="6">
-                  <tr><th>Feature</th><th>Weight</th></tr>
-                  {linear_weight_rows}
-                </table>
-                <h3>Logistic Model Weights</h3>
-                <p><strong>Bias:</strong> {metrics['logit_bias']:+.6f}</p>
-                <table border="1" cellpadding="6">
-                  <tr><th>Feature</th><th>Weight</th></tr>
-                  {logistic_weight_rows}
-                </table>
-                <h3>Example Predictions</h3>
-                <table border="1" cellpadding="6">
-                  <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
-                  {preview_rows}
-                </table>
+                <section class="results">
+                  <div class="section-heading">
+                    <h2>Results • {ticker} ({interval})</h2>
+                    <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']}</p>
+                    {model_msg}
+                  </div>
+                  <div class="card-grid">
+                    <article class="card">
+                      <h3>Linear Model</h3>
+                      <p><span class="muted">Test MSE</span> <strong>{metrics['mse']:.8f}</strong></p>
+                      <p><span class="muted">Test MAE</span> <strong>{metrics['mae']:.8f}</strong></p>
+                      <p><span class="muted">Zero baseline (MSE/MAE)</span><br>{metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
+                      <p><span class="muted">Edge vs baseline (MSE/MAE)</span><br>{metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
+                    </article>
+                    <article class="card">
+                      <h3>Logistic Model</h3>
+                      <p><span class="muted">Accuracy</span> <strong>{metrics['accuracy']:.4f}</strong></p>
+                      <p><span class="muted">Always-UP baseline</span> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
+                      <p><span class="muted">Precision / Recall / F1</span><br>{metrics['precision']:.4f} / {metrics['recall']:.4f} / {metrics['f1']:.4f}</p>
+                      <p><span class="muted">Confusion Matrix</span><br>TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}</p>
+                    </article>
+                    <article class="card">
+                      <h3>Decision Strategy</h3>
+                      <p class="muted">Long P&gt;0.6 · Short P&lt;0.4 · Cost 0.05%</p>
+                      <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
+                      <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
+                      <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
+                      <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
+                    </article>
+                  </div>
+
+                  <article class="card">
+                    <h3>Feature Set</h3>
+                    <p>{', '.join(metrics['features'])}</p>
+                  </article>
+
+                  <div class="table-grid">
+                    <article class="card table-card">
+                      <h3>Calibration Buckets</h3>
+                      <table>
+                        <tr><th>Bucket</th><th>Count</th><th>Pred Mean</th><th>Actual Win</th></tr>
+                        {calibration_rows}
+                      </table>
+                    </article>
+                    <article class="card table-card">
+                      <h3>Confidence Edge</h3>
+                      <table>
+                        <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
+                        <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
+                        <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
+                      </table>
+                    </article>
+                  </div>
+
+                  <div class="table-grid">
+                    <article class="card table-card">
+                      <h3>PnL by Signal Strength</h3>
+                      <table>
+                        <tr><th>Bucket</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
+                        {pnl_signal_rows}
+                      </table>
+                    </article>
+                    <article class="card table-card">
+                      <h3>PnL by Market Regime</h3>
+                      <table>
+                        <tr><th>Regime</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
+                        {pnl_regime_rows}
+                      </table>
+                    </article>
+                  </div>
+
+                  <details>
+                    <summary>Walk-forward & Feature Ablation</summary>
+                    <div class="table-grid">
+                      <article class="card table-card">
+                        <h3>Walk-forward Validation</h3>
+                        <table>
+                          <tr><th>Window</th><th>Train</th><th>Test</th><th>Accuracy</th><th>MSE</th></tr>
+                          {walk_forward_rows}
+                        </table>
+                      </article>
+                      <article class="card table-card">
+                        <h3>Feature Ablation</h3>
+                        <table>
+                          <tr><th>Removed Feature</th><th>Δ Accuracy</th><th>Δ MSE</th></tr>
+                          {ablation_rows}
+                        </table>
+                      </article>
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Error Analysis</summary>
+                    <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
+                  </details>
+
+                  <div class="table-grid">
+                    <article class="card table-card">
+                      <h3>Linear Weights (Bias {metrics['lin_bias']:+.6f})</h3>
+                      <table>
+                        <tr><th>Feature</th><th>Weight</th></tr>
+                        {linear_weight_rows}
+                      </table>
+                    </article>
+                    <article class="card table-card">
+                      <h3>Logistic Weights (Bias {metrics['logit_bias']:+.6f})</h3>
+                      <table>
+                        <tr><th>Feature</th><th>Weight</th></tr>
+                        {logistic_weight_rows}
+                      </table>
+                    </article>
+                  </div>
+
+                  <article class="card table-card">
+                    <h3>Example Predictions</h3>
+                    <table>
+                      <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
+                      {preview_rows}
+                    </table>
+                  </article>
+                </section>
                 """
             except Exception as exc:
                 error_html = f"<p style='color:red;'><strong>Error:</strong> {exc}</p>"
@@ -960,13 +1076,105 @@ def create_app() -> "Flask":
         return f"""
         <html>
           <head><title>Quant Model Trainer</title></head>
-          <body style="font-family: Arial, sans-serif; margin: 2rem;">
-            <h1>Train Quant Model from Yahoo Data</h1>
-            <form method="post">
+          <body>
+            <style>
+              :root {{
+                --bg: #0a0a0f;
+                --panel: #15161f;
+                --panel-2: #1d1f2b;
+                --border: #2a2d3a;
+                --text: #e7e9f1;
+                --muted: #9aa1b2;
+                --accent: #66a3ff;
+              }}
+              * {{ box-sizing: border-box; }}
+              body {{
+                margin: 0;
+                background: radial-gradient(circle at top, #101425 0%, var(--bg) 50%);
+                color: var(--text);
+                font-family: Inter, Segoe UI, Arial, sans-serif;
+              }}
+              .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 2rem;
+              }}
+              h1, h2, h3 {{ margin-top: 0; }}
+              .card {{
+                background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 1rem 1.1rem;
+                margin-bottom: 1rem;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+              }}
+              .form-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 0.9rem;
+              }}
+              label {{ display: block; font-size: 0.92rem; color: var(--muted); }}
+              input, select, button {{
+                width: 100%;
+                margin-top: 0.4rem;
+                background: #0f1118;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 0.65rem 0.7rem;
+              }}
+              button {{
+                background: var(--accent);
+                color: #081121;
+                font-weight: 600;
+                border: none;
+                cursor: pointer;
+              }}
+              .card-grid, .table-grid {{
+                display: grid;
+                gap: 1rem;
+                grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+              }}
+              .muted {{ color: var(--muted); }}
+              table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.9rem;
+              }}
+              th, td {{
+                border-bottom: 1px solid var(--border);
+                text-align: left;
+                padding: 0.45rem 0.35rem;
+              }}
+              th {{ color: #bfc8df; font-weight: 600; }}
+              pre {{
+                white-space: pre-wrap;
+                background: #0f1118;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 0.8rem;
+              }}
+              details {{
+                background: #10131c;
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 0.7rem 0.9rem;
+                margin-bottom: 1rem;
+              }}
+              summary {{
+                cursor: pointer;
+                color: #d5dcf4;
+                font-weight: 600;
+                margin-bottom: 0.6rem;
+              }}
+            </style>
+            <div class="container">
+            <h1>Quant Model Trainer</h1>
+            <form method="post" class="card">
+              <div class="form-grid">
               <label>Ticker:
                 <input type="text" name="ticker" value="{ticker}" required />
               </label>
-              <br/><br/>
               <label>Interval:
                 <select name="interval">
                   <option value="1d" {"selected" if interval == "1d" else ""}>Daily</option>
@@ -975,26 +1183,26 @@ def create_app() -> "Flask":
                   <option value="5m" {"selected" if interval == "5m" else ""}>5 min</option>
                 </select>
               </label>
-              <br/><br/>
               <label>Rows:
                 <input type="number" min="50" name="rows" value="{rows}" required />
               </label>
-              <br/><br/>
               <label>Saved Model:
                 <select name="selected_model">
                   <option value="__new__">Train new model</option>
                   {"".join(f'<option value="{name}" {"selected" if selected_model == name else ""}>{name}</option>' for name in saved_models)}
                 </select>
               </label>
-              <br/><br/>
               <label>New Model Name (optional):
                 <input type="text" name="model_name" value="{model_name}" placeholder="momentum_v1" />
               </label>
-              <br/><br/>
-              <button type="submit">Download + Train</button>
+              <label>&nbsp;
+                <button type="submit">Download + Train</button>
+              </label>
+              </div>
             </form>
             {error_html}
             {result_html}
+            </div>
           </body>
         </html>
         """
