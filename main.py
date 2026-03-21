@@ -31,6 +31,8 @@ Row = Dict[str, float]
 FeatureFn = Callable[[Row], float]
 MODEL_DIR = "saved_models"
 MODEL_CONFIGS_FILE = "model_configs.json"
+OPTIONS_MODE = "options"
+SPOT_MODE = "spot"
 
 
 @dataclass
@@ -338,13 +340,21 @@ def ensure_model_dir() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
 
 
-def model_configs_path() -> str:
+def mode_model_dir(mode: str) -> str:
     ensure_model_dir()
-    return os.path.join(MODEL_DIR, MODEL_CONFIGS_FILE)
+    if mode not in (OPTIONS_MODE, SPOT_MODE):
+        raise ValueError("Invalid mode.")
+    path = os.path.join(MODEL_DIR, mode)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
-def load_model_configs() -> Dict[str, Dict[str, object]]:
-    path = model_configs_path()
+def model_configs_path(mode: str) -> str:
+    return os.path.join(mode_model_dir(mode), MODEL_CONFIGS_FILE)
+
+
+def load_model_configs(mode: str) -> Dict[str, Dict[str, object]]:
+    path = model_configs_path(mode)
     if not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8") as f:
@@ -354,8 +364,8 @@ def load_model_configs() -> Dict[str, Dict[str, object]]:
     return {}
 
 
-def save_model_configs(configs: Dict[str, Dict[str, object]]) -> None:
-    with open(model_configs_path(), "w", encoding="utf-8") as f:
+def save_model_configs(mode: str, configs: Dict[str, Dict[str, object]]) -> None:
+    with open(model_configs_path(mode), "w", encoding="utf-8") as f:
         json.dump(configs, f, indent=2)
 
 
@@ -433,6 +443,7 @@ def evaluate_bundle(
     split_style: SplitStyle = "shuffled",
     buy_threshold: float = 0.6,
     sell_threshold: float = 0.4,
+    allow_short: bool = True,
 ) -> Dict[str, object]:
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
@@ -459,9 +470,10 @@ def evaluate_bundle(
         short_threshold=sell_threshold,
         trade_cost=0.0005,
         buy_hold_returns=y_test_ret,
+        allow_short=allow_short,
     )
-    pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
-    pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
+    pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short)
+    pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short)
     walk_forward = walk_forward_validation_rows(rows=eval_rows, max_windows=4) if eval_rows else []
     ablation = feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style) if eval_rows else []
     errors = error_analysis(y_test_ret, up_prob, ret_pred, top_n=5)
@@ -557,12 +569,13 @@ def strategy_metrics(
     short_threshold: float = 0.4,
     trade_cost: float = 0.0005,
     buy_hold_returns: Sequence[float] | None = None,
+    allow_short: bool = True,
 ) -> Dict[str, float]:
     positions: List[int] = []
     for p in probs:
         if p > long_threshold:
             positions.append(1)
-        elif p < short_threshold:
+        elif p < short_threshold and allow_short:
             positions.append(-1)
         else:
             positions.append(0)
@@ -599,6 +612,7 @@ def strategy_metrics(
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
+        "allow_short": 1.0 if allow_short else 0.0,
         "trade_cost": trade_cost,
         "total_return": equity - 1.0,
         "buy_hold_total_return": buy_hold_total_return,
@@ -609,7 +623,12 @@ def strategy_metrics(
     }
 
 
-def pnl_signal_strength_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005) -> List[Dict[str, float]]:
+def pnl_signal_strength_breakdown(
+    returns: Sequence[float],
+    probs: Sequence[float],
+    trade_cost: float = 0.0005,
+    allow_short: bool = True,
+) -> List[Dict[str, float]]:
     buckets = {
         "weak_0.50_0.55": (0.50, 0.55),
         "medium_0.55_0.65": (0.55, 0.65),
@@ -621,14 +640,19 @@ def pnl_signal_strength_breakdown(returns: Sequence[float], probs: Sequence[floa
         for p, r in zip(probs, returns):
             confidence = max(p, 1.0 - p)
             if lo <= confidence < hi:
-                pos = 1 if p >= 0.5 else -1
+                pos = 1 if p >= 0.5 else (-1 if allow_short else 0)
                 pnl.append(pos * r - trade_cost)
         if pnl:
             out.append({"bucket": name, "count": float(len(pnl)), "avg_pnl": sum(pnl) / len(pnl), "total_pnl": sum(pnl)})
     return out
 
 
-def pnl_market_regime_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005) -> List[Dict[str, float]]:
+def pnl_market_regime_breakdown(
+    returns: Sequence[float],
+    probs: Sequence[float],
+    trade_cost: float = 0.0005,
+    allow_short: bool = True,
+) -> List[Dict[str, float]]:
     out = {"trending": [], "sideways": [], "high_volatility": []}
     window = 20
     for i in range(len(returns)):
@@ -637,7 +661,7 @@ def pnl_market_regime_breakdown(returns: Sequence[float], probs: Sequence[float]
         trend = abs(sum(r_win) / max(1, len(r_win)))
         vol = stddev(r_win)
         p = probs[i]
-        pos = 1 if p > 0.6 else (-1 if p < 0.4 else 0)
+        pos = 1 if p > 0.6 else (-1 if (p < 0.4 and allow_short) else 0)
         pnl = pos * returns[i] - (trade_cost if pos != 0 else 0.0)
         if vol > 0.02:
             out["high_volatility"].append(pnl)
@@ -779,12 +803,11 @@ def error_analysis(y_test_ret: Sequence[float], up_prob: Sequence[float], ret_pr
     return {"largest_return_errors": largest_errors, "high_confidence_wrong_calls": high_conf_wrong}
 
 
-def save_model_bundle(model_name: str, bundle: Dict[str, object]) -> str:
-    ensure_model_dir()
+def save_model_bundle(mode: str, model_name: str, bundle: Dict[str, object]) -> str:
     safe_name = sanitize_model_name(model_name)
     if not safe_name:
         raise ValueError("Model name must include letters or numbers.")
-    path = os.path.join(MODEL_DIR, f"{safe_name}.json")
+    path = os.path.join(mode_model_dir(mode), f"{safe_name}.json")
     payload = {k: bundle[k] for k in ["feature_names", "means", "stds", "lin_weights", "lin_bias", "logit_weights", "logit_bias"]}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -795,13 +818,13 @@ def sanitize_model_name(model_name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in model_name).strip("_")
 
 
-def list_saved_models() -> List[str]:
-    ensure_model_dir()
-    return sorted([f[:-5] for f in os.listdir(MODEL_DIR) if f.endswith(".json")])
+def list_saved_models(mode: str) -> List[str]:
+    model_dir = mode_model_dir(mode)
+    return sorted([f[:-5] for f in os.listdir(model_dir) if f.endswith(".json")])
 
 
-def load_model_bundle(model_name: str) -> Dict[str, object]:
-    path = os.path.join(MODEL_DIR, f"{model_name}.json")
+def load_model_bundle(mode: str, model_name: str) -> Dict[str, object]:
+    path = os.path.join(mode_model_dir(mode), f"{model_name}.json")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -962,6 +985,7 @@ def predict_signal(
     *,
     buy_threshold: float = 0.6,
     sell_threshold: float = 0.4,
+    long_only: bool = False,
 ) -> Dict[str, float | str]:
     feature_builder = build_default_strategy_features()
     row_features = feature_builder.transform([row])
@@ -975,10 +999,12 @@ def predict_signal(
         action = "BUY"
     elif p_up < sell_threshold:
         action = "SELL"
+    if long_only and action == "SELL":
+        action = "SELL"
     return {"expected_return": expected_return, "p_up": p_up, "action": action}
 
 
-def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dict[str, object]]) -> str:
+def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dict[str, object]], *, mode: str, long_only: bool) -> str:
     run_all_rows = ""
     for model_name in saved_models:
         cfg = get_model_config(model_name, model_configs)
@@ -991,7 +1017,7 @@ def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dic
                 row_count=int(cfg.get("rows", 250)),
             )
             latest_row = dataset[-1]
-            bundle = load_model_bundle(model_name)
+            bundle = load_model_bundle(mode, model_name)
             buy_threshold = float(cfg.get("buy_threshold", 0.6))
             sell_threshold = float(cfg.get("sell_threshold", 0.4))
             prediction = predict_signal(
@@ -999,6 +1025,7 @@ def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dic
                 latest_row,
                 buy_threshold=buy_threshold,
                 sell_threshold=sell_threshold,
+                long_only=long_only,
             )
             run_all_rows += (
                 "<tr>"
@@ -1034,11 +1061,27 @@ def create_app() -> "Flask":
     app = Flask(__name__)
 
     @app.route("/manage-models", methods=["GET", "POST"])
+    @app.route("/spot/manage-models", methods=["GET", "POST"])
     def manage_models() -> str:
+        is_spot = request.path.startswith("/spot")
+        mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
+        home_href = "/spot" if is_spot else "/"
+        manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        mode_switch_href = "/" if is_spot else "/spot"
+        mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
+        brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        heading_label = "Manage Spot Models" if is_spot else "Manage Options Models"
+        theme_bg = "#f3f4f6" if is_spot else "#0a0a0f"
+        theme_text = "#1f2937" if is_spot else "#e7e9f1"
+        theme_panel = "#ffffff" if is_spot else "#15161f"
+        theme_panel2 = "#eef1f5" if is_spot else "#1d1f2b"
+        theme_border = "#d1d5db" if is_spot else "#2a2d3a"
+        theme_muted = "#6b7280" if is_spot else "#9aa1b2"
+        theme_accent = "#4b5563" if is_spot else "#66a3ff"
         message_html = ""
         error_html = ""
-        model_configs = load_model_configs()
-        saved_models = list_saved_models()
+        model_configs = load_model_configs(mode_key)
+        saved_models = list_saved_models(mode_key)
         model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
 
         if request.method == "POST":
@@ -1068,7 +1111,7 @@ def create_app() -> "Flask":
                         "buy_threshold": buy_threshold,
                         "sell_threshold": sell_threshold,
                     }
-                    save_model_configs(model_configs)
+                    save_model_configs(mode_key, model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
                 elif action == "rename_model":
                     new_name = sanitize_model_name(request.form.get("new_name", "").strip())
@@ -1078,27 +1121,27 @@ def create_app() -> "Flask":
                         raise ValueError("New model name cannot be empty.")
                     if new_name in saved_models:
                         raise ValueError("A model with that name already exists.")
-                    old_path = os.path.join(MODEL_DIR, f"{model_name}.json")
-                    new_path = os.path.join(MODEL_DIR, f"{new_name}.json")
+                    old_path = os.path.join(mode_model_dir(mode_key), f"{model_name}.json")
+                    new_path = os.path.join(mode_model_dir(mode_key), f"{new_name}.json")
                     os.rename(old_path, new_path)
                     if model_name in model_configs:
                         model_configs[new_name] = model_configs.pop(model_name)
-                    save_model_configs(model_configs)
-                    return redirect(url_for("manage_models"))
+                    save_model_configs(mode_key, model_configs)
+                    return redirect(manage_href)
                 elif action == "delete_model":
                     if model_name not in saved_models:
                         raise ValueError("Model not found.")
-                    path = os.path.join(MODEL_DIR, f"{model_name}.json")
+                    path = os.path.join(mode_model_dir(mode_key), f"{model_name}.json")
                     if os.path.exists(path):
                         os.remove(path)
                     if model_name in model_configs:
                         model_configs.pop(model_name)
-                        save_model_configs(model_configs)
-                    return redirect(url_for("manage_models"))
+                        save_model_configs(mode_key, model_configs)
+                    return redirect(manage_href)
             except Exception as exc:
                 error_html = f"<p style='color:#ff7b7b;'><strong>Error:</strong> {exc}</p>"
-            saved_models = list_saved_models()
-            model_configs = load_model_configs()
+            saved_models = list_saved_models(mode_key)
+            model_configs = load_model_configs(mode_key)
             model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
 
         model_cards = ""
@@ -1127,13 +1170,13 @@ def create_app() -> "Flask":
           <body>
             <style>
               :root {{
-                --bg: #0a0a0f;
-                --panel: #15161f;
-                --panel-2: #1d1f2b;
-                --border: #2a2d3a;
-                --text: #e7e9f1;
-                --muted: #9aa1b2;
-                --accent: #66a3ff;
+                --bg: {theme_bg};
+                --panel: {theme_panel};
+                --panel-2: {theme_panel2};
+                --border: {theme_border};
+                --text: {theme_text};
+                --muted: {theme_muted};
+                --accent: {theme_accent};
               }}
               * {{ box-sizing: border-box; }}
               body {{ margin: 0; background: radial-gradient(circle at top, #101425 0%, var(--bg) 50%); color: var(--text); font-family: Inter, Segoe UI, Arial, sans-serif; }}
@@ -1169,14 +1212,15 @@ def create_app() -> "Flask":
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
-                <a href="/" class="brand">Quant Trader</a>
-                <a href="/" class="tab-link">Model</a>
-                <a href="/manage-models" class="tab-link active">Manage Models</a>
-                <a href="/#present-mode" class="tab-link">Present Mode</a>
+                <a href="{home_href}" class="brand">{brand_label}</a>
+                <a href="{home_href}" class="tab-link">Model</a>
+                <a href="{manage_href}" class="tab-link active">Manage Models</a>
+                <a href="{home_href}#present-mode" class="tab-link">Present Mode</a>
+                <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
             </nav>
             <div class="container">
-              <h1>Manage Models</h1>
+              <h1>{heading_label}</h1>
               <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, buy/sell thresholds, include in Run All). Right-click a model for rename/delete.</p>
               {message_html}
               {error_html}
@@ -1318,7 +1362,30 @@ def create_app() -> "Flask":
         """
 
     @app.route("/", methods=["GET", "POST"])
+    @app.route("/spot", methods=["GET", "POST"])
     def index() -> str:
+        is_spot = request.path.startswith("/spot")
+        mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
+        allow_short = not is_spot
+        home_href = "/spot" if is_spot else "/"
+        manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        mode_switch_href = "/" if is_spot else "/spot"
+        mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
+        brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        trainer_heading = "Spot Model Trainer (Long-only)" if is_spot else "Options Model Trainer (Long/Short)"
+        present_rule_text = (
+            "Decision rule: BUY if P(Up) exceeds BUY threshold, SELL to exit if P(Up) is below SELL threshold, else HOLD."
+            if is_spot
+            else "Decision rule: BUY if P(Up) exceeds BUY threshold, SELL(short) if P(Up) is below SELL threshold, else HOLD."
+        )
+        strategy_mode_text = "Long-only PnL simulation" if is_spot else "Long/Short PnL simulation"
+        theme_bg = "#f3f4f6" if is_spot else "#0a0a0f"
+        theme_text = "#1f2937" if is_spot else "#e7e9f1"
+        theme_panel = "#ffffff" if is_spot else "#15161f"
+        theme_panel2 = "#eef1f5" if is_spot else "#1d1f2b"
+        theme_border = "#d1d5db" if is_spot else "#2a2d3a"
+        theme_muted = "#6b7280" if is_spot else "#9aa1b2"
+        theme_accent = "#4b5563" if is_spot else "#66a3ff"
         result_html = ""
         error_html = ""
         ticker = request.form.get("ticker", "AAPL").upper().strip()
@@ -1337,7 +1404,7 @@ def create_app() -> "Flask":
         present_model = request.form.get("present_model", selected_model)
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
-        saved_models = list_saved_models()
+        saved_models = list_saved_models(mode_key)
         present_html = ""
         run_all_html = ""
         run_all_rows = ""
@@ -1352,19 +1419,20 @@ def create_app() -> "Flask":
                     if present_model == "__new__":
                         bundle = train_strategy_models(dataset, split_style=split_style)
                     else:
-                        bundle = load_model_bundle(present_model)
+                        bundle = load_model_bundle(mode_key, present_model)
                     prediction = predict_signal(
                         bundle,
                         latest_row,
                         buy_threshold=present_buy_threshold,
                         sell_threshold=present_sell_threshold,
+                        long_only=is_spot,
                     )
                     present_html = f"""
                     <section class="results">
                       <article class="card">
                         <h2>Present Mode • {present_ticker} ({present_interval})</h2>
                         <p class="muted">Model: {"Freshly trained on current dataset" if present_model == "__new__" else present_model}</p>
-                        <p class="muted">Decision rule: BUY if P(Up)&gt;{present_buy_threshold:.2f}, SELL if P(Up)&lt;{present_sell_threshold:.2f}, else HOLD.</p>
+                        <p class="muted">{present_rule_text} (BUY&gt;{present_buy_threshold:.2f}, SELL&lt;{present_sell_threshold:.2f}).</p>
                         <p><span class="muted">Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>
                         <p><span class="muted">P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>
                         <p><span class="muted">Action</span> <strong>{prediction['action']}</strong></p>
@@ -1372,9 +1440,9 @@ def create_app() -> "Flask":
                     </section>
                     """
                 elif mode == "present_all":
-                    model_configs = load_model_configs()
+                    model_configs = load_model_configs(mode_key)
                     model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
-                    run_all_rows = build_run_all_rows(saved_models, model_configs)
+                    run_all_rows = build_run_all_rows(saved_models, model_configs, mode=mode_key, long_only=is_spot)
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
                     row_count = int(rows)
@@ -1388,7 +1456,7 @@ def create_app() -> "Flask":
                     y_test_ret = [r["return_next"] for r in test_rows]
                     y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                     if selected_model != "__new__":
-                        loaded = load_model_bundle(selected_model)
+                        loaded = load_model_bundle(mode_key, selected_model)
                         metrics = evaluate_bundle(
                             loaded,
                             x_test_raw,
@@ -1398,6 +1466,7 @@ def create_app() -> "Flask":
                             split_style=split_style,
                             buy_threshold=buy_threshold,
                             sell_threshold=sell_threshold,
+                            allow_short=allow_short,
                         )
                         metrics["train_size"] = "saved-model"
                         metrics["loaded_model"] = selected_model
@@ -1412,11 +1481,12 @@ def create_app() -> "Flask":
                             split_style=split_style,
                             buy_threshold=buy_threshold,
                             sell_threshold=sell_threshold,
+                            allow_short=allow_short,
                         )
                         metrics["train_size"] = bundle["train_size"]
                         if train_action == "train" and model_name:
-                            save_model_bundle(model_name, bundle)
-                            model_configs = load_model_configs()
+                            save_model_bundle(mode_key, model_name, bundle)
+                            model_configs = load_model_configs(mode_key)
                             model_configs[sanitize_model_name(model_name)] = {
                                 "ticker": ticker,
                                 "interval": interval,
@@ -1425,9 +1495,9 @@ def create_app() -> "Flask":
                                 "buy_threshold": buy_threshold,
                                 "sell_threshold": sell_threshold,
                             }
-                            save_model_configs(model_configs)
+                            save_model_configs(mode_key, model_configs)
                             metrics["saved_model"] = model_name
-                            saved_models = list_saved_models()
+                            saved_models = list_saved_models(mode_key)
 
                     preview_rows = "".join(
                         f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
@@ -1513,7 +1583,7 @@ def create_app() -> "Flask":
                     </article>
                     <article class="card">
                       <h3>Decision Strategy</h3>
-                      <p class="muted">Long P&gt;{metrics['strategy']['long_threshold']:.2f} · Short P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
+                      <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
                       <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                       <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                       <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
@@ -1622,18 +1692,18 @@ def create_app() -> "Flask":
           <body>
             <style>
               :root {{
-                --bg: #0a0a0f;
-                --panel: #15161f;
-                --panel-2: #1d1f2b;
-                --border: #2a2d3a;
-                --text: #e7e9f1;
-                --muted: #9aa1b2;
-                --accent: #66a3ff;
+                --bg: {theme_bg};
+                --panel: {theme_panel};
+                --panel-2: {theme_panel2};
+                --border: {theme_border};
+                --text: {theme_text};
+                --muted: {theme_muted};
+                --accent: {theme_accent};
               }}
               * {{ box-sizing: border-box; }}
               body {{
                 margin: 0;
-                background: radial-gradient(circle at top, #101425 0%, var(--bg) 50%);
+                background: radial-gradient(circle at top, {'#ffffff' if is_spot else '#101425'} 0%, var(--bg) 50%);
                 color: var(--text);
                 font-family: Inter, Segoe UI, Arial, sans-serif;
               }}
@@ -1771,14 +1841,15 @@ def create_app() -> "Flask":
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
-                <a href="/" class="brand">Quant Trader</a>
-                <a href="/" class="tab-link active">Model</a>
-                <a href="/manage-models" class="tab-link">Manage Models</a>
+                <a href="{home_href}" class="brand">{brand_label}</a>
+                <a href="{home_href}" class="tab-link active">Model</a>
+                <a href="{manage_href}" class="tab-link">Manage Models</a>
                 <a href="#present-mode" class="tab-link">Present Mode</a>
+                <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
             </nav>
             <div class="container">
-            <h1>Quant Model Trainer</h1>
+            <h1>{trainer_heading}</h1>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
@@ -1864,7 +1935,7 @@ def create_app() -> "Flask":
             <form method="post" class="card">
               <input type="hidden" name="mode" value="present_all" />
               <h2>Run All Present Models</h2>
-              <p class="muted">Runs each saved model that is enabled in Manage Models and shows the live prediction.</p>
+              <p class="muted">Runs each saved model in this mode only (isolated from the other mode) and shows the live prediction.</p>
               <button type="submit">Run All Present Models</button>
               {run_all_html}
               <table>
