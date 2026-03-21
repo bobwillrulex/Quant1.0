@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 Row = Dict[str, float]
 FeatureFn = Callable[[Row], float]
 MODEL_DIR = "saved_models"
+MODEL_CONFIGS_FILE = "model_configs.json"
 
 
 @dataclass
@@ -328,6 +329,39 @@ def standardize_apply(x: Sequence[Sequence[float]], means: Sequence[float], stds
 
 def ensure_model_dir() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
+
+
+def model_configs_path() -> str:
+    ensure_model_dir()
+    return os.path.join(MODEL_DIR, MODEL_CONFIGS_FILE)
+
+
+def load_model_configs() -> Dict[str, Dict[str, object]]:
+    path = model_configs_path()
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def save_model_configs(configs: Dict[str, Dict[str, object]]) -> None:
+    with open(model_configs_path(), "w", encoding="utf-8") as f:
+        json.dump(configs, f, indent=2)
+
+
+def default_model_config() -> Dict[str, object]:
+    return {"ticker": "AAPL", "interval": "1d", "rows": 250, "include_in_run_all": True}
+
+
+def get_model_config(model_name: str, configs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
+    merged = dict(default_model_config())
+    stored = configs.get(model_name, {})
+    if isinstance(stored, dict):
+        merged.update(stored)
+    return merged
 
 
 def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffled") -> Dict[str, object]:
@@ -710,7 +744,7 @@ def error_analysis(y_test_ret: Sequence[float], up_prob: Sequence[float], ret_pr
 
 def save_model_bundle(model_name: str, bundle: Dict[str, object]) -> str:
     ensure_model_dir()
-    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in model_name).strip("_")
+    safe_name = sanitize_model_name(model_name)
     if not safe_name:
         raise ValueError("Model name must include letters or numbers.")
     path = os.path.join(MODEL_DIR, f"{safe_name}.json")
@@ -718,6 +752,10 @@ def save_model_bundle(model_name: str, bundle: Dict[str, object]) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     return path
+
+
+def sanitize_model_name(model_name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in model_name).strip("_")
 
 
 def list_saved_models() -> List[str]:
@@ -897,9 +935,319 @@ def predict_signal(bundle: Dict[str, object], row: Row) -> Dict[str, float | str
 
 
 def create_app() -> "Flask":
-    from flask import Flask, request
+    from flask import Flask, redirect, request, url_for
 
     app = Flask(__name__)
+
+    @app.route("/manage-models", methods=["GET", "POST"])
+    def manage_models() -> str:
+        message_html = ""
+        error_html = ""
+        run_all_requested = request.method == "GET"
+        model_configs = load_model_configs()
+        saved_models = list_saved_models()
+        model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
+
+        if request.method == "POST":
+            action = request.form.get("action", "").strip()
+            model_name = request.form.get("model_name", "").strip()
+            try:
+                if action == "save_config":
+                    if model_name not in saved_models:
+                        raise ValueError("Model not found.")
+                    ticker = request.form.get("ticker", "AAPL").upper().strip()
+                    interval = request.form.get("interval", "1d").strip()
+                    rows_raw = request.form.get("rows", "250").strip()
+                    include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
+                    rows = int(rows_raw)
+                    if interval not in ("1d", "1h", "15m", "5m"):
+                        raise ValueError("Candle length must be one of: 1d, 1h, 15m, 5m.")
+                    if rows < 50:
+                        raise ValueError("Rows must be at least 50.")
+                    model_configs[model_name] = {
+                        "ticker": ticker,
+                        "interval": interval,
+                        "rows": rows,
+                        "include_in_run_all": include_in_run_all,
+                    }
+                    save_model_configs(model_configs)
+                    message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
+                elif action == "run_all":
+                    run_all_requested = True
+                elif action == "rename_model":
+                    new_name = sanitize_model_name(request.form.get("new_name", "").strip())
+                    if model_name not in saved_models:
+                        raise ValueError("Model not found.")
+                    if not new_name:
+                        raise ValueError("New model name cannot be empty.")
+                    if new_name in saved_models:
+                        raise ValueError("A model with that name already exists.")
+                    old_path = os.path.join(MODEL_DIR, f"{model_name}.json")
+                    new_path = os.path.join(MODEL_DIR, f"{new_name}.json")
+                    os.rename(old_path, new_path)
+                    if model_name in model_configs:
+                        model_configs[new_name] = model_configs.pop(model_name)
+                    save_model_configs(model_configs)
+                    return redirect(url_for("manage_models"))
+                elif action == "delete_model":
+                    if model_name not in saved_models:
+                        raise ValueError("Model not found.")
+                    path = os.path.join(MODEL_DIR, f"{model_name}.json")
+                    if os.path.exists(path):
+                        os.remove(path)
+                    if model_name in model_configs:
+                        model_configs.pop(model_name)
+                        save_model_configs(model_configs)
+                    return redirect(url_for("manage_models"))
+            except Exception as exc:
+                error_html = f"<p style='color:#ff7b7b;'><strong>Error:</strong> {exc}</p>"
+            saved_models = list_saved_models()
+            model_configs = load_model_configs()
+            model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
+
+        run_all_rows = ""
+        if run_all_requested:
+            for model_name in saved_models:
+                cfg = get_model_config(model_name, model_configs)
+                if not cfg.get("include_in_run_all", True):
+                    continue
+                try:
+                    dataset = fetch_yahoo_rows(
+                        ticker=str(cfg.get("ticker", "AAPL")),
+                        interval=str(cfg.get("interval", "1d")),
+                        row_count=int(cfg.get("rows", 250)),
+                    )
+                    latest_row = dataset[-1]
+                    bundle = load_model_bundle(model_name)
+                    prediction = predict_signal(bundle, latest_row)
+                    run_all_rows += (
+                        "<tr>"
+                        f"<td>{model_name}</td>"
+                        f"<td>{cfg.get('ticker')}</td>"
+                        f"<td>{cfg.get('interval')}</td>"
+                        f"<td>{int(cfg.get('rows', 250))}</td>"
+                        f"<td>{prediction['expected_return']:+.4%}</td>"
+                        f"<td>{prediction['p_up']:.2%}</td>"
+                        f"<td><strong>{prediction['action']}</strong></td>"
+                        "</tr>"
+                    )
+                except Exception as exc:
+                    run_all_rows += (
+                        "<tr>"
+                        f"<td>{model_name}</td>"
+                        f"<td>{cfg.get('ticker')}</td>"
+                        f"<td>{cfg.get('interval')}</td>"
+                        f"<td>{int(cfg.get('rows', 250))}</td>"
+                        "<td colspan='3' style='color:#ff7b7b;'>"
+                        f"Run failed: {exc}"
+                        "</td>"
+                        "</tr>"
+                    )
+
+        model_cards = ""
+        for model_name in saved_models:
+            cfg = get_model_config(model_name, model_configs)
+            include_badge = "Included in Run All" if cfg.get("include_in_run_all", True) else "Excluded from Run All"
+            model_cards += (
+                f"<button type='button' class='model-card' "
+                f"data-model='{model_name}' "
+                f"data-ticker='{cfg.get('ticker')}' "
+                f"data-interval='{cfg.get('interval')}' "
+                f"data-rows='{int(cfg.get('rows', 250))}' "
+                f"data-include='{1 if cfg.get('include_in_run_all', True) else 0}'>"
+                f"<strong>{model_name}</strong>"
+                f"<span>{cfg.get('ticker')} • {cfg.get('interval')} • {int(cfg.get('rows', 250))} rows</span>"
+                f"<em>{include_badge}</em>"
+                "</button>"
+            )
+
+        return f"""
+        <html>
+          <head><title>Manage Models</title></head>
+          <body>
+            <style>
+              :root {{
+                --bg: #0a0a0f;
+                --panel: #15161f;
+                --panel-2: #1d1f2b;
+                --border: #2a2d3a;
+                --text: #e7e9f1;
+                --muted: #9aa1b2;
+                --accent: #66a3ff;
+              }}
+              * {{ box-sizing: border-box; }}
+              body {{ margin: 0; background: radial-gradient(circle at top, #101425 0%, var(--bg) 50%); color: var(--text); font-family: Inter, Segoe UI, Arial, sans-serif; }}
+              .container {{ max-width: 1100px; margin: 0 auto; padding: 2rem; }}
+              .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
+              .muted {{ color: var(--muted); }}
+              .model-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }}
+              .model-card {{ text-align: left; border: 1px solid var(--border); border-radius: 12px; background: #0f1118; color: var(--text); padding: 0.8rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.35rem; }}
+              .model-card span {{ color: var(--muted); font-size: 0.92rem; }}
+              .model-card em {{ color: #a8c9ff; font-style: normal; font-size: 0.82rem; }}
+              table {{ width: 100%; border-collapse: collapse; }}
+              th, td {{ border-bottom: 1px solid var(--border); padding: 0.45rem 0.35rem; text-align: left; }}
+              th {{ color: #bfc8df; }}
+              a, button {{ color: inherit; }}
+              .btn-link {{ display: inline-block; margin-bottom: 0.8rem; color: #91bbff; text-decoration: none; }}
+              #contextMenu {{ position: fixed; display: none; z-index: 40; min-width: 170px; background: #111521; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 30px rgba(0,0,0,0.45); }}
+              #contextMenu button {{ width: 100%; border: none; background: transparent; color: var(--text); text-align: left; padding: 0.65rem 0.75rem; cursor: pointer; }}
+              #contextMenu button:hover {{ background: #20293f; }}
+              .modal-backdrop {{ position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 30; }}
+              .modal {{ width: min(560px, 92vw); background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem; }}
+              .form-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }}
+              label {{ display: block; color: var(--muted); font-size: 0.92rem; }}
+              input, select {{ width: 100%; margin-top: 0.35rem; background: #0f1118; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 0.58rem 0.65rem; }}
+              .row-actions {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-top: 0.9rem; }}
+              .row-actions button {{ border: none; border-radius: 10px; padding: 0.62rem 0.65rem; cursor: pointer; font-weight: 600; }}
+              .primary {{ background: var(--accent); color: #081121; }}
+              .secondary {{ background: #2c3555; color: #e8ecff; }}
+            </style>
+            <div class="container">
+              <h1>Manage Models</h1>
+              <a class="btn-link" href="/">← Back to Trainer</a>
+              <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, include in Run All). Right-click a model for rename/delete.</p>
+              {message_html}
+              {error_html}
+              <div class="card">
+                <h2>Saved Models</h2>
+                <div class="model-grid">
+                  {model_cards if model_cards else "<p class='muted'>No saved models yet. Train and save one from the main page.</p>"}
+                </div>
+              </div>
+              <div class="card">
+                <h2>Run All Present Models</h2>
+                <p class="muted">Outputs Expected Return (next candle), P(Up), and Action for each model that is included in Run All.</p>
+                <form method="post" style="margin-bottom:0.8rem;">
+                  <input type="hidden" name="action" value="run_all" />
+                  <button type="submit" style="border:none;border-radius:10px;padding:0.62rem 0.85rem;background:#66a3ff;color:#081121;font-weight:600;cursor:pointer;">Run All Present Models</button>
+                </form>
+                <table>
+                  <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
+                  {run_all_rows if run_all_rows else "<tr><td colspan='7' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
+                </table>
+              </div>
+            </div>
+
+            <div id="contextMenu">
+              <button type="button" onclick="openRename()">Rename model</button>
+              <button type="button" onclick="deleteModel()">Delete model</button>
+            </div>
+
+            <div id="settingsModal" class="modal-backdrop">
+              <div class="modal">
+                <h3 id="modalTitle">Model Settings</h3>
+                <form method="post">
+                  <input type="hidden" name="action" value="save_config" />
+                  <input type="hidden" name="model_name" id="cfgModelName" />
+                  <div class="form-grid">
+                    <label>Ticker<input type="text" name="ticker" id="cfgTicker" required /></label>
+                    <label>Candle Length
+                      <select name="interval" id="cfgInterval">
+                        <option value="1d">Daily</option>
+                        <option value="1h">1 hour</option>
+                        <option value="15m">15 min</option>
+                        <option value="5m">5 min</option>
+                      </select>
+                    </label>
+                    <label>Rows<input type="number" min="50" name="rows" id="cfgRows" required /></label>
+                    <label>Include in Run All
+                      <select name="include_in_run_all" id="cfgInclude">
+                        <option value="1">Yes</option>
+                        <option value="0">No</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="row-actions">
+                    <button class="primary" type="submit">Save Settings</button>
+                    <button class="secondary" type="button" onclick="closeModals()">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div id="renameModal" class="modal-backdrop">
+              <div class="modal">
+                <h3>Rename Model</h3>
+                <form method="post">
+                  <input type="hidden" name="action" value="rename_model" />
+                  <input type="hidden" name="model_name" id="renameModelName" />
+                  <label>New Name<input type="text" name="new_name" id="renameInput" required /></label>
+                  <div class="row-actions">
+                    <button class="primary" type="submit">Rename</button>
+                    <button class="secondary" type="button" onclick="closeModals()">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <form id="deleteForm" method="post" style="display:none;">
+              <input type="hidden" name="action" value="delete_model" />
+              <input type="hidden" name="model_name" id="deleteModelName" />
+            </form>
+
+            <script>
+              const settingsModal = document.getElementById("settingsModal");
+              const renameModal = document.getElementById("renameModal");
+              const menu = document.getElementById("contextMenu");
+              let menuModelName = "";
+
+              function closeModals() {{
+                settingsModal.style.display = "none";
+                renameModal.style.display = "none";
+                menu.style.display = "none";
+              }}
+
+              function openModel(card) {{
+                const model = card.dataset.model;
+                document.getElementById("modalTitle").textContent = `Preset Settings • ${model}`;
+                document.getElementById("cfgModelName").value = model;
+                document.getElementById("cfgTicker").value = card.dataset.ticker || "AAPL";
+                document.getElementById("cfgInterval").value = card.dataset.interval || "1d";
+                document.getElementById("cfgRows").value = card.dataset.rows || "250";
+                document.getElementById("cfgInclude").value = card.dataset.include || "1";
+                settingsModal.style.display = "flex";
+              }}
+
+              function openRename() {{
+                if (!menuModelName) return;
+                document.getElementById("renameModelName").value = menuModelName;
+                document.getElementById("renameInput").value = menuModelName;
+                renameModal.style.display = "flex";
+                menu.style.display = "none";
+              }}
+
+              function deleteModel() {{
+                if (!menuModelName) return;
+                if (confirm(`Delete model "${menuModelName}"?`)) {{
+                  document.getElementById("deleteModelName").value = menuModelName;
+                  document.getElementById("deleteForm").submit();
+                }}
+              }}
+
+              document.querySelectorAll(".model-card").forEach((card) => {{
+                card.addEventListener("click", () => openModel(card));
+                card.addEventListener("contextmenu", (evt) => {{
+                  evt.preventDefault();
+                  menuModelName = card.dataset.model;
+                  menu.style.left = `${evt.clientX}px`;
+                  menu.style.top = `${evt.clientY}px`;
+                  menu.style.display = "block";
+                }});
+              }});
+
+              window.addEventListener("click", (evt) => {{
+                if (evt.target === settingsModal || evt.target === renameModal) {{
+                  closeModals();
+                  return;
+                }}
+                if (!menu.contains(evt.target)) {{
+                  menu.style.display = "none";
+                }}
+              }});
+            </script>
+          </body>
+        </html>
+        """
 
     @app.route("/", methods=["GET", "POST"])
     def index() -> str:
@@ -1274,6 +1622,7 @@ def create_app() -> "Flask":
             </style>
             <div class="container">
             <h1>Quant Model Trainer</h1>
+            <p><a href="/manage-models" style="color:#91bbff; text-decoration:none;">Manage Models →</a></p>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
