@@ -353,7 +353,14 @@ def save_model_configs(configs: Dict[str, Dict[str, object]]) -> None:
 
 
 def default_model_config() -> Dict[str, object]:
-    return {"ticker": "AAPL", "interval": "1d", "rows": 250, "include_in_run_all": True}
+    return {
+        "ticker": "AAPL",
+        "interval": "1d",
+        "rows": 250,
+        "include_in_run_all": True,
+        "buy_threshold": 0.6,
+        "sell_threshold": 0.4,
+    }
 
 
 def get_model_config(model_name: str, configs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
@@ -362,6 +369,16 @@ def get_model_config(model_name: str, configs: Dict[str, Dict[str, object]]) -> 
     if isinstance(stored, dict):
         merged.update(stored)
     return merged
+
+
+def parse_thresholds(buy_raw: str, sell_raw: str, *, default_buy: float = 0.6, default_sell: float = 0.4) -> Tuple[float, float]:
+    buy_text = buy_raw.strip()
+    sell_text = sell_raw.strip()
+    buy_threshold = default_buy if buy_text == "" else float(buy_text)
+    sell_threshold = default_sell if sell_text == "" else float(sell_text)
+    if not (0.0 <= sell_threshold < buy_threshold <= 1.0):
+        raise ValueError("Thresholds must satisfy: 0.0 <= sell < buy <= 1.0.")
+    return buy_threshold, sell_threshold
 
 
 def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffled") -> Dict[str, object]:
@@ -407,6 +424,8 @@ def evaluate_bundle(
     y_test_dir: Sequence[int],
     eval_rows: Sequence[Row] | None = None,
     split_style: SplitStyle = "shuffled",
+    buy_threshold: float = 0.6,
+    sell_threshold: float = 0.4,
 ) -> Dict[str, object]:
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
@@ -426,7 +445,13 @@ def evaluate_bundle(
     baseline_zero = [0.0] * len(y_test_ret)
     calibration = calibration_buckets(y_test_dir, up_prob)
     confidence_edges = confidence_edge_analysis(y_test_dir, up_prob)
-    strategy = strategy_metrics(y_test_ret, up_prob, long_threshold=0.6, short_threshold=0.4, trade_cost=0.0005)
+    strategy = strategy_metrics(
+        y_test_ret,
+        up_prob,
+        long_threshold=buy_threshold,
+        short_threshold=sell_threshold,
+        trade_cost=0.0005,
+    )
     pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     walk_forward = walk_forward_validation_rows(rows=eval_rows, max_windows=4) if eval_rows else []
@@ -918,7 +943,13 @@ def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
     return metrics
 
 
-def predict_signal(bundle: Dict[str, object], row: Row) -> Dict[str, float | str]:
+def predict_signal(
+    bundle: Dict[str, object],
+    row: Row,
+    *,
+    buy_threshold: float = 0.6,
+    sell_threshold: float = 0.4,
+) -> Dict[str, float | str]:
     feature_builder = build_default_strategy_features()
     row_features = feature_builder.transform([row])
     if len(row_features[0]) != len(bundle["feature_names"]):
@@ -927,9 +958,9 @@ def predict_signal(bundle: Dict[str, object], row: Row) -> Dict[str, float | str
     expected_return = sum(w * v for w, v in zip(bundle["lin_weights"], x_scaled)) + bundle["lin_bias"]
     p_up = sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], x_scaled)) + bundle["logit_bias"])
     action = "HOLD"
-    if p_up > 0.6:
+    if p_up > buy_threshold:
         action = "BUY"
-    elif p_up < 0.4:
+    elif p_up < sell_threshold:
         action = "SELL"
     return {"expected_return": expected_return, "p_up": p_up, "action": action}
 
@@ -948,13 +979,21 @@ def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dic
             )
             latest_row = dataset[-1]
             bundle = load_model_bundle(model_name)
-            prediction = predict_signal(bundle, latest_row)
+            buy_threshold = float(cfg.get("buy_threshold", 0.6))
+            sell_threshold = float(cfg.get("sell_threshold", 0.4))
+            prediction = predict_signal(
+                bundle,
+                latest_row,
+                buy_threshold=buy_threshold,
+                sell_threshold=sell_threshold,
+            )
             run_all_rows += (
                 "<tr>"
                 f"<td>{model_name}</td>"
                 f"<td>{cfg.get('ticker')}</td>"
                 f"<td>{cfg.get('interval')}</td>"
                 f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{buy_threshold:.2f} / {sell_threshold:.2f}</td>"
                 f"<td>{prediction['expected_return']:+.4%}</td>"
                 f"<td>{prediction['p_up']:.2%}</td>"
                 f"<td><strong>{prediction['action']}</strong></td>"
@@ -967,6 +1006,7 @@ def build_run_all_rows(saved_models: Sequence[str], model_configs: Dict[str, Dic
                 f"<td>{cfg.get('ticker')}</td>"
                 f"<td>{cfg.get('interval')}</td>"
                 f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f} / {float(cfg.get('sell_threshold', 0.4)):.2f}</td>"
                 "<td colspan='3' style='color:#ff7b7b;'>"
                 f"Run failed: {exc}"
                 "</td>"
@@ -998,8 +1038,11 @@ def create_app() -> "Flask":
                     ticker = request.form.get("ticker", "AAPL").upper().strip()
                     interval = request.form.get("interval", "1d").strip()
                     rows_raw = request.form.get("rows", "250").strip()
+                    buy_raw = request.form.get("buy_threshold", "").strip()
+                    sell_raw = request.form.get("sell_threshold", "").strip()
                     include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
                     rows = int(rows_raw)
+                    buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
                     if interval not in ("1d", "1h", "15m", "5m"):
                         raise ValueError("Candle length must be one of: 1d, 1h, 15m, 5m.")
                     if rows < 50:
@@ -1009,6 +1052,8 @@ def create_app() -> "Flask":
                         "interval": interval,
                         "rows": rows,
                         "include_in_run_all": include_in_run_all,
+                        "buy_threshold": buy_threshold,
+                        "sell_threshold": sell_threshold,
                     }
                     save_model_configs(model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
@@ -1053,9 +1098,12 @@ def create_app() -> "Flask":
                 f"data-ticker='{cfg.get('ticker')}' "
                 f"data-interval='{cfg.get('interval')}' "
                 f"data-rows='{int(cfg.get('rows', 250))}' "
-                f"data-include='{1 if cfg.get('include_in_run_all', True) else 0}'>"
+                f"data-include='{1 if cfg.get('include_in_run_all', True) else 0}' "
+                f"data-buy='{float(cfg.get('buy_threshold', 0.6)):.2f}' "
+                f"data-sell='{float(cfg.get('sell_threshold', 0.4)):.2f}'>"
                 f"<strong>{model_name}</strong>"
-                f"<span>{cfg.get('ticker')} • {cfg.get('interval')} • {int(cfg.get('rows', 250))} rows</span>"
+                f"<span>{cfg.get('ticker')} • {cfg.get('interval')} • {int(cfg.get('rows', 250))} rows • "
+                f"BUY>{float(cfg.get('buy_threshold', 0.6)):.2f} / SELL<{float(cfg.get('sell_threshold', 0.4)):.2f}</span>"
                 f"<em>{include_badge}</em>"
                 "</button>"
             )
@@ -1116,7 +1164,7 @@ def create_app() -> "Flask":
             </nav>
             <div class="container">
               <h1>Manage Models</h1>
-              <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, include in Run All). Right-click a model for rename/delete.</p>
+              <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, buy/sell thresholds, include in Run All). Right-click a model for rename/delete.</p>
               {message_html}
               {error_html}
               <div class="card">
@@ -1149,6 +1197,12 @@ def create_app() -> "Flask":
                       </select>
                     </label>
                     <label>Rows<input type="number" min="50" name="rows" id="cfgRows" required /></label>
+                    <label>BUY if P(Up) &gt;
+                      <input type="number" min="0" max="1" step="0.01" name="buy_threshold" id="cfgBuyThreshold" placeholder="0.60" />
+                    </label>
+                    <label>SELL if P(Up) &lt;
+                      <input type="number" min="0" max="1" step="0.01" name="sell_threshold" id="cfgSellThreshold" placeholder="0.40" />
+                    </label>
                     <label>Include in Run All
                       <select name="include_in_run_all" id="cfgInclude">
                         <option value="1">Yes</option>
@@ -1203,6 +1257,8 @@ def create_app() -> "Flask":
                 document.getElementById("cfgTicker").value = card.dataset.ticker || "AAPL";
                 document.getElementById("cfgInterval").value = card.dataset.interval || "1d";
                 document.getElementById("cfgRows").value = card.dataset.rows || "250";
+                document.getElementById("cfgBuyThreshold").value = card.dataset.buy || "0.60";
+                document.getElementById("cfgSellThreshold").value = card.dataset.sell || "0.40";
                 document.getElementById("cfgInclude").value = card.dataset.include || "1";
                 settingsModal.style.display = "flex";
               }}
@@ -1256,11 +1312,15 @@ def create_app() -> "Flask":
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
         split_style = request.form.get("split_style", "shuffled")
+        buy_threshold_raw = request.form.get("buy_threshold", "").strip()
+        sell_threshold_raw = request.form.get("sell_threshold", "").strip()
         model_name = request.form.get("model_name", "").strip()
         selected_model = request.form.get("selected_model", "__new__")
         present_ticker = request.form.get("present_ticker", ticker).upper().strip()
         present_interval = request.form.get("present_interval", interval)
         present_rows = request.form.get("present_rows", rows)
+        present_buy_raw = request.form.get("present_buy_threshold", "").strip()
+        present_sell_raw = request.form.get("present_sell_threshold", "").strip()
         present_model = request.form.get("present_model", selected_model)
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
@@ -1273,19 +1333,25 @@ def create_app() -> "Flask":
             try:
                 if mode == "present":
                     present_row_count = int(present_rows)
+                    present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
                     dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
                     latest_row = dataset[-1]
                     if present_model == "__new__":
                         bundle = train_strategy_models(dataset, split_style=split_style)
                     else:
                         bundle = load_model_bundle(present_model)
-                    prediction = predict_signal(bundle, latest_row)
+                    prediction = predict_signal(
+                        bundle,
+                        latest_row,
+                        buy_threshold=present_buy_threshold,
+                        sell_threshold=present_sell_threshold,
+                    )
                     present_html = f"""
                     <section class="results">
                       <article class="card">
                         <h2>Present Mode • {present_ticker} ({present_interval})</h2>
                         <p class="muted">Model: {"Freshly trained on current dataset" if present_model == "__new__" else present_model}</p>
-                        <p class="muted">Decision rule from testing: BUY if P(Up)&gt;0.60, SELL if P(Up)&lt;0.40, else HOLD.</p>
+                        <p class="muted">Decision rule: BUY if P(Up)&gt;{present_buy_threshold:.2f}, SELL if P(Up)&lt;{present_sell_threshold:.2f}, else HOLD.</p>
                         <p><span class="muted">Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>
                         <p><span class="muted">P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>
                         <p><span class="muted">Action</span> <strong>{prediction['action']}</strong></p>
@@ -1299,6 +1365,7 @@ def create_app() -> "Flask":
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
                     row_count = int(rows)
+                    buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
                     dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
@@ -1316,6 +1383,8 @@ def create_app() -> "Flask":
                             y_test_dir,
                             eval_rows=dataset,
                             split_style=split_style,
+                            buy_threshold=buy_threshold,
+                            sell_threshold=sell_threshold,
                         )
                         metrics["train_size"] = "saved-model"
                         metrics["loaded_model"] = selected_model
@@ -1328,10 +1397,22 @@ def create_app() -> "Flask":
                             bundle["y_test_dir"],
                             eval_rows=dataset,
                             split_style=split_style,
+                            buy_threshold=buy_threshold,
+                            sell_threshold=sell_threshold,
                         )
                         metrics["train_size"] = bundle["train_size"]
                         if train_action == "train" and model_name:
                             save_model_bundle(model_name, bundle)
+                            model_configs = load_model_configs()
+                            model_configs[sanitize_model_name(model_name)] = {
+                                "ticker": ticker,
+                                "interval": interval,
+                                "rows": row_count,
+                                "include_in_run_all": True,
+                                "buy_threshold": buy_threshold,
+                                "sell_threshold": sell_threshold,
+                            }
+                            save_model_configs(model_configs)
                             metrics["saved_model"] = model_name
                             saved_models = list_saved_models()
 
@@ -1419,7 +1500,7 @@ def create_app() -> "Flask":
                     </article>
                     <article class="card">
                       <h3>Decision Strategy</h3>
-                      <p class="muted">Long P&gt;0.6 · Short P&lt;0.4 · Cost 0.05%</p>
+                      <p class="muted">Long P&gt;{metrics['strategy']['long_threshold']:.2f} · Short P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
                       <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                       <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                       <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
@@ -1673,6 +1754,12 @@ def create_app() -> "Flask":
               <label>New Model Name (optional):
                 <input type="text" name="model_name" value="{model_name}" placeholder="momentum_v1" />
               </label>
+              <label>BUY if P(Up) &gt; (optional):
+                <input type="number" min="0" max="1" step="0.01" name="buy_threshold" value="{buy_threshold_raw}" placeholder="0.60" />
+              </label>
+              <label>SELL if P(Up) &lt; (optional):
+                <input type="number" min="0" max="1" step="0.01" name="sell_threshold" value="{sell_threshold_raw}" placeholder="0.40" />
+              </label>
               <label>&nbsp;
                 <div class="button-row">
                   <button type="submit" name="train_action" value="train">Download + Train</button>
@@ -1706,6 +1793,12 @@ def create_app() -> "Flask":
                   {"".join(f'<option value="{name}" {"selected" if present_model == name else ""}>{name}</option>' for name in saved_models)}
                 </select>
               </label>
+              <label>BUY if P(Up) &gt; (optional):
+                <input type="number" min="0" max="1" step="0.01" name="present_buy_threshold" value="{present_buy_raw}" placeholder="0.60" />
+              </label>
+              <label>SELL if P(Up) &lt; (optional):
+                <input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" />
+              </label>
               <label>&nbsp;
                 <button type="submit">Run Present Mode</button>
               </label>
@@ -1718,8 +1811,8 @@ def create_app() -> "Flask":
               <button type="submit">Run All Present Models</button>
               {run_all_html}
               <table>
-                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
-                {run_all_rows if run_all_rows else "<tr><td colspan='7' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
+                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
+                {run_all_rows if run_all_rows else "<tr><td colspan='8' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
               </table>
             </form>
             {error_html}
