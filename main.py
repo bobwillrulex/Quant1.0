@@ -514,6 +514,7 @@ def create_app() -> "Flask":
                     present_row_count = int(present_rows)
                     present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
                     dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
+                    present_rows_used_note = "" if len(dataset) >= present_row_count else f"Only {len(dataset)} frames were available and used for this run."
                     latest_row = dataset[-1]
                     if present_model == "__new__":
                         bundle = train_strategy_models(dataset, split_style=split_style)
@@ -532,6 +533,7 @@ def create_app() -> "Flask":
                         <h2>Present Mode • {present_ticker} ({present_interval})</h2>
                         <p class="muted">Model: {"Freshly trained on current dataset" if present_model == "__new__" else present_model}</p>
                         <p class="muted">{present_rule_text} (BUY&gt;{present_buy_threshold:.2f}, SELL&lt;{present_sell_threshold:.2f}).</p>
+                        <p class="muted">{present_rows_used_note or f"Using requested {present_row_count} frames."}</p>
                         <p><span class="muted">Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>
                         <p><span class="muted">P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>
                         <p><span class="muted">Action</span> <strong>{prediction['action']}</strong></p>
@@ -559,8 +561,11 @@ def create_app() -> "Flask":
                             raise ValueError("When training multiple tickers, provide the same number of model names as tickers.")
                         multi_rows = []
                         model_configs = load_model_configs(mode_key)
+                        multi_rows_used_notes = []
                         for idx, ticker_symbol in enumerate(tickers):
                             dataset = fetch_yahoo_rows(ticker=ticker_symbol, interval=interval, row_count=row_count)
+                            if len(dataset) < row_count:
+                                multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
                             bundle = train_strategy_models(dataset, split_style=split_style)
                             metrics = evaluate_bundle(
                                 bundle,
@@ -605,6 +610,7 @@ def create_app() -> "Flask":
                             "<div class='section-heading'>"
                             f"<h2>Multi-Ticker Results • {interval}</h2>"
                             f"<p class='muted'>Tickers: {', '.join(tickers)} | Rows: {row_count} | Split: {split_style}</p>"
+                            f"<p class='muted'>{' | '.join(multi_rows_used_notes) if multi_rows_used_notes else f'Using requested {row_count} frames for each ticker.'}</p>"
                             "</div>"
                             "<article class='card table-card'>"
                             "<table>"
@@ -618,6 +624,7 @@ def create_app() -> "Flask":
                         ticker = tickers[0]
                     if len(tickers) == 1:
                         dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                        rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
                         train_rows, test_rows = train_test_split(dataset, split_style=split_style)
                         features = build_default_strategy_features()
                         x_test_raw = features.transform(test_rows)
@@ -737,6 +744,7 @@ def create_app() -> "Flask":
                       <div class="section-heading">
                         <h2>Results • {ticker} ({interval})</h2>
                         <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
+                        <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
                         {model_msg}
                       </div>
                       <div class="card-grid">

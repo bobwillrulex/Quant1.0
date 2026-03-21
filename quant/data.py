@@ -117,7 +117,7 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
         raise ValueError("Please request at least 50 rows.")
     ticker_obj = yf.Ticker(ticker)
     rows: List[Row] = []
-    last_non_empty_count = 0
+    best_rows: List[Row] = []
     for period in interval_periods[interval]:
         history = ticker_obj.history(period=period, interval=interval, auto_adjust=False)
         if history.empty:
@@ -126,9 +126,10 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
         lows = [float(v) for v in history["Low"].tolist()]
         closes = [float(v) for v in history["Close"].tolist()]
         rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
-        last_non_empty_count = max(last_non_empty_count, len(rows))
+        if len(rows) > len(best_rows):
+            best_rows = rows
         if len(rows) >= row_count:
             return rows[-row_count:]
-    if last_non_empty_count == 0:
+    if not best_rows:
         raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
-    raise ValueError(f"Requested {row_count} rows, but only {last_non_empty_count} are available for {ticker} ({interval}). Try requesting fewer rows or using a larger timeframe.")
+    return best_rows
