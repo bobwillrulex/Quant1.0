@@ -72,6 +72,49 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
             run_all_rows += ("<tr>" f"<td>{model_name}</td>" f"<td>{cfg.get('ticker')}</td>" f"<td>{cfg.get('interval')}</td>" f"<td>{int(cfg.get('rows', 250))}</td>" f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f} / {float(cfg.get('sell_threshold', 0.4)):.2f}</td>" "<td colspan='3' style='color:#ff7b7b;'>" f"Run failed: {exc}" "</td>" "</tr>")
     return run_all_rows
 
+
+def render_hold_time_boxplot(stats: Dict[str, object], *, stroke: str = "#8ca0bf", accent: str = "#cfd8e6") -> str:
+    count = int(float(stats.get("count", 0.0)))
+    if count <= 0:
+        return "<p class='muted'>No active hold streaks in this test window.</p>"
+    min_v = float(stats.get("min", 0.0))
+    q1 = float(stats.get("q1", 0.0))
+    median = float(stats.get("median", 0.0))
+    q3 = float(stats.get("q3", 0.0))
+    max_v = float(stats.get("max", 0.0))
+    span = max(1e-9, max_v - min_v)
+
+    def scale_x(value: float) -> float:
+        return 22.0 + ((value - min_v) / span) * 236.0
+
+    min_x = scale_x(min_v)
+    q1_x = scale_x(q1)
+    med_x = scale_x(median)
+    q3_x = scale_x(q3)
+    max_x = scale_x(max_v)
+
+    def label(x: float, y: float, text: str) -> str:
+        return f"<text x='{x:.1f}' y='{y:.1f}' fill='{accent}' font-size='10' text-anchor='middle'>{text}</text>"
+
+    return (
+        "<div style='display:inline-flex; flex-direction:column; gap:0.35rem;'>"
+        "<svg width='280' height='96' viewBox='0 0 280 96' xmlns='http://www.w3.org/2000/svg'>"
+        f"<line x1='{min_x:.1f}' y1='48' x2='{max_x:.1f}' y2='48' stroke='{stroke}' stroke-width='1.2'/>"
+        f"<line x1='{min_x:.1f}' y1='39' x2='{min_x:.1f}' y2='57' stroke='{stroke}' stroke-width='1.2'/>"
+        f"<line x1='{max_x:.1f}' y1='39' x2='{max_x:.1f}' y2='57' stroke='{stroke}' stroke-width='1.2'/>"
+        f"<rect x='{q1_x:.1f}' y='34' width='{max(2.0, q3_x - q1_x):.1f}' height='28' fill='none' stroke='{stroke}' stroke-width='1.4' rx='4'/>"
+        f"<line x1='{med_x:.1f}' y1='31' x2='{med_x:.1f}' y2='65' stroke='{accent}' stroke-width='1.5'/>"
+        f"{label(min_x, 23, f'min {min_v:.1f}')}"
+        f"{label(q1_x, 18, f'q1 {q1:.1f}')}"
+        f"{label(med_x, 76, f'med {median:.1f}')}"
+        f"{label(q3_x, 18, f'q3 {q3:.1f}')}"
+        f"{label(max_x, 23, f'max {max_v:.1f}')}"
+        "</svg>"
+        f"<span class='muted' style='font-size:0.82rem;'>Hold streak samples: {count}</span>"
+        "</div>"
+    )
+
+
 def create_app() -> "Flask":
     from flask import Flask, redirect, request, url_for
 
@@ -608,6 +651,11 @@ def create_app() -> "Flask":
                         "</tr>"
                         for item in metrics["feature_ablation"]
                     )
+                    hold_time_boxplot = render_hold_time_boxplot(
+                        metrics["strategy"]["hold_time_stats"],
+                        stroke=theme_border,
+                        accent=theme_table_head,
+                    )
                     result_html = f"""
                 <section class="results">
                   <div class="section-heading">
@@ -637,7 +685,12 @@ def create_app() -> "Flask":
                       <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                       <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                       <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
+                      <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
                       <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
+                      <div style="margin-top:0.55rem;">
+                        <p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>
+                        {hold_time_boxplot}
+                      </div>
                     </article>
                   </div>
 
