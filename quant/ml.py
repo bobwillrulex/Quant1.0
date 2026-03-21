@@ -320,15 +320,28 @@ def strategy_metrics(
     prev_pos = 0
     wins = 0
     trades = 0
+    in_trade = False
+    trade_pnl = 0.0
     for pos, ret in zip(positions, returns):
         turnover = abs(pos - prev_pos)
         day_pnl = pos * ret - turnover * trade_cost
         pnl.append(day_pnl)
-        if pos != 0:
+        if prev_pos == 0 and pos != 0:
+            in_trade = True
+            trade_pnl = 0.0
+        if in_trade:
+            trade_pnl += day_pnl
+        if prev_pos != 0 and pos == 0 and in_trade:
             trades += 1
-            if day_pnl > 0:
+            if trade_pnl > 0:
                 wins += 1
+            in_trade = False
+            trade_pnl = 0.0
         prev_pos = pos
+    if in_trade:
+        trades += 1
+        if trade_pnl > 0:
+            wins += 1
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
