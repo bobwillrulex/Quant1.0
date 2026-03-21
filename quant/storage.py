@@ -55,6 +55,23 @@ def _legacy_configs_path(mode: str) -> Path:
     return Path(LEGACY_MODEL_DIR) / mode / LEGACY_MODEL_CONFIGS_FILE
 
 
+def _legacy_model_dirs(mode: str) -> List[Path]:
+    # Old versions stored model JSON files in ./saved/<mode>.
+    # Newer versions used ./saved_models/<mode>.
+    return [Path("saved") / mode, Path(LEGACY_MODEL_DIR) / mode]
+
+
+def _model_bundle_path(mode: str, model_name: str) -> Path:
+    primary = Path(mode_model_dir(mode)) / f"{model_name}.json"
+    if primary.exists():
+        return primary
+    for legacy_dir in _legacy_model_dirs(mode):
+        candidate = legacy_dir / f"{model_name}.json"
+        if candidate.exists():
+            return candidate
+    return primary
+
+
 def load_model_configs(mode: str) -> Dict[str, Dict[str, object]]:
     ensure_db()
     out: Dict[str, Dict[str, object]] = {}
@@ -125,11 +142,22 @@ def save_model_bundle(mode: str, model_name: str, bundle: Dict[str, object]) -> 
 
 
 def list_saved_models(mode: str) -> List[str]:
-    model_dir = Path(mode_model_dir(mode))
-    return sorted([f.stem for f in model_dir.glob("*.json")])
+    seen: set[str] = set()
+    model_names: List[str] = []
+    all_dirs = [Path(mode_model_dir(mode)), *_legacy_model_dirs(mode)]
+    for model_dir in all_dirs:
+        if not model_dir.exists():
+            continue
+        for model_file in model_dir.glob("*.json"):
+            name = model_file.stem
+            if name in seen:
+                continue
+            seen.add(name)
+            model_names.append(name)
+    return sorted(model_names)
 
 
 def load_model_bundle(mode: str, model_name: str) -> Dict[str, object]:
-    path = Path(mode_model_dir(mode)) / f"{model_name}.json"
+    path = _model_bundle_path(mode, model_name)
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
