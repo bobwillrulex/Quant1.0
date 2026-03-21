@@ -1071,21 +1071,28 @@ def create_app() -> "Flask":
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
         heading_label = "Manage Spot Models" if is_spot else "Manage Options Models"
-        theme_bg = "#eef4ff" if is_spot else "#0a0a0f"
-        theme_text = "#1f2937" if is_spot else "#e7e9f1"
-        theme_panel = "#ffffff" if is_spot else "#15161f"
-        theme_panel2 = "#f7faff" if is_spot else "#1d1f2b"
-        theme_border = "#d1d5db" if is_spot else "#2a2d3a"
-        theme_muted = "#6b7280" if is_spot else "#9aa1b2"
-        theme_accent = "#2563eb" if is_spot else "#66a3ff"
-        theme_topbar_bg = "rgba(255, 255, 255, 0.95)" if is_spot else "rgba(10, 10, 15, 0.92)"
-        theme_brand = "#1f2937" if is_spot else "#d8e6ff"
-        theme_tab = "#4b5563" if is_spot else "#9fb9ea"
-        theme_tab_active = "#1f2937" if is_spot else "#e6f0ff"
-        theme_tab_hover_bg = "#eef2ff" if is_spot else "#121827"
-        theme_surface = "#ffffff" if is_spot else "#0f1118"
-        theme_context_bg = "#ffffff" if is_spot else "#111521"
-        theme_context_hover = "#eef2ff" if is_spot else "#20293f"
+        theme_bg = "#100d07" if is_spot else "#090c12"
+        theme_text = "#efe0be" if is_spot else "#c6ccd7"
+        theme_panel = "#19130b" if is_spot else "#121722"
+        theme_panel2 = "#221b10" if is_spot else "#1a202c"
+        theme_border = "#4a3a20" if is_spot else "#3a4455"
+        theme_muted = "#b79f66" if is_spot else "#98a2b3"
+        theme_accent = "#d4af37" if is_spot else "#c0c0c0"
+        theme_topbar_bg = "rgba(16, 13, 7, 0.94)" if is_spot else "rgba(9, 12, 18, 0.94)"
+        theme_brand = "#f2dd9f" if is_spot else "#d8dde6"
+        theme_tab = "#c8ac60" if is_spot else "#aab3c2"
+        theme_tab_active = "#f3e2b5" if is_spot else "#e5e7eb"
+        theme_tab_hover_bg = "#2a210f" if is_spot else "#1a212f"
+        theme_surface = "#130f08" if is_spot else "#0f141e"
+        theme_context_bg = "#181108" if is_spot else "#141b28"
+        theme_context_hover = "#2a200d" if is_spot else "#20293a"
+        theme_glow_primary = "#5f4514" if is_spot else "#2d364a"
+        theme_glow_secondary = "#3f2e0d" if is_spot else "#1f2636"
+        theme_badge = "#f1cb6c" if is_spot else "#cfd5df"
+        theme_table_head = "#e0c380" if is_spot else "#b5bfce"
+        theme_link = "#e5c46a" if is_spot else "#d6d9df"
+        theme_secondary_bg = "#312511" if is_spot else "#2a3342"
+        theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
         message_html = ""
         error_html = ""
         model_configs = load_model_configs(mode_key)
@@ -1187,7 +1194,7 @@ def create_app() -> "Flask":
                 --accent: {theme_accent};
               }}
               * {{ box-sizing: border-box; }}
-              body {{ margin: 0; background: radial-gradient(circle at 8% -10%, {'#dbeafe' if is_spot else '#1b2340'} 0%, transparent 42%), radial-gradient(circle at 92% -20%, {'#bfdbfe' if is_spot else '#101425'} 0%, transparent 48%), var(--bg); color: var(--text); font-family: Inter, Segoe UI, Arial, sans-serif; }}
+              body {{ margin: 0; background: radial-gradient(circle at 8% -10%, {theme_glow_primary} 0%, transparent 42%), radial-gradient(circle at 92% -20%, {theme_glow_secondary} 0%, transparent 48%), var(--bg); color: var(--text); font-family: Inter, Segoe UI, Arial, sans-serif; }}
               .container {{ max-width: 1100px; margin: 0 auto; padding: 2rem; }}
               .topbar {{ position: sticky; top: 0; z-index: 50; background: {theme_topbar_bg}; border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }}
               .topbar-inner {{ max-width: 1100px; margin: 0 auto; padding: 0.9rem 2rem; display: flex; align-items: center; gap: 1rem; }}
@@ -1199,12 +1206,12 @@ def create_app() -> "Flask":
               .model-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }}
               .model-card {{ text-align: left; border: 1px solid var(--border); border-radius: 12px; background: {theme_surface}; color: var(--text); padding: 0.8rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.35rem; }}
               .model-card span {{ color: var(--muted); font-size: 0.92rem; }}
-              .model-card em {{ color: {'#1d4ed8' if is_spot else '#a8c9ff'}; font-style: normal; font-size: 0.82rem; }}
+              .model-card em {{ color: {theme_badge}; font-style: normal; font-size: 0.82rem; }}
               table {{ width: 100%; border-collapse: collapse; }}
               th, td {{ border-bottom: 1px solid var(--border); padding: 0.45rem 0.35rem; text-align: left; }}
-              th {{ color: {'#475569' if is_spot else '#bfc8df'}; }}
+              th {{ color: {theme_table_head}; }}
               a, button {{ color: inherit; }}
-              .btn-link {{ display: inline-block; margin-bottom: 0.8rem; color: {'#2563eb' if is_spot else '#91bbff'}; text-decoration: none; }}
+              .btn-link {{ display: inline-block; margin-bottom: 0.8rem; color: {theme_link}; text-decoration: none; }}
               #contextMenu {{ position: fixed; display: none; z-index: 40; min-width: 170px; background: {theme_context_bg}; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 30px rgba(0,0,0,{'0.18' if is_spot else '0.45'}); }}
               #contextMenu button {{ width: 100%; border: none; background: transparent; color: var(--text); text-align: left; padding: 0.65rem 0.75rem; cursor: pointer; }}
               #contextMenu button:hover {{ background: {theme_context_hover}; }}
@@ -1216,7 +1223,7 @@ def create_app() -> "Flask":
               .row-actions {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-top: 0.9rem; }}
               .row-actions button {{ border: none; border-radius: 10px; padding: 0.62rem 0.65rem; cursor: pointer; font-weight: 600; }}
               .primary {{ background: var(--accent); color: #ffffff; }}
-              .secondary {{ background: {'#e2e8f0' if is_spot else '#2c3555'}; color: {'#1f2937' if is_spot else '#e8ecff'}; border: 1px solid var(--border); }}
+              .secondary {{ background: {theme_secondary_bg}; color: {theme_secondary_text}; border: 1px solid var(--border); }}
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
@@ -1387,23 +1394,30 @@ def create_app() -> "Flask":
             else "Decision rule: BUY if P(Up) exceeds BUY threshold, SELL(short) if P(Up) is below SELL threshold, else HOLD."
         )
         strategy_mode_text = "Long-only PnL simulation" if is_spot else "Long/Short PnL simulation"
-        theme_bg = "#eef4ff" if is_spot else "#0a0a0f"
-        theme_text = "#1f2937" if is_spot else "#e7e9f1"
-        theme_panel = "#ffffff" if is_spot else "#15161f"
-        theme_panel2 = "#f7faff" if is_spot else "#1d1f2b"
-        theme_border = "#d1d5db" if is_spot else "#2a2d3a"
-        theme_muted = "#6b7280" if is_spot else "#9aa1b2"
-        theme_accent = "#2563eb" if is_spot else "#66a3ff"
-        theme_topbar_bg = "rgba(255, 255, 255, 0.95)" if is_spot else "rgba(10, 10, 15, 0.92)"
-        theme_brand = "#1f2937" if is_spot else "#d8e6ff"
-        theme_tab = "#4b5563" if is_spot else "#9fb9ea"
-        theme_tab_active = "#1f2937" if is_spot else "#e6f0ff"
-        theme_tab_hover_bg = "#eef2ff" if is_spot else "#121827"
-        theme_surface = "#ffffff" if is_spot else "#0f1118"
-        theme_details_bg = "#f8fafc" if is_spot else "#10131c"
-        theme_overlay = "rgba(21, 28, 45, 0.20)" if is_spot else "rgba(6, 8, 14, 0.78)"
-        theme_table_head = "#475569" if is_spot else "#bfc8df"
-        theme_heading = "#1f2937" if is_spot else "#d5dcf4"
+        theme_bg = "#100d07" if is_spot else "#090c12"
+        theme_text = "#efe0be" if is_spot else "#c6ccd7"
+        theme_panel = "#19130b" if is_spot else "#121722"
+        theme_panel2 = "#221b10" if is_spot else "#1a202c"
+        theme_border = "#4a3a20" if is_spot else "#3a4455"
+        theme_muted = "#b79f66" if is_spot else "#98a2b3"
+        theme_accent = "#d4af37" if is_spot else "#c0c0c0"
+        theme_topbar_bg = "rgba(16, 13, 7, 0.94)" if is_spot else "rgba(9, 12, 18, 0.94)"
+        theme_brand = "#f2dd9f" if is_spot else "#d8dde6"
+        theme_tab = "#c8ac60" if is_spot else "#aab3c2"
+        theme_tab_active = "#f3e2b5" if is_spot else "#e5e7eb"
+        theme_tab_hover_bg = "#2a210f" if is_spot else "#1a212f"
+        theme_surface = "#130f08" if is_spot else "#0f141e"
+        theme_details_bg = "#1e170d" if is_spot else "#131a26"
+        theme_overlay = "rgba(10, 8, 4, 0.82)" if is_spot else "rgba(6, 8, 14, 0.78)"
+        theme_table_head = "#e0c380" if is_spot else "#b5bfce"
+        theme_heading = "#f3e2b5" if is_spot else "#d6dde8"
+        theme_glow_primary = "#5f4514" if is_spot else "#2d364a"
+        theme_glow_secondary = "#3f2e0d" if is_spot else "#1f2636"
+        theme_shadow_alpha = "0.34" if is_spot else "0.35"
+        theme_secondary_bg = "#312511" if is_spot else "#2a3342"
+        theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
+        theme_progress_start = "#b38a2a" if is_spot else "#8f99aa"
+        theme_progress_end = "#f0cf73" if is_spot else "#d4d8de"
         result_html = ""
         error_html = ""
         ticker = request.form.get("ticker", "AAPL").upper().strip()
@@ -1721,7 +1735,7 @@ def create_app() -> "Flask":
               * {{ box-sizing: border-box; }}
               body {{
                 margin: 0;
-                background: radial-gradient(circle at 8% -10%, {'#dbeafe' if is_spot else '#1b2340'} 0%, transparent 40%), radial-gradient(circle at 92% -20%, {'#bfdbfe' if is_spot else '#101425'} 0%, transparent 48%), linear-gradient(180deg, {'#f8fbff' if is_spot else '#0b0d15'} 0%, var(--bg) 58%);
+                background: radial-gradient(circle at 8% -10%, {theme_glow_primary} 0%, transparent 40%), radial-gradient(circle at 92% -20%, {theme_glow_secondary} 0%, transparent 48%), linear-gradient(180deg, #090b10 0%, var(--bg) 58%);
                 color: var(--text);
                 font-family: Inter, Segoe UI, Arial, sans-serif;
               }}
@@ -1742,7 +1756,7 @@ def create_app() -> "Flask":
                 border-radius: 14px;
                 padding: 1rem 1.1rem;
                 margin-bottom: 1rem;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, {'0.14' if is_spot else '0.35'});
+                box-shadow: 0 10px 30px rgba(0, 0, 0, {theme_shadow_alpha});
               }}
               .form-grid {{
                 display: grid;
@@ -1772,8 +1786,8 @@ def create_app() -> "Flask":
                 gap: 0.5rem;
               }}
               .secondary {{
-                background: {'#e2e8f0' if is_spot else '#2b3250'};
-                color: {'#1f2937' if is_spot else '#e7e9f1'};
+                background: {theme_secondary_bg};
+                color: {theme_secondary_text};
                 border: 1px solid var(--border);
               }}
               .card-grid, .table-grid {{
@@ -1846,7 +1860,7 @@ def create_app() -> "Flask":
               .progress-fill {{
                 width: 0%;
                 height: 100%;
-                background: linear-gradient(90deg, #66a3ff 0%, #7bd88f 100%);
+                background: linear-gradient(90deg, {theme_progress_start} 0%, {theme_progress_end} 100%);
                 transition: width 0.2s ease;
               }}
               .loading-meta {{
