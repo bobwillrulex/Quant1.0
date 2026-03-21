@@ -21,7 +21,7 @@ import math
 import os
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Literal, Sequence, Tuple
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -139,9 +139,19 @@ class LogisticRegressionGD:
         return [self.predict_proba_one(row) for row in x]
 
 
-def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25) -> Tuple[List[Row], List[Row]]:
+SplitStyle = Literal["shuffled", "chronological"]
+
+
+def train_test_split(
+    rows: Sequence[Row],
+    test_ratio: float = 0.25,
+    split_style: SplitStyle = "shuffled",
+) -> Tuple[List[Row], List[Row]]:
     data = list(rows)
-    random.shuffle(data)
+    if split_style == "shuffled":
+        random.shuffle(data)
+    elif split_style != "chronological":
+        raise ValueError("split_style must be either 'shuffled' or 'chronological'.")
     split = max(1, int(len(data) * (1 - test_ratio)))
     return data[:split], data[split:]
 
@@ -320,8 +330,8 @@ def ensure_model_dir() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
 
 
-def train_strategy_models(rows: Sequence[Row]) -> Dict[str, object]:
-    train_rows, test_rows = train_test_split(rows)
+def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffled") -> Dict[str, object]:
+    train_rows, test_rows = train_test_split(rows, split_style=split_style)
     features = build_default_strategy_features()
     x_train_raw = features.transform(train_rows)
     x_test_raw = features.transform(test_rows)
@@ -349,6 +359,7 @@ def train_strategy_models(rows: Sequence[Row]) -> Dict[str, object]:
         "logit_bias": logit.bias,
         "train_size": len(train_rows),
         "test_size": len(test_rows),
+        "split_style": split_style,
         "x_test_raw": x_test_raw,
         "y_test_ret": y_test_ret,
         "y_test_dir": y_test_dir,
@@ -361,6 +372,7 @@ def evaluate_bundle(
     y_test_ret: Sequence[float],
     y_test_dir: Sequence[int],
     eval_rows: Sequence[Row] | None = None,
+    split_style: SplitStyle = "shuffled",
 ) -> Dict[str, object]:
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
@@ -384,7 +396,7 @@ def evaluate_bundle(
     pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     walk_forward = walk_forward_validation_rows(rows=eval_rows, max_windows=4) if eval_rows else []
-    ablation = feature_ablation_analysis(eval_rows, bundle["feature_names"]) if eval_rows else []
+    ablation = feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style) if eval_rows else []
     errors = error_analysis(y_test_ret, up_prob, ret_pred, top_n=5)
 
     preview = []
@@ -415,6 +427,7 @@ def evaluate_bundle(
         "logit_bias": bundle["logit_bias"],
         "preview": preview,
         "test_size": len(y_test_ret),
+        "split_style": split_style,
         "calibration": calibration,
         "confidence_edge": confidence_edges,
         "strategy": strategy,
@@ -615,12 +628,16 @@ def walk_forward_validation_rows(rows: Sequence[Row], max_windows: int = 4) -> L
     return results
 
 
-def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str]) -> List[Dict[str, float]]:
+def feature_ablation_analysis(
+    rows: Sequence[Row],
+    feature_names: Sequence[str],
+    split_style: SplitStyle = "shuffled",
+) -> List[Dict[str, float]]:
     if len(rows) < 100:
         return []
     if len(rows) > 600:
         rows = list(rows)[-600:]
-    train_rows, test_rows = train_test_split(rows)
+    train_rows, test_rows = train_test_split(rows, split_style=split_style)
     features = build_default_strategy_features()
     x_train_raw_full = features.transform(train_rows)
     x_test_raw_full = features.transform(test_rows)
@@ -648,7 +665,7 @@ def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str])
             if feature.name != removed:
                 builder.add(feature.name, feature.fn)
 
-        train_rows, test_rows = train_test_split(rows)
+        train_rows, test_rows = train_test_split(rows, split_style=split_style)
         x_train_raw = builder.transform(train_rows)
         x_test_raw = builder.transform(test_rows)
         x_train, means, stds = standardize_fit(x_train_raw)
@@ -716,7 +733,14 @@ def load_model_bundle(model_name: str) -> Dict[str, object]:
 
 def run_model(rows: Sequence[Row]) -> None:
     bundle = train_strategy_models(rows)
-    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=rows)
+    metrics = evaluate_bundle(
+        bundle,
+        bundle["x_test_raw"],
+        bundle["y_test_ret"],
+        bundle["y_test_dir"],
+        eval_rows=rows,
+        split_style=bundle["split_style"],
+    )
     print("=== Strategy Feature Set ===")
     print(", ".join(metrics["features"]))
     print("\n=== Linear Regression (predict next return) ===")
@@ -844,7 +868,14 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
 
 def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
     bundle = train_strategy_models(rows)
-    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=rows)
+    metrics = evaluate_bundle(
+        bundle,
+        bundle["x_test_raw"],
+        bundle["y_test_ret"],
+        bundle["y_test_dir"],
+        eval_rows=rows,
+        split_style=bundle["split_style"],
+    )
     metrics["train_size"] = bundle["train_size"]
     return metrics
 
@@ -861,6 +892,7 @@ def create_app() -> "Flask":
         ticker = request.form.get("ticker", "AAPL").upper().strip()
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
+        split_style = request.form.get("split_style", "shuffled")
         model_name = request.form.get("model_name", "").strip()
         selected_model = request.form.get("selected_model", "__new__")
         saved_models = list_saved_models()
@@ -868,19 +900,36 @@ def create_app() -> "Flask":
         if request.method == "POST":
             try:
                 row_count = int(rows)
+                if split_style not in ("shuffled", "chronological"):
+                    raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
                 dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                train_rows, test_rows = train_test_split(dataset, split_style=split_style)
+                features = build_default_strategy_features()
+                x_test_raw = features.transform(test_rows)
+                y_test_ret = [r["return_next"] for r in test_rows]
+                y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                 if selected_model != "__new__":
                     loaded = load_model_bundle(selected_model)
-                    features = build_default_strategy_features()
-                    x_raw = features.transform(dataset)
-                    y_ret = [r["return_next"] for r in dataset]
-                    y_dir = [1 if r > 0 else 0 for r in y_ret]
-                    metrics = evaluate_bundle(loaded, x_raw, y_ret, y_dir, eval_rows=dataset)
+                    metrics = evaluate_bundle(
+                        loaded,
+                        x_test_raw,
+                        y_test_ret,
+                        y_test_dir,
+                        eval_rows=dataset,
+                        split_style=split_style,
+                    )
                     metrics["train_size"] = "saved-model"
                     metrics["loaded_model"] = selected_model
                 else:
-                    bundle = train_strategy_models(dataset)
-                    metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=dataset)
+                    bundle = train_strategy_models(dataset, split_style=split_style)
+                    metrics = evaluate_bundle(
+                        bundle,
+                        bundle["x_test_raw"],
+                        bundle["y_test_ret"],
+                        bundle["y_test_dir"],
+                        eval_rows=dataset,
+                        split_style=split_style,
+                    )
                     metrics["train_size"] = bundle["train_size"]
                     if model_name:
                         save_model_bundle(model_name, bundle)
@@ -951,7 +1000,7 @@ def create_app() -> "Flask":
                 <section class="results">
                   <div class="section-heading">
                     <h2>Results • {ticker} ({interval})</h2>
-                    <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']}</p>
+                    <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
                     {model_msg}
                   </div>
                   <div class="card-grid">
@@ -1185,6 +1234,12 @@ def create_app() -> "Flask":
               </label>
               <label>Rows:
                 <input type="number" min="50" name="rows" value="{rows}" required />
+              </label>
+              <label>Split Style:
+                <select name="split_style">
+                  <option value="shuffled" {"selected" if split_style == "shuffled" else ""}>Legacy (shuffled)</option>
+                  <option value="chronological" {"selected" if split_style == "chronological" else ""}>Time-aware (chronological)</option>
+                </select>
               </label>
               <label>Saved Model:
                 <select name="selected_model">
