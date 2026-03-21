@@ -458,7 +458,7 @@ def evaluate_bundle(
         long_threshold=buy_threshold,
         short_threshold=sell_threshold,
         trade_cost=0.0005,
-        buy_hold_returns=[r["return_next"] for r in eval_rows] if eval_rows else None,
+        buy_hold_returns=y_test_ret,
     )
     pnl_by_signal = pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
     pnl_by_regime = pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005)
@@ -832,7 +832,7 @@ def run_model(rows: Sequence[Row]) -> None:
         f"Total Return: {strat['total_return']:+.2%}, Sharpe: {strat['sharpe']:.3f}, "
         f"Max Drawdown: {strat['max_drawdown']:.2%}, Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
     )
-    print(f"Buy & Hold Return (evaluation rows): {strat['buy_hold_total_return']:+.2%}")
+    print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
 
 
 def ema(values: Sequence[float], span: int) -> List[float]:
@@ -1515,7 +1515,7 @@ def create_app() -> "Flask":
                       <h3>Decision Strategy</h3>
                       <p class="muted">Long P&gt;{metrics['strategy']['long_threshold']:.2f} · Short P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
                       <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
-                      <p><span class="muted">Buy &amp; Hold Return (requested rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
+                      <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                       <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                       <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
                       <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
