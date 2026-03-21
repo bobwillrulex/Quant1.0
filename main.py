@@ -54,6 +54,13 @@ def get_model_config(model_name: str, configs: Dict[str, Dict[str, object]]) -> 
     return merged
 
 
+def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
+    values = [value.strip() for value in raw.split(",") if value.strip()]
+    if uppercase:
+        return [value.upper() for value in values]
+    return values
+
+
 def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
     run_all_rows = ""
     for model_name in saved_models:
@@ -541,250 +548,319 @@ def create_app() -> "Flask":
                     buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
-                    dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
-                    train_rows, test_rows = train_test_split(dataset, split_style=split_style)
-                    features = build_default_strategy_features()
-                    x_test_raw = features.transform(test_rows)
-                    y_test_ret = [r["return_next"] for r in test_rows]
-                    y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
-                    if selected_model != "__new__":
-                        loaded = load_model_bundle(mode_key, selected_model)
-                        metrics = evaluate_bundle(
-                            loaded,
-                            x_test_raw,
-                            y_test_ret,
-                            y_test_dir,
-                            eval_rows=dataset,
-                            split_style=split_style,
-                            buy_threshold=buy_threshold,
-                            sell_threshold=sell_threshold,
-                            allow_short=allow_short,
-                        )
-                        metrics["train_size"] = "saved-model"
-                        metrics["loaded_model"] = selected_model
-                    else:
-                        bundle = train_strategy_models(dataset, split_style=split_style)
-                        metrics = evaluate_bundle(
-                            bundle,
-                            bundle["x_test_raw"],
-                            bundle["y_test_ret"],
-                            bundle["y_test_dir"],
-                            eval_rows=dataset,
-                            split_style=split_style,
-                            buy_threshold=buy_threshold,
-                            sell_threshold=sell_threshold,
-                            allow_short=allow_short,
-                        )
-                        metrics["train_size"] = bundle["train_size"]
-                        if train_action == "train" and model_name:
-                            save_model_bundle(mode_key, model_name, bundle)
-                            model_configs = load_model_configs(mode_key)
-                            model_configs[sanitize_model_name(model_name)] = {
-                                "ticker": ticker,
-                                "interval": interval,
-                                "rows": row_count,
-                                "include_in_run_all": True,
-                                "buy_threshold": buy_threshold,
-                                "sell_threshold": sell_threshold,
-                            }
+                    tickers = parse_csv_values(ticker, uppercase=True)
+                    if not tickers:
+                        raise ValueError("Please enter at least one ticker symbol.")
+                    model_names = parse_csv_values(model_name, uppercase=False) if model_name else []
+                    if len(tickers) > 1:
+                        if selected_model != "__new__":
+                            raise ValueError("Multi-ticker run only supports training new models (not loading an existing saved model).")
+                        if model_names and len(model_names) != len(tickers):
+                            raise ValueError("When training multiple tickers, provide the same number of model names as tickers.")
+                        multi_rows = []
+                        model_configs = load_model_configs(mode_key)
+                        for idx, ticker_symbol in enumerate(tickers):
+                            dataset = fetch_yahoo_rows(ticker=ticker_symbol, interval=interval, row_count=row_count)
+                            bundle = train_strategy_models(dataset, split_style=split_style)
+                            metrics = evaluate_bundle(
+                                bundle,
+                                bundle["x_test_raw"],
+                                bundle["y_test_ret"],
+                                bundle["y_test_dir"],
+                                eval_rows=dataset,
+                                split_style=split_style,
+                                buy_threshold=buy_threshold,
+                                sell_threshold=sell_threshold,
+                                allow_short=allow_short,
+                            )
+                            trained_model_name = ""
+                            if train_action == "train":
+                                candidate_name = model_names[idx] if model_names else ""
+                                if candidate_name:
+                                    trained_model_name = sanitize_model_name(candidate_name)
+                                    save_model_bundle(mode_key, trained_model_name, bundle)
+                                    model_configs[trained_model_name] = {
+                                        "ticker": ticker_symbol,
+                                        "interval": interval,
+                                        "rows": row_count,
+                                        "include_in_run_all": True,
+                                        "buy_threshold": buy_threshold,
+                                        "sell_threshold": sell_threshold,
+                                    }
+                            multi_rows.append(
+                                "<tr>"
+                                f"<td>{ticker_symbol}</td>"
+                                f"<td>{trained_model_name or '(not saved)'}</td>"
+                                f"<td>{metrics['accuracy']:.4f}</td>"
+                                f"<td>{metrics['mse']:.8f}</td>"
+                                f"<td>{metrics['strategy']['total_return']:+.2%}</td>"
+                                f"<td>{int(metrics['strategy']['trade_count'])}</td>"
+                                "</tr>"
+                            )
+                        if train_action == "train" and model_names:
                             save_model_configs(mode_key, model_configs)
-                            metrics["saved_model"] = model_name
                             saved_models = list_saved_models(mode_key)
-
-                    preview_rows = "".join(
-                        f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
-                        for idx, p in enumerate(metrics["preview"])
-                    )
-                    model_msg = ""
-                    if "saved_model" in metrics:
-                        model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
-                    if "loaded_model" in metrics:
-                        model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
-                    linear_weight_rows = "".join(
-                        f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
-                    )
-                    logistic_weight_rows = "".join(
-                        f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
-                    )
-                    calibration_rows = "".join(
-                        "<tr>"
-                        f"<td>{item['bucket_low']:.2f} - {item['bucket_high']:.2f}</td>"
-                        f"<td>{int(item['count'])}</td>"
-                        f"<td>{item['predicted_mean']:.4f}</td>"
-                        f"<td>{item['actual_win_rate']:.4f}</td>"
-                        "</tr>"
-                        for item in metrics["calibration"]
-                    )
-                    pnl_signal_rows = "".join(
-                        "<tr>"
-                        f"<td>{item['bucket']}</td>"
-                        f"<td>{int(item['count'])}</td>"
-                        f"<td>{item['avg_pnl']:+.4%}</td>"
-                        f"<td>{item['total_pnl']:+.2%}</td>"
-                        "</tr>"
-                        for item in metrics["pnl_by_signal_strength"]
-                    )
-                    pnl_regime_rows = "".join(
-                        "<tr>"
-                        f"<td>{item['regime']}</td>"
-                        f"<td>{int(item['count'])}</td>"
-                        f"<td>{item['avg_pnl']:+.4%}</td>"
-                        f"<td>{item['total_pnl']:+.2%}</td>"
-                        "</tr>"
-                        for item in metrics["pnl_by_regime"]
-                    )
-                    walk_forward_rows = "".join(
-                        "<tr>"
-                        f"<td>{int(item['window'])}</td>"
-                        f"<td>{int(item['train_size'])}</td>"
-                        f"<td>{int(item['test_size'])}</td>"
-                        f"<td>{item['accuracy']:.4f}</td>"
-                        f"<td>{item['mse']:.8f}</td>"
-                        "</tr>"
-                        for item in metrics["walk_forward"]
-                    )
-                    ablation_rows = "".join(
-                        "<tr>"
-                        f"<td>{item['removed_feature']}</td>"
-                        f"<td>{item['accuracy_delta']:+.4f}</td>"
-                        f"<td>{item['mse_delta']:+.8f}</td>"
-                        "</tr>"
-                        for item in metrics["feature_ablation"]
-                    )
-                    hold_time_boxplot = render_hold_time_boxplot(
-                        metrics["strategy"]["hold_time_stats"],
-                        stroke=theme_border,
-                        accent=theme_table_head,
-                    )
-                    result_html = f"""
-                <section class="results">
-                  <div class="section-heading">
-                    <h2>Results • {ticker} ({interval})</h2>
-                    <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
-                    {model_msg}
-                  </div>
-                  <div class="card-grid">
-                    <article class="card">
-                      <h3>Linear Model</h3>
-                      <p><span class="muted">Test MSE</span> <strong>{metrics['mse']:.8f}</strong></p>
-                      <p><span class="muted">Test MAE</span> <strong>{metrics['mae']:.8f}</strong></p>
-                      <p><span class="muted">Zero baseline (MSE/MAE)</span><br>{metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
-                      <p><span class="muted">Edge vs baseline (MSE/MAE)</span><br>{metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
-                    </article>
-                    <article class="card">
-                      <h3>Logistic Model</h3>
-                      <p><span class="muted">Accuracy</span> <strong>{metrics['accuracy']:.4f}</strong></p>
-                      <p><span class="muted">Always-UP baseline</span> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
-                      <p><span class="muted">Precision / Recall / F1</span><br>{metrics['precision']:.4f} / {metrics['recall']:.4f} / {metrics['f1']:.4f}</p>
-                      <p><span class="muted">Confusion Matrix</span><br>TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}</p>
-                    </article>
-                    <article class="card">
-                      <h3>Decision Strategy</h3>
-                      <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
-                      <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
-                      <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
-                      <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
-                      <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
-                      <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
-                      <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
-                      <div style="margin-top:0.55rem;">
-                        <p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>
-                        {hold_time_boxplot}
+                        result_html = (
+                            "<section class='results'>"
+                            "<div class='section-heading'>"
+                            f"<h2>Multi-Ticker Results • {interval}</h2>"
+                            f"<p class='muted'>Tickers: {', '.join(tickers)} | Rows: {row_count} | Split: {split_style}</p>"
+                            "</div>"
+                            "<article class='card table-card'>"
+                            "<table>"
+                            "<tr><th>Ticker</th><th>Saved Model</th><th>Accuracy</th><th>MSE</th><th>Strategy Return</th><th>Trades</th></tr>"
+                            f"{''.join(multi_rows)}"
+                            "</table>"
+                            "</article>"
+                            "</section>"
+                        )
+                    else:
+                        ticker = tickers[0]
+                    if len(tickers) == 1:
+                        dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                        train_rows, test_rows = train_test_split(dataset, split_style=split_style)
+                        features = build_default_strategy_features()
+                        x_test_raw = features.transform(test_rows)
+                        y_test_ret = [r["return_next"] for r in test_rows]
+                        y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+                        if selected_model != "__new__":
+                            loaded = load_model_bundle(mode_key, selected_model)
+                            metrics = evaluate_bundle(
+                                loaded,
+                                x_test_raw,
+                                y_test_ret,
+                                y_test_dir,
+                                eval_rows=dataset,
+                                split_style=split_style,
+                                buy_threshold=buy_threshold,
+                                sell_threshold=sell_threshold,
+                                allow_short=allow_short,
+                            )
+                            metrics["train_size"] = "saved-model"
+                            metrics["loaded_model"] = selected_model
+                        else:
+                            bundle = train_strategy_models(dataset, split_style=split_style)
+                            metrics = evaluate_bundle(
+                                bundle,
+                                bundle["x_test_raw"],
+                                bundle["y_test_ret"],
+                                bundle["y_test_dir"],
+                                eval_rows=dataset,
+                                split_style=split_style,
+                                buy_threshold=buy_threshold,
+                                sell_threshold=sell_threshold,
+                                allow_short=allow_short,
+                            )
+                            metrics["train_size"] = bundle["train_size"]
+                            if train_action == "train" and model_name:
+                                save_model_bundle(mode_key, model_name, bundle)
+                                model_configs = load_model_configs(mode_key)
+                                model_configs[sanitize_model_name(model_name)] = {
+                                    "ticker": ticker,
+                                    "interval": interval,
+                                    "rows": row_count,
+                                    "include_in_run_all": True,
+                                    "buy_threshold": buy_threshold,
+                                    "sell_threshold": sell_threshold,
+                                }
+                                save_model_configs(mode_key, model_configs)
+                                metrics["saved_model"] = model_name
+                                saved_models = list_saved_models(mode_key)
+    
+                        preview_rows = "".join(
+                            f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
+                            for idx, p in enumerate(metrics["preview"])
+                        )
+                        model_msg = ""
+                        if "saved_model" in metrics:
+                            model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
+                        if "loaded_model" in metrics:
+                            model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
+                        linear_weight_rows = "".join(
+                            f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
+                        )
+                        logistic_weight_rows = "".join(
+                            f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
+                        )
+                        calibration_rows = "".join(
+                            "<tr>"
+                            f"<td>{item['bucket_low']:.2f} - {item['bucket_high']:.2f}</td>"
+                            f"<td>{int(item['count'])}</td>"
+                            f"<td>{item['predicted_mean']:.4f}</td>"
+                            f"<td>{item['actual_win_rate']:.4f}</td>"
+                            "</tr>"
+                            for item in metrics["calibration"]
+                        )
+                        pnl_signal_rows = "".join(
+                            "<tr>"
+                            f"<td>{item['bucket']}</td>"
+                            f"<td>{int(item['count'])}</td>"
+                            f"<td>{item['avg_pnl']:+.4%}</td>"
+                            f"<td>{item['total_pnl']:+.2%}</td>"
+                            "</tr>"
+                            for item in metrics["pnl_by_signal_strength"]
+                        )
+                        pnl_regime_rows = "".join(
+                            "<tr>"
+                            f"<td>{item['regime']}</td>"
+                            f"<td>{int(item['count'])}</td>"
+                            f"<td>{item['avg_pnl']:+.4%}</td>"
+                            f"<td>{item['total_pnl']:+.2%}</td>"
+                            "</tr>"
+                            for item in metrics["pnl_by_regime"]
+                        )
+                        walk_forward_rows = "".join(
+                            "<tr>"
+                            f"<td>{int(item['window'])}</td>"
+                            f"<td>{int(item['train_size'])}</td>"
+                            f"<td>{int(item['test_size'])}</td>"
+                            f"<td>{item['accuracy']:.4f}</td>"
+                            f"<td>{item['mse']:.8f}</td>"
+                            "</tr>"
+                            for item in metrics["walk_forward"]
+                        )
+                        ablation_rows = "".join(
+                            "<tr>"
+                            f"<td>{item['removed_feature']}</td>"
+                            f"<td>{item['accuracy_delta']:+.4f}</td>"
+                            f"<td>{item['mse_delta']:+.8f}</td>"
+                            "</tr>"
+                            for item in metrics["feature_ablation"]
+                        )
+                        hold_time_boxplot = render_hold_time_boxplot(
+                            metrics["strategy"]["hold_time_stats"],
+                            stroke=theme_border,
+                            accent=theme_table_head,
+                        )
+                        result_html = f"""
+                    <section class="results">
+                      <div class="section-heading">
+                        <h2>Results • {ticker} ({interval})</h2>
+                        <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
+                        {model_msg}
                       </div>
-                    </article>
-                  </div>
-
-                  <article class="card">
-                    <h3>Feature Set</h3>
-                    <p>{', '.join(metrics['features'])}</p>
-                  </article>
-
-                  <div class="table-grid">
-                    <article class="card table-card">
-                      <h3>Calibration Buckets</h3>
-                      <table>
-                        <tr><th>Bucket</th><th>Count</th><th>Pred Mean</th><th>Actual Win</th></tr>
-                        {calibration_rows}
-                      </table>
-                    </article>
-                    <article class="card table-card">
-                      <h3>Confidence Edge</h3>
-                      <table>
-                        <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
-                        <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
-                        <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
-                      </table>
-                    </article>
-                  </div>
-
-                  <div class="table-grid">
-                    <article class="card table-card">
-                      <h3>PnL by Signal Strength</h3>
-                      <table>
-                        <tr><th>Bucket</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
-                        {pnl_signal_rows}
-                      </table>
-                    </article>
-                    <article class="card table-card">
-                      <h3>PnL by Market Regime</h3>
-                      <table>
-                        <tr><th>Regime</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
-                        {pnl_regime_rows}
-                      </table>
-                    </article>
-                  </div>
-
-                  <details>
-                    <summary>Walk-forward & Feature Ablation</summary>
-                    <div class="table-grid">
+                      <div class="card-grid">
+                        <article class="card">
+                          <h3>Linear Model</h3>
+                          <p><span class="muted">Test MSE</span> <strong>{metrics['mse']:.8f}</strong></p>
+                          <p><span class="muted">Test MAE</span> <strong>{metrics['mae']:.8f}</strong></p>
+                          <p><span class="muted">Zero baseline (MSE/MAE)</span><br>{metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
+                          <p><span class="muted">Edge vs baseline (MSE/MAE)</span><br>{metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
+                        </article>
+                        <article class="card">
+                          <h3>Logistic Model</h3>
+                          <p><span class="muted">Accuracy</span> <strong>{metrics['accuracy']:.4f}</strong></p>
+                          <p><span class="muted">Always-UP baseline</span> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
+                          <p><span class="muted">Precision / Recall / F1</span><br>{metrics['precision']:.4f} / {metrics['recall']:.4f} / {metrics['f1']:.4f}</p>
+                          <p><span class="muted">Confusion Matrix</span><br>TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}</p>
+                        </article>
+                        <article class="card">
+                          <h3>Decision Strategy</h3>
+                          <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
+                          <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
+                          <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
+                          <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
+                          <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
+                          <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
+                          <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
+                          <div style="margin-top:0.55rem;">
+                            <p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>
+                            {hold_time_boxplot}
+                          </div>
+                        </article>
+                      </div>
+    
+                      <article class="card">
+                        <h3>Feature Set</h3>
+                        <p>{', '.join(metrics['features'])}</p>
+                      </article>
+    
+                      <div class="table-grid">
+                        <article class="card table-card">
+                          <h3>Calibration Buckets</h3>
+                          <table>
+                            <tr><th>Bucket</th><th>Count</th><th>Pred Mean</th><th>Actual Win</th></tr>
+                            {calibration_rows}
+                          </table>
+                        </article>
+                        <article class="card table-card">
+                          <h3>Confidence Edge</h3>
+                          <table>
+                            <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
+                            <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
+                            <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
+                          </table>
+                        </article>
+                      </div>
+    
+                      <div class="table-grid">
+                        <article class="card table-card">
+                          <h3>PnL by Signal Strength</h3>
+                          <table>
+                            <tr><th>Bucket</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
+                            {pnl_signal_rows}
+                          </table>
+                        </article>
+                        <article class="card table-card">
+                          <h3>PnL by Market Regime</h3>
+                          <table>
+                            <tr><th>Regime</th><th>Count</th><th>Avg PnL</th><th>Total PnL</th></tr>
+                            {pnl_regime_rows}
+                          </table>
+                        </article>
+                      </div>
+    
+                      <details>
+                        <summary>Walk-forward & Feature Ablation</summary>
+                        <div class="table-grid">
+                          <article class="card table-card">
+                            <h3>Walk-forward Validation</h3>
+                            <table>
+                              <tr><th>Window</th><th>Train</th><th>Test</th><th>Accuracy</th><th>MSE</th></tr>
+                              {walk_forward_rows}
+                            </table>
+                          </article>
+                          <article class="card table-card">
+                            <h3>Feature Ablation</h3>
+                            <table>
+                              <tr><th>Removed Feature</th><th>Δ Accuracy</th><th>Δ MSE</th></tr>
+                              {ablation_rows}
+                            </table>
+                          </article>
+                        </div>
+                      </details>
+    
+                      <details>
+                        <summary>Error Analysis</summary>
+                        <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
+                      </details>
+    
+                      <div class="table-grid">
+                        <article class="card table-card">
+                          <h3>Linear Weights (Bias {metrics['lin_bias']:+.6f})</h3>
+                          <table>
+                            <tr><th>Feature</th><th>Weight</th></tr>
+                            {linear_weight_rows}
+                          </table>
+                        </article>
+                        <article class="card table-card">
+                          <h3>Logistic Weights (Bias {metrics['logit_bias']:+.6f})</h3>
+                          <table>
+                            <tr><th>Feature</th><th>Weight</th></tr>
+                            {logistic_weight_rows}
+                          </table>
+                        </article>
+                      </div>
+    
                       <article class="card table-card">
-                        <h3>Walk-forward Validation</h3>
+                        <h3>Example Predictions</h3>
                         <table>
-                          <tr><th>Window</th><th>Train</th><th>Test</th><th>Accuracy</th><th>MSE</th></tr>
-                          {walk_forward_rows}
+                          <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
+                          {preview_rows}
                         </table>
                       </article>
-                      <article class="card table-card">
-                        <h3>Feature Ablation</h3>
-                        <table>
-                          <tr><th>Removed Feature</th><th>Δ Accuracy</th><th>Δ MSE</th></tr>
-                          {ablation_rows}
-                        </table>
-                      </article>
-                    </div>
-                  </details>
-
-                  <details>
-                    <summary>Error Analysis</summary>
-                    <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
-                  </details>
-
-                  <div class="table-grid">
-                    <article class="card table-card">
-                      <h3>Linear Weights (Bias {metrics['lin_bias']:+.6f})</h3>
-                      <table>
-                        <tr><th>Feature</th><th>Weight</th></tr>
-                        {linear_weight_rows}
-                      </table>
-                    </article>
-                    <article class="card table-card">
-                      <h3>Logistic Weights (Bias {metrics['logit_bias']:+.6f})</h3>
-                      <table>
-                        <tr><th>Feature</th><th>Weight</th></tr>
-                        {logistic_weight_rows}
-                      </table>
-                    </article>
-                  </div>
-
-                  <article class="card table-card">
-                    <h3>Example Predictions</h3>
-                    <table>
-                      <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
-                      {preview_rows}
-                    </table>
-                  </article>
-                </section>
-                """
+                    </section>
+                    """
             except Exception as exc:
                 error_html = f"<p style='color:red;'><strong>Error:</strong> {exc}</p>"
 
