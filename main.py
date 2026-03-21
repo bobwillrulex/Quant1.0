@@ -205,6 +205,10 @@ def compounded_return(returns: Sequence[float]) -> float:
     return equity - 1.0
 
 
+def simple_return(returns: Sequence[float]) -> float:
+    return sum(returns)
+
+
 def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     return sum(abs(a - b) for a, b in zip(y_true, y_pred)) / max(1, len(y_true))
 
@@ -595,7 +599,7 @@ def strategy_metrics(
     if sd > 1e-12:
         sharpe = (sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
-    buy_hold_total_return = compounded_return(buy_hold_source)
+    buy_hold_total_return = simple_return(buy_hold_source)
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
