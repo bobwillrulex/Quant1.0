@@ -880,6 +880,22 @@ def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
     return metrics
 
 
+def predict_signal(bundle: Dict[str, object], row: Row) -> Dict[str, float | str]:
+    feature_builder = build_default_strategy_features()
+    row_features = feature_builder.transform([row])
+    if len(row_features[0]) != len(bundle["feature_names"]):
+        raise ValueError("Saved model feature size does not match current strategy feature set.")
+    x_scaled = standardize_apply(row_features, bundle["means"], bundle["stds"])[0]
+    expected_return = sum(w * v for w, v in zip(bundle["lin_weights"], x_scaled)) + bundle["lin_bias"]
+    p_up = sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], x_scaled)) + bundle["logit_bias"])
+    action = "HOLD"
+    if p_up > 0.6:
+        action = "BUY"
+    elif p_up < 0.4:
+        action = "SELL"
+    return {"expected_return": expected_return, "p_up": p_up, "action": action}
+
+
 def create_app() -> "Flask":
     from flask import Flask, request
 
@@ -895,108 +911,136 @@ def create_app() -> "Flask":
         split_style = request.form.get("split_style", "shuffled")
         model_name = request.form.get("model_name", "").strip()
         selected_model = request.form.get("selected_model", "__new__")
+        present_ticker = request.form.get("present_ticker", ticker).upper().strip()
+        present_interval = request.form.get("present_interval", interval)
+        present_rows = request.form.get("present_rows", rows)
+        present_model = request.form.get("present_model", selected_model)
+        mode = request.form.get("mode", "train")
         saved_models = list_saved_models()
+        present_html = ""
 
         if request.method == "POST":
             try:
-                row_count = int(rows)
-                if split_style not in ("shuffled", "chronological"):
-                    raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
-                dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
-                train_rows, test_rows = train_test_split(dataset, split_style=split_style)
-                features = build_default_strategy_features()
-                x_test_raw = features.transform(test_rows)
-                y_test_ret = [r["return_next"] for r in test_rows]
-                y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
-                if selected_model != "__new__":
-                    loaded = load_model_bundle(selected_model)
-                    metrics = evaluate_bundle(
-                        loaded,
-                        x_test_raw,
-                        y_test_ret,
-                        y_test_dir,
-                        eval_rows=dataset,
-                        split_style=split_style,
-                    )
-                    metrics["train_size"] = "saved-model"
-                    metrics["loaded_model"] = selected_model
+                if mode == "present":
+                    present_row_count = int(present_rows)
+                    dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
+                    latest_row = dataset[-1]
+                    if present_model == "__new__":
+                        bundle = train_strategy_models(dataset, split_style=split_style)
+                    else:
+                        bundle = load_model_bundle(present_model)
+                    prediction = predict_signal(bundle, latest_row)
+                    present_html = f"""
+                    <section class="results">
+                      <article class="card">
+                        <h2>Present Mode • {present_ticker} ({present_interval})</h2>
+                        <p class="muted">Model: {"Freshly trained on current dataset" if present_model == "__new__" else present_model}</p>
+                        <p class="muted">Decision rule from testing: BUY if P(Up)&gt;0.60, SELL if P(Up)&lt;0.40, else HOLD.</p>
+                        <p><span class="muted">Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>
+                        <p><span class="muted">P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>
+                        <p><span class="muted">Action</span> <strong>{prediction['action']}</strong></p>
+                      </article>
+                    </section>
+                    """
                 else:
-                    bundle = train_strategy_models(dataset, split_style=split_style)
-                    metrics = evaluate_bundle(
-                        bundle,
-                        bundle["x_test_raw"],
-                        bundle["y_test_ret"],
-                        bundle["y_test_dir"],
-                        eval_rows=dataset,
-                        split_style=split_style,
-                    )
-                    metrics["train_size"] = bundle["train_size"]
-                    if model_name:
-                        save_model_bundle(model_name, bundle)
-                        metrics["saved_model"] = model_name
-                        saved_models = list_saved_models()
+                    row_count = int(rows)
+                    if split_style not in ("shuffled", "chronological"):
+                        raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
+                    dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                    train_rows, test_rows = train_test_split(dataset, split_style=split_style)
+                    features = build_default_strategy_features()
+                    x_test_raw = features.transform(test_rows)
+                    y_test_ret = [r["return_next"] for r in test_rows]
+                    y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+                    if selected_model != "__new__":
+                        loaded = load_model_bundle(selected_model)
+                        metrics = evaluate_bundle(
+                            loaded,
+                            x_test_raw,
+                            y_test_ret,
+                            y_test_dir,
+                            eval_rows=dataset,
+                            split_style=split_style,
+                        )
+                        metrics["train_size"] = "saved-model"
+                        metrics["loaded_model"] = selected_model
+                    else:
+                        bundle = train_strategy_models(dataset, split_style=split_style)
+                        metrics = evaluate_bundle(
+                            bundle,
+                            bundle["x_test_raw"],
+                            bundle["y_test_ret"],
+                            bundle["y_test_dir"],
+                            eval_rows=dataset,
+                            split_style=split_style,
+                        )
+                        metrics["train_size"] = bundle["train_size"]
+                        if model_name:
+                            save_model_bundle(model_name, bundle)
+                            metrics["saved_model"] = model_name
+                            saved_models = list_saved_models()
 
-                preview_rows = "".join(
-                    f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
-                    for idx, p in enumerate(metrics["preview"])
-                )
-                model_msg = ""
-                if "saved_model" in metrics:
-                    model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
-                if "loaded_model" in metrics:
-                    model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
-                linear_weight_rows = "".join(
-                    f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
-                )
-                logistic_weight_rows = "".join(
-                    f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
-                )
-                calibration_rows = "".join(
-                    "<tr>"
-                    f"<td>{item['bucket_low']:.2f} - {item['bucket_high']:.2f}</td>"
-                    f"<td>{int(item['count'])}</td>"
-                    f"<td>{item['predicted_mean']:.4f}</td>"
-                    f"<td>{item['actual_win_rate']:.4f}</td>"
-                    "</tr>"
-                    for item in metrics["calibration"]
-                )
-                pnl_signal_rows = "".join(
-                    "<tr>"
-                    f"<td>{item['bucket']}</td>"
-                    f"<td>{int(item['count'])}</td>"
-                    f"<td>{item['avg_pnl']:+.4%}</td>"
-                    f"<td>{item['total_pnl']:+.2%}</td>"
-                    "</tr>"
-                    for item in metrics["pnl_by_signal_strength"]
-                )
-                pnl_regime_rows = "".join(
-                    "<tr>"
-                    f"<td>{item['regime']}</td>"
-                    f"<td>{int(item['count'])}</td>"
-                    f"<td>{item['avg_pnl']:+.4%}</td>"
-                    f"<td>{item['total_pnl']:+.2%}</td>"
-                    "</tr>"
-                    for item in metrics["pnl_by_regime"]
-                )
-                walk_forward_rows = "".join(
-                    "<tr>"
-                    f"<td>{int(item['window'])}</td>"
-                    f"<td>{int(item['train_size'])}</td>"
-                    f"<td>{int(item['test_size'])}</td>"
-                    f"<td>{item['accuracy']:.4f}</td>"
-                    f"<td>{item['mse']:.8f}</td>"
-                    "</tr>"
-                    for item in metrics["walk_forward"]
-                )
-                ablation_rows = "".join(
-                    "<tr>"
-                    f"<td>{item['removed_feature']}</td>"
-                    f"<td>{item['accuracy_delta']:+.4f}</td>"
-                    f"<td>{item['mse_delta']:+.8f}</td>"
-                    "</tr>"
-                    for item in metrics["feature_ablation"]
-                )
-                result_html = f"""
+                    preview_rows = "".join(
+                        f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
+                        for idx, p in enumerate(metrics["preview"])
+                    )
+                    model_msg = ""
+                    if "saved_model" in metrics:
+                        model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
+                    if "loaded_model" in metrics:
+                        model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
+                    linear_weight_rows = "".join(
+                        f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
+                    )
+                    logistic_weight_rows = "".join(
+                        f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
+                    )
+                    calibration_rows = "".join(
+                        "<tr>"
+                        f"<td>{item['bucket_low']:.2f} - {item['bucket_high']:.2f}</td>"
+                        f"<td>{int(item['count'])}</td>"
+                        f"<td>{item['predicted_mean']:.4f}</td>"
+                        f"<td>{item['actual_win_rate']:.4f}</td>"
+                        "</tr>"
+                        for item in metrics["calibration"]
+                    )
+                    pnl_signal_rows = "".join(
+                        "<tr>"
+                        f"<td>{item['bucket']}</td>"
+                        f"<td>{int(item['count'])}</td>"
+                        f"<td>{item['avg_pnl']:+.4%}</td>"
+                        f"<td>{item['total_pnl']:+.2%}</td>"
+                        "</tr>"
+                        for item in metrics["pnl_by_signal_strength"]
+                    )
+                    pnl_regime_rows = "".join(
+                        "<tr>"
+                        f"<td>{item['regime']}</td>"
+                        f"<td>{int(item['count'])}</td>"
+                        f"<td>{item['avg_pnl']:+.4%}</td>"
+                        f"<td>{item['total_pnl']:+.2%}</td>"
+                        "</tr>"
+                        for item in metrics["pnl_by_regime"]
+                    )
+                    walk_forward_rows = "".join(
+                        "<tr>"
+                        f"<td>{int(item['window'])}</td>"
+                        f"<td>{int(item['train_size'])}</td>"
+                        f"<td>{int(item['test_size'])}</td>"
+                        f"<td>{item['accuracy']:.4f}</td>"
+                        f"<td>{item['mse']:.8f}</td>"
+                        "</tr>"
+                        for item in metrics["walk_forward"]
+                    )
+                    ablation_rows = "".join(
+                        "<tr>"
+                        f"<td>{item['removed_feature']}</td>"
+                        f"<td>{item['accuracy_delta']:+.4f}</td>"
+                        f"<td>{item['mse_delta']:+.8f}</td>"
+                        "</tr>"
+                        for item in metrics["feature_ablation"]
+                    )
+                    result_html = f"""
                 <section class="results">
                   <div class="section-heading">
                     <h2>Results • {ticker} ({interval})</h2>
@@ -1220,6 +1264,7 @@ def create_app() -> "Flask":
             <div class="container">
             <h1>Quant Model Trainer</h1>
             <form method="post" class="card">
+              <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
               <label>Ticker:
                 <input type="text" name="ticker" value="{ticker}" required />
@@ -1255,7 +1300,38 @@ def create_app() -> "Flask":
               </label>
               </div>
             </form>
+            <form method="post" class="card">
+              <input type="hidden" name="mode" value="present" />
+              <h2>Present Mode</h2>
+              <p class="muted">Get current model call using the same thresholds used in testing (BUY &gt; 0.60, SELL &lt; 0.40, else HOLD).</p>
+              <div class="form-grid">
+              <label>Ticker:
+                <input type="text" name="present_ticker" value="{present_ticker}" required />
+              </label>
+              <label>Candle Length:
+                <select name="present_interval">
+                  <option value="1d" {"selected" if present_interval == "1d" else ""}>Daily</option>
+                  <option value="1h" {"selected" if present_interval == "1h" else ""}>1 hour</option>
+                  <option value="15m" {"selected" if present_interval == "15m" else ""}>15 min</option>
+                  <option value="5m" {"selected" if present_interval == "5m" else ""}>5 min</option>
+                </select>
+              </label>
+              <label>Rows:
+                <input type="number" min="50" name="present_rows" value="{present_rows}" required />
+              </label>
+              <label>Model:
+                <select name="present_model">
+                  <option value="__new__">Train new model</option>
+                  {"".join(f'<option value="{name}" {"selected" if present_model == name else ""}>{name}</option>' for name in saved_models)}
+                </select>
+              </label>
+              <label>&nbsp;
+                <button type="submit">Run Present Mode</button>
+              </label>
+              </div>
+            </form>
             {error_html}
+            {present_html}
             {result_html}
             </div>
           </body>
