@@ -273,15 +273,49 @@ def _quantile(sorted_values: Sequence[float], q: float) -> float:
     return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
 
 
-def strategy_metrics(returns: Sequence[float], probs: Sequence[float], long_threshold: float = 0.6, short_threshold: float = 0.4, trade_cost: float = 0.0005, buy_hold_returns: Sequence[float] | None = None, allow_short: bool = True) -> Dict[str, object]:
+def strategy_metrics(
+    returns: Sequence[float],
+    probs: Sequence[float],
+    long_threshold: float = 0.6,
+    short_threshold: float = 0.4,
+    trade_cost: float = 0.0005,
+    buy_hold_returns: Sequence[float] | None = None,
+    allow_short: bool = True,
+    min_hold_bars: int = 0,
+    prob_smoothing_window: int = 3,
+) -> Dict[str, object]:
+    smooth_window = max(1, int(prob_smoothing_window))
+    smoothed_probs: List[float] = []
+    for i in range(len(probs)):
+        start = max(0, i - smooth_window + 1)
+        p_window = probs[start : i + 1]
+        smoothed_probs.append(sum(p_window) / len(p_window))
+
+    sell_threshold = short_threshold
     positions: List[int] = []
-    for p in probs:
-        if p > long_threshold:
-            positions.append(1)
-        elif p < short_threshold and allow_short:
-            positions.append(-1)
-        else:
-            positions.append(0)
+    current_pos = 0
+    bars_in_position = 0
+    for p in smoothed_probs:
+        if current_pos == 0:
+            if p > long_threshold:
+                current_pos = 1
+                bars_in_position = 1
+            elif p < short_threshold and allow_short:
+                current_pos = -1
+                bars_in_position = 1
+        elif current_pos == 1:
+            if bars_in_position >= min_hold_bars and p < sell_threshold:
+                current_pos = 0
+                bars_in_position = 0
+            else:
+                bars_in_position += 1
+        elif current_pos == -1:
+            if bars_in_position >= min_hold_bars and p > long_threshold:
+                current_pos = 0
+                bars_in_position = 0
+            else:
+                bars_in_position += 1
+        positions.append(current_pos)
     pnl: List[float] = []
     prev_pos = 0
     wins = 0
@@ -341,6 +375,8 @@ def strategy_metrics(returns: Sequence[float], probs: Sequence[float], long_thre
         "short_threshold": short_threshold,
         "allow_short": 1.0 if allow_short else 0.0,
         "trade_cost": trade_cost,
+        "min_hold_bars": float(min_hold_bars),
+        "prob_smoothing_window": float(smooth_window),
         "total_return": equity - 1.0,
         "buy_hold_total_return": compounded_return(buy_hold_source),
         "sharpe": sharpe,
