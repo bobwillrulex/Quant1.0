@@ -259,7 +259,21 @@ def confidence_edge_analysis(y_true: Sequence[int], y_prob: Sequence[float]) -> 
     return out
 
 
-def strategy_metrics(returns: Sequence[float], probs: Sequence[float], long_threshold: float = 0.6, short_threshold: float = 0.4, trade_cost: float = 0.0005, buy_hold_returns: Sequence[float] | None = None, allow_short: bool = True) -> Dict[str, float]:
+def _quantile(sorted_values: Sequence[float], q: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    idx = (len(sorted_values) - 1) * q
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return float(sorted_values[lo])
+    frac = idx - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def strategy_metrics(returns: Sequence[float], probs: Sequence[float], long_threshold: float = 0.6, short_threshold: float = 0.4, trade_cost: float = 0.0005, buy_hold_returns: Sequence[float] | None = None, allow_short: bool = True) -> Dict[str, object]:
     positions: List[int] = []
     for p in probs:
         if p > long_threshold:
@@ -284,15 +298,58 @@ def strategy_metrics(returns: Sequence[float], probs: Sequence[float], long_thre
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
+    drawdowns: List[float] = []
     for r in pnl:
         equity *= (1.0 + r)
         peak = max(peak, equity)
         dd = (peak - equity) / peak if peak > 0 else 0.0
+        drawdowns.append(dd)
         max_drawdown = max(max_drawdown, dd)
+    avg_drawdown = (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0
+    hold_lengths: List[int] = []
+    active_pos = 0
+    active_len = 0
+    for pos in positions:
+        if pos != 0 and pos == active_pos:
+            active_len += 1
+            continue
+        if active_pos != 0 and active_len > 0:
+            hold_lengths.append(active_len)
+        if pos != 0:
+            active_pos = pos
+            active_len = 1
+        else:
+            active_pos = 0
+            active_len = 0
+    if active_pos != 0 and active_len > 0:
+        hold_lengths.append(active_len)
+    hold_lengths_float = [float(x) for x in hold_lengths]
+    sorted_holds = sorted(hold_lengths_float)
+    hold_time_stats = {
+        "count": float(len(hold_lengths_float)),
+        "min": float(sorted_holds[0]) if sorted_holds else 0.0,
+        "q1": _quantile(sorted_holds, 0.25),
+        "median": _quantile(sorted_holds, 0.5),
+        "q3": _quantile(sorted_holds, 0.75),
+        "max": float(sorted_holds[-1]) if sorted_holds else 0.0,
+    }
     sd = stddev(pnl)
     sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
-    return {"long_threshold": long_threshold, "short_threshold": short_threshold, "allow_short": 1.0 if allow_short else 0.0, "trade_cost": trade_cost, "total_return": equity - 1.0, "buy_hold_total_return": compounded_return(buy_hold_source), "sharpe": sharpe, "max_drawdown": max_drawdown, "win_rate": (wins / trades) if trades else 0.0, "trade_count": float(trades)}
+    return {
+        "long_threshold": long_threshold,
+        "short_threshold": short_threshold,
+        "allow_short": 1.0 if allow_short else 0.0,
+        "trade_cost": trade_cost,
+        "total_return": equity - 1.0,
+        "buy_hold_total_return": compounded_return(buy_hold_source),
+        "sharpe": sharpe,
+        "max_drawdown": max_drawdown,
+        "avg_drawdown": avg_drawdown,
+        "win_rate": (wins / trades) if trades else 0.0,
+        "trade_count": float(trades),
+        "hold_time_stats": hold_time_stats,
+    }
 
 
 def pnl_signal_strength_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005, allow_short: bool = True) -> List[Dict[str, float]]:
@@ -493,7 +550,8 @@ def run_model(rows: Sequence[Row]) -> None:
     print("\n=== Decision Strategy (long > 0.60, short < 0.40) ===")
     print(
         f"Total Return: {strat['total_return']:+.2%}, Sharpe: {strat['sharpe']:.3f}, "
-        f"Max Drawdown: {strat['max_drawdown']:.2%}, Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
+        f"Max Drawdown: {strat['max_drawdown']:.2%}, Avg Drawdown: {strat['avg_drawdown']:.2%}, "
+        f"Win Rate: {strat['win_rate']:.2%}, Trades: {int(strat['trade_count'])}"
     )
     print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
 
