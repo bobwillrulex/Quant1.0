@@ -584,6 +584,12 @@ def create_app() -> "Flask":
                     model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
                 if "loaded_model" in metrics:
                     model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
+                linear_weight_rows = "".join(
+                    f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
+                )
+                logistic_weight_rows = "".join(
+                    f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["logit_weights"]
+                )
                 result_html = f"""
                 <h2>Results for {ticker} ({interval})</h2>
                 <p>Rows used: {row_count} (train={metrics['train_size']}, test={metrics['test_size']})</p>
@@ -595,6 +601,18 @@ def create_app() -> "Flask":
                 <p><strong>Confusion Matrix:</strong> TP={metrics['tp']}, FP={metrics['fp']}, TN={metrics['tn']}, FN={metrics['fn']}</p>
                 <h3>Feature Set</h3>
                 <p>{', '.join(metrics['features'])}</p>
+                <h3>Linear Model Weights</h3>
+                <p><strong>Bias:</strong> {metrics['lin_bias']:+.6f}</p>
+                <table border="1" cellpadding="6">
+                  <tr><th>Feature</th><th>Weight</th></tr>
+                  {linear_weight_rows}
+                </table>
+                <h3>Logistic Model Weights</h3>
+                <p><strong>Bias:</strong> {metrics['logit_bias']:+.6f}</p>
+                <table border="1" cellpadding="6">
+                  <tr><th>Feature</th><th>Weight</th></tr>
+                  {logistic_weight_rows}
+                </table>
                 <h3>Example Predictions</h3>
                 <table border="1" cellpadding="6">
                   <tr><th>Row</th><th>Expected Return</th><th>P(Up)</th><th>Actual Return</th></tr>
