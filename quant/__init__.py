@@ -1,0 +1,1 @@
+"""Quant app package."""

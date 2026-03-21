@@ -1,0 +1,7 @@
+OPTIONS_MODE = "options"
+SPOT_MODE = "spot"
+APP_DATA_DIR = ".quant1_data"
+MODEL_DIR_NAME = "saved_models"
+LEGACY_MODEL_DIR = "saved_models"
+LEGACY_MODEL_CONFIGS_FILE = "model_configs.json"
+DB_FILE_NAME = "quant_configs.db"
