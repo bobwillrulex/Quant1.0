@@ -5,6 +5,7 @@ import random
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Sequence, Tuple
 
+from .stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy
 from .types import FeatureFn, Row
 
 
@@ -276,6 +277,7 @@ def _quantile(sorted_values: Sequence[float], q: float) -> float:
 def strategy_metrics(
     returns: Sequence[float],
     probs: Sequence[float],
+    expected_returns: Sequence[float] | None = None,
     long_threshold: float = 0.6,
     short_threshold: float = 0.4,
     trade_cost: float = 0.0005,
@@ -283,7 +285,13 @@ def strategy_metrics(
     allow_short: bool = True,
     min_hold_bars: int = 0,
     prob_smoothing_window: int = 3,
+    stop_loss: StopLossConfig | None = None,
 ) -> Dict[str, object]:
+    stop_cfg = stop_loss or StopLossConfig()
+    if expected_returns is None:
+        expected_returns = [0.0] * len(returns)
+    if len(expected_returns) != len(returns):
+        raise ValueError("expected_returns must match returns length.")
     smooth_window = max(1, int(prob_smoothing_window))
     smoothed_probs: List[float] = []
     for i in range(len(probs)):
@@ -295,22 +303,83 @@ def strategy_metrics(
     positions: List[int] = []
     current_pos = 0
     bars_in_position = 0
-    for p in smoothed_probs:
+    synthetic_price = 1.0
+    entry_price = 1.0
+    entry_idx = -1
+    stop_price = 0.0
+    stop_loss_exits = 0
+    time_decay_exits = 0
+    time_decay_limit = max(1, int(stop_cfg.time_decay_bars))
+    atr_window = 14
+    atr_returns: List[float] = []
+
+    for idx, p in enumerate(smoothed_probs):
+        bar_ret = returns[idx] if idx < len(returns) else 0.0
+        atr_returns.append(abs(bar_ret))
+        if len(atr_returns) > atr_window:
+            atr_returns.pop(0)
+        atr_value = sum(atr_returns) / max(1, len(atr_returns))
+        synthetic_price *= 1.0 + bar_ret
+
         if current_pos == 0:
             if p > long_threshold:
                 current_pos = 1
                 bars_in_position = 1
+                entry_price = synthetic_price
+                entry_idx = idx
+                if stop_cfg.strategy == StopLossStrategy.ATR:
+                    stop_price = entry_price - (stop_cfg.atr_multiplier * atr_value * entry_price)
+                elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    stop_price = entry_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
+                else:
+                    stop_price = 0.0
             elif p < short_threshold and allow_short:
                 current_pos = -1
                 bars_in_position = 1
+                entry_price = synthetic_price
+                entry_idx = idx
+                if stop_cfg.strategy == StopLossStrategy.ATR:
+                    stop_price = entry_price + (stop_cfg.atr_multiplier * atr_value * entry_price)
+                elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    stop_price = entry_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
+                else:
+                    stop_price = 0.0
         elif current_pos == 1:
-            if bars_in_position >= min_hold_bars and p < sell_threshold:
+            time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE) and synthetic_price <= stop_price
+            model_invalidation_hit = False
+            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
+                threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
+                model_invalidation_hit = cumulative_return <= threshold
+            if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
+                current_pos = 0
+                bars_in_position = 0
+                if time_decay_hit:
+                    time_decay_exits += 1
+                else:
+                    stop_loss_exits += 1
+            elif bars_in_position >= min_hold_bars and p < sell_threshold:
                 current_pos = 0
                 bars_in_position = 0
             else:
                 bars_in_position += 1
         elif current_pos == -1:
-            if bars_in_position >= min_hold_bars and p > long_threshold:
+            time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE) and synthetic_price >= stop_price
+            model_invalidation_hit = False
+            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
+                threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
+                model_invalidation_hit = cumulative_return >= -threshold
+            if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
+                current_pos = 0
+                bars_in_position = 0
+                if time_decay_hit:
+                    time_decay_exits += 1
+                else:
+                    stop_loss_exits += 1
+            elif bars_in_position >= min_hold_bars and p > long_threshold:
                 current_pos = 0
                 bars_in_position = 0
             else:
@@ -393,6 +462,13 @@ def strategy_metrics(
         "trade_cost": trade_cost,
         "min_hold_bars": float(min_hold_bars),
         "prob_smoothing_window": float(smooth_window),
+        "stop_loss_strategy": stop_cfg.strategy.value,
+        "stop_loss_exits": float(stop_loss_exits),
+        "time_decay_exits": float(time_decay_exits),
+        "time_decay_bars": float(time_decay_limit),
+        "fixed_stop_pct": float(stop_cfg.fixed_pct),
+        "model_mae": float(stop_cfg.model_mae),
+        "atr_multiplier": float(stop_cfg.atr_multiplier),
         "total_return": equity - 1.0,
         "buy_hold_total_return": compounded_return(buy_hold_source),
         "sharpe": sharpe,
@@ -538,7 +614,18 @@ def error_analysis(y_test_ret: Sequence[float], up_prob: Sequence[float], ret_pr
     return {"largest_return_errors": largest_errors, "high_confidence_wrong_calls": high_conf_wrong}
 
 
-def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[float]], y_test_ret: Sequence[float], y_test_dir: Sequence[int], eval_rows: Sequence[Row] | None = None, split_style: SplitStyle = "shuffled", buy_threshold: float = 0.6, sell_threshold: float = 0.4, allow_short: bool = True) -> Dict[str, object]:
+def evaluate_bundle(
+    bundle: Dict[str, object],
+    x_test_raw: Sequence[Sequence[float]],
+    y_test_ret: Sequence[float],
+    y_test_dir: Sequence[int],
+    eval_rows: Sequence[Row] | None = None,
+    split_style: SplitStyle = "shuffled",
+    buy_threshold: float = 0.6,
+    sell_threshold: float = 0.4,
+    allow_short: bool = True,
+    stop_loss: StopLossConfig | None = None,
+) -> Dict[str, object]:
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
     if len(x_test_raw[0]) != len(bundle["feature_names"]):
@@ -549,7 +636,17 @@ def evaluate_bundle(bundle: Dict[str, object], x_test_raw: Sequence[Sequence[flo
     cls = classification_metrics(y_test_dir, up_prob)
     baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
     baseline_zero = [0.0] * len(y_test_ret)
-    strategy = strategy_metrics(y_test_ret, up_prob, long_threshold=buy_threshold, short_threshold=sell_threshold, trade_cost=0.0005, buy_hold_returns=y_test_ret, allow_short=allow_short)
+    strategy = strategy_metrics(
+        y_test_ret,
+        up_prob,
+        expected_returns=ret_pred,
+        long_threshold=buy_threshold,
+        short_threshold=sell_threshold,
+        trade_cost=0.0005,
+        buy_hold_returns=y_test_ret,
+        allow_short=allow_short,
+        stop_loss=stop_loss,
+    )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     return {
         "features": bundle["feature_names"],
