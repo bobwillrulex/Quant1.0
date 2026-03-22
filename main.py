@@ -864,16 +864,16 @@ def create_app() -> "Flask":
                         result_html = f"""
                     <section class="results">
                       <div class="section-heading">
-                        <h2>Results • {ticker} ({interval})</h2>
+                        <div class="results-heading-row">
+                          <h2>Results • {ticker} ({interval})</h2>
+                          <div class="save-eval-panel">
+                            <p class="muted">Save this evaluation</p>
+                            <button type="button" id="saveEvaluationBtn" class="secondary">Save</button>
+                          </div>
+                        </div>
                         <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
                         <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
                         {model_msg}
-                      </div>
-                      <div class="results-toolbar">
-                        <div class="save-eval-panel">
-                          <p class="muted">Save this evaluation</p>
-                          <button type="button" id="saveEvaluationBtn" class="secondary">Save</button>
-                        </div>
                       </div>
                       <div class="card-grid">
                         <article class="card">
@@ -1192,10 +1192,13 @@ def create_app() -> "Flask":
                 gap: 0.6rem;
                 flex-wrap: wrap;
               }}
-              .results-toolbar {{
+              .results-heading-row {{
                 display: flex;
-                justify-content: flex-end;
-                margin-bottom: 0.75rem;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.75rem;
+                flex-wrap: wrap;
+                margin-bottom: 0.5rem;
               }}
               .save-eval-panel {{
                 background: {theme_surface};
@@ -1214,6 +1217,12 @@ def create_app() -> "Flask":
                 width: auto;
                 padding: 0.45rem 0.7rem;
                 font-size: 0.82rem;
+              }}
+              @media (max-width: 720px) {{
+                .results-heading-row {{
+                  align-items: flex-start;
+                  flex-direction: column;
+                }}
               }}
               .saved-eval-actions button {{
                 width: auto;
