@@ -44,6 +44,11 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn("Edit all model presets", html)
         self.assertIn('value="save_all_configs"', html)
         self.assertIn("openAllSettings", html)
+        self.assertIn("Leave fields blank to keep existing values unchanged.", html)
+        self.assertIn('id="allTicker"', html)
+        self.assertIn('id="allRows"', html)
+        self.assertIn('option value="">No change</option>', html)
+        self.assertIn('document.getElementById("allTicker").value = "";', html)
 
     @patch("main.fetch_yahoo_rows")
     @patch("main.evaluate_bundle")
@@ -108,6 +113,59 @@ class StopLossUITests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("Model Evaluation Summary", response.get_data(as_text=True))
+
+    @patch("main.save_model_configs")
+    @patch("main.list_saved_models")
+    @patch("main.load_model_configs")
+    def test_save_all_configs_updates_only_filled_values(self, load_configs_mock, list_models_mock, save_configs_mock):
+        list_models_mock.return_value = ["model_a", "model_b"]
+        load_configs_mock.return_value = {
+            "model_a": {
+                "ticker": "AAPL",
+                "interval": "1d",
+                "rows": 250,
+                "include_in_run_all": True,
+                "buy_threshold": 0.6,
+                "sell_threshold": 0.4,
+                "stop_loss_strategy": "none",
+                "fixed_stop_pct": 2.0,
+            },
+            "model_b": {
+                "ticker": "MSFT",
+                "interval": "1h",
+                "rows": 300,
+                "include_in_run_all": False,
+                "buy_threshold": 0.65,
+                "sell_threshold": 0.35,
+                "stop_loss_strategy": "none",
+                "fixed_stop_pct": 2.5,
+            },
+        }
+
+        response = self.app.post(
+            "/manage-models",
+            data={
+                "action": "save_all_configs",
+                "ticker": "",
+                "interval": "",
+                "rows": "",
+                "buy_threshold": "",
+                "sell_threshold": "",
+                "stop_loss_strategy": "atr",
+                "fixed_stop_pct": "",
+                "include_in_run_all": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(save_configs_mock.called)
+        saved_payload = save_configs_mock.call_args[0][1]
+        self.assertEqual(saved_payload["model_a"]["ticker"], "AAPL")
+        self.assertEqual(saved_payload["model_b"]["ticker"], "MSFT")
+        self.assertEqual(saved_payload["model_a"]["rows"], 250)
+        self.assertEqual(saved_payload["model_b"]["rows"], 300)
+        self.assertEqual(saved_payload["model_a"]["stop_loss_strategy"], "atr")
+        self.assertEqual(saved_payload["model_b"]["stop_loss_strategy"], "atr")
 
 
 if __name__ == "__main__":

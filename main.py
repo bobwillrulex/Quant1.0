@@ -250,34 +250,46 @@ def create_app() -> "Flask":
                 elif action == "save_all_configs":
                     if not saved_models:
                         raise ValueError("No models found to update.")
-                    ticker = request.form.get("ticker", "AAPL").upper().strip()
-                    interval = request.form.get("interval", "1d").strip()
-                    rows_raw = request.form.get("rows", "250").strip()
+                    ticker_raw = request.form.get("ticker", "").upper().strip()
+                    interval_raw = request.form.get("interval", "").strip()
+                    rows_raw = request.form.get("rows", "").strip()
                     buy_raw = request.form.get("buy_threshold", "").strip()
                     sell_raw = request.form.get("sell_threshold", "").strip()
-                    stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
-                    fixed_stop_raw = request.form.get("fixed_stop_pct", "2.0").strip()
-                    fixed_stop_pct = 2.0
-                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
-                        fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
-                    include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
-                    rows = int(rows_raw)
-                    buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
-                    if interval not in ("1d", "1h", "15m", "5m"):
-                        raise ValueError("Candle length must be one of: 1d, 1h, 15m, 5m.")
-                    if rows < 50:
-                        raise ValueError("Rows must be at least 50.")
+                    stop_loss_strategy_raw = request.form.get("stop_loss_strategy", "").strip()
+                    fixed_stop_raw = request.form.get("fixed_stop_pct", "").strip()
+                    include_in_run_all_raw = request.form.get("include_in_run_all", "").strip()
+
+                    updates: Dict[str, object] = {}
+                    if ticker_raw:
+                        updates["ticker"] = ticker_raw
+                    if interval_raw:
+                        if interval_raw not in ("1d", "1h", "15m", "5m"):
+                            raise ValueError("Candle length must be one of: 1d, 1h, 15m, 5m.")
+                        updates["interval"] = interval_raw
+                    if rows_raw:
+                        rows = int(rows_raw)
+                        if rows < 50:
+                            raise ValueError("Rows must be at least 50.")
+                        updates["rows"] = rows
+                    if buy_raw or sell_raw:
+                        buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
+                        updates["buy_threshold"] = buy_threshold
+                        updates["sell_threshold"] = sell_threshold
+                    if stop_loss_strategy_raw:
+                        stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
+                        updates["stop_loss_strategy"] = stop_loss_strategy.value
+                        if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                            updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
+                    if fixed_stop_raw and not stop_loss_strategy_raw:
+                        updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw))
+                    if include_in_run_all_raw in ("0", "1"):
+                        updates["include_in_run_all"] = include_in_run_all_raw == "1"
+                    if not updates:
+                        raise ValueError("Enter at least one value to apply to all model presets.")
                     for saved_model_name in saved_models:
-                        model_configs[saved_model_name] = {
-                            "ticker": ticker,
-                            "interval": interval,
-                            "rows": rows,
-                            "include_in_run_all": include_in_run_all,
-                            "buy_threshold": buy_threshold,
-                            "sell_threshold": sell_threshold,
-                            "stop_loss_strategy": stop_loss_strategy.value,
-                            "fixed_stop_pct": fixed_stop_pct,
-                        }
+                        model_cfg = get_model_config(saved_model_name, model_configs)
+                        model_cfg.update(updates)
+                        model_configs[saved_model_name] = model_cfg
                     save_model_configs(mode_key, model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for all models:</strong> {len(saved_models)} model(s) updated.</p>"
                 elif action == "rename_model":
@@ -520,17 +532,19 @@ def create_app() -> "Flask":
                 <h3>Global Preset Settings (All Models)</h3>
                 <form method="post">
                   <input type="hidden" name="action" value="save_all_configs" />
+                  <p class="muted">Leave fields blank to keep existing values unchanged.</p>
                   <div class="form-grid">
-                    <label>Ticker<input type="text" name="ticker" id="allTicker" required /></label>
+                    <label>Ticker<input type="text" name="ticker" id="allTicker" /></label>
                     <label>Candle Length
                       <select name="interval" id="allInterval">
+                        <option value="">No change</option>
                         <option value="1d">Daily</option>
                         <option value="1h">1 hour</option>
                         <option value="15m">15 min</option>
                         <option value="5m">5 min</option>
                       </select>
                     </label>
-                    <label>Rows<input type="number" min="50" name="rows" id="allRows" required /></label>
+                    <label>Rows<input type="number" min="50" name="rows" id="allRows" /></label>
                     <label>BUY if P(Up) &gt;
                       <input type="number" min="0" max="1" step="0.01" name="buy_threshold" id="allBuyThreshold" placeholder="0.60" />
                     </label>
@@ -539,6 +553,7 @@ def create_app() -> "Flask":
                     </label>
                     <label>Stop Loss Strategy
                       <select name="stop_loss_strategy" id="allStopLossStrategy">
+                        <option value="">No change</option>
                         <option value="none">None</option>
                         <option value="atr">Volatility Buffer (ATR-Based)</option>
                         <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
@@ -551,6 +566,7 @@ def create_app() -> "Flask":
                     </label>
                     <label>Include in Run All
                       <select name="include_in_run_all" id="allInclude">
+                        <option value="">No change</option>
                         <option value="1">Yes</option>
                         <option value="0">No</option>
                       </select>
@@ -619,25 +635,14 @@ def create_app() -> "Flask":
               }}
 
               function openAllSettings() {{
-                document.getElementById("allTicker").value = "AAPL";
-                document.getElementById("allInterval").value = "1d";
-                document.getElementById("allRows").value = "250";
-                document.getElementById("allBuyThreshold").value = "0.60";
-                document.getElementById("allSellThreshold").value = "0.40";
-                document.getElementById("allStopLossStrategy").value = "none";
-                document.getElementById("allFixedStopPct").value = "2.0";
-                document.getElementById("allInclude").value = "1";
-                const source = modelRows[0];
-                if (source) {{
-                  document.getElementById("allTicker").value = source.dataset.ticker || "AAPL";
-                  document.getElementById("allInterval").value = source.dataset.interval || "1d";
-                  document.getElementById("allRows").value = source.dataset.rows || "250";
-                  document.getElementById("allBuyThreshold").value = source.dataset.buy || "0.60";
-                  document.getElementById("allSellThreshold").value = source.dataset.sell || "0.40";
-                  document.getElementById("allStopLossStrategy").value = source.dataset.stopLoss || "none";
-                  document.getElementById("allFixedStopPct").value = source.dataset.fixedStop || "2.0";
-                  document.getElementById("allInclude").value = source.dataset.include || "1";
-                }}
+                document.getElementById("allTicker").value = "";
+                document.getElementById("allInterval").value = "";
+                document.getElementById("allRows").value = "";
+                document.getElementById("allBuyThreshold").value = "";
+                document.getElementById("allSellThreshold").value = "";
+                document.getElementById("allStopLossStrategy").value = "";
+                document.getElementById("allFixedStopPct").value = "";
+                document.getElementById("allInclude").value = "";
                 toggleAllFixedStop();
                 allSettingsModal.style.display = "flex";
               }}
