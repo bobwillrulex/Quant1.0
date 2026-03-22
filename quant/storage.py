@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
@@ -40,6 +41,19 @@ def ensure_db() -> None:
         )
         _ensure_column(conn, "model_configs", "stop_loss_strategy", "TEXT NOT NULL DEFAULT 'none'")
         _ensure_column(conn, "model_configs", "fixed_stop_pct", "REAL NOT NULL DEFAULT 2.0")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mode TEXT NOT NULL,
+                snapshot_name TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(mode, snapshot_name)
+            )
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
@@ -175,3 +189,76 @@ def load_model_bundle(mode: str, model_name: str) -> Dict[str, object]:
     path = _model_bundle_path(mode, model_name)
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def save_evaluation_snapshot(mode: str, snapshot_name: str, payload: Dict[str, object]) -> int:
+    ensure_db()
+    clean_name = snapshot_name.strip()
+    if not clean_name:
+        raise ValueError("Snapshot name cannot be empty.")
+    now_iso = _utc_timestamp()
+    payload_json = json.dumps(payload)
+    with sqlite3.connect(db_path()) as conn:
+        conn.execute(
+            """
+            INSERT INTO evaluation_snapshots (mode, snapshot_name, payload_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(mode, snapshot_name)
+            DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+            """,
+            (mode, clean_name, payload_json, now_iso, now_iso),
+        )
+        row = conn.execute(
+            "SELECT id FROM evaluation_snapshots WHERE mode = ? AND snapshot_name = ?",
+            (mode, clean_name),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Failed to save evaluation snapshot.")
+    return int(row[0])
+
+
+def list_evaluation_snapshots(mode: str) -> List[Dict[str, object]]:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, snapshot_name, updated_at
+            FROM evaluation_snapshots
+            WHERE mode = ?
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (mode,),
+        ).fetchall()
+    return [{"id": int(row[0]), "name": str(row[1]), "updated_at": str(row[2])} for row in rows]
+
+
+def load_evaluation_snapshot(mode: str, snapshot_id: int) -> Dict[str, object]:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        row = conn.execute(
+            """
+            SELECT id, snapshot_name, payload_json, updated_at
+            FROM evaluation_snapshots
+            WHERE mode = ? AND id = ?
+            """,
+            (mode, snapshot_id),
+        ).fetchone()
+    if row is None:
+        raise ValueError("Saved evaluation not found.")
+    payload = json.loads(str(row[2]))
+    return {
+        "id": int(row[0]),
+        "name": str(row[1]),
+        "updated_at": str(row[3]),
+        "payload": payload,
+    }
+
+
+def delete_evaluation_snapshot(mode: str, snapshot_id: int) -> None:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        conn.execute("DELETE FROM evaluation_snapshots WHERE mode = ? AND id = ?", (mode, snapshot_id))
