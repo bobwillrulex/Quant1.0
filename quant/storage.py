@@ -32,10 +32,20 @@ def ensure_db() -> None:
                 include_in_run_all INTEGER NOT NULL,
                 buy_threshold REAL NOT NULL,
                 sell_threshold REAL NOT NULL,
+                stop_loss_strategy TEXT NOT NULL DEFAULT 'none',
+                fixed_stop_pct REAL NOT NULL DEFAULT 2.0,
                 PRIMARY KEY (mode, model_name)
             )
             """
         )
+        _ensure_column(conn, "model_configs", "stop_loss_strategy", "TEXT NOT NULL DEFAULT 'none'")
+        _ensure_column(conn, "model_configs", "fixed_stop_pct", "REAL NOT NULL DEFAULT 2.0")
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def ensure_model_dir() -> None:
@@ -77,10 +87,10 @@ def load_model_configs(mode: str) -> Dict[str, Dict[str, object]]:
     out: Dict[str, Dict[str, object]] = {}
     with sqlite3.connect(db_path()) as conn:
         rows = conn.execute(
-            "SELECT model_name, ticker, interval, rows, include_in_run_all, buy_threshold, sell_threshold FROM model_configs WHERE mode = ?",
+            "SELECT model_name, ticker, interval, rows, include_in_run_all, buy_threshold, sell_threshold, stop_loss_strategy, fixed_stop_pct FROM model_configs WHERE mode = ?",
             (mode,),
         ).fetchall()
-    for model_name, ticker, interval, row_count, include_in_run_all, buy_threshold, sell_threshold in rows:
+    for model_name, ticker, interval, row_count, include_in_run_all, buy_threshold, sell_threshold, stop_loss_strategy, fixed_stop_pct in rows:
         out[str(model_name)] = {
             "ticker": str(ticker),
             "interval": str(interval),
@@ -88,6 +98,8 @@ def load_model_configs(mode: str) -> Dict[str, Dict[str, object]]:
             "include_in_run_all": bool(include_in_run_all),
             "buy_threshold": float(buy_threshold),
             "sell_threshold": float(sell_threshold),
+            "stop_loss_strategy": str(stop_loss_strategy or "none"),
+            "fixed_stop_pct": float(fixed_stop_pct if fixed_stop_pct is not None else 2.0),
         }
 
     if out:
@@ -110,8 +122,8 @@ def save_model_configs(mode: str, configs: Dict[str, Dict[str, object]]) -> None
             conn.execute(
                 """
                 INSERT OR REPLACE INTO model_configs
-                (mode, model_name, ticker, interval, rows, include_in_run_all, buy_threshold, sell_threshold)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (mode, model_name, ticker, interval, rows, include_in_run_all, buy_threshold, sell_threshold, stop_loss_strategy, fixed_stop_pct)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     mode,
@@ -122,6 +134,8 @@ def save_model_configs(mode: str, configs: Dict[str, Dict[str, object]]) -> None
                     1 if bool(cfg.get("include_in_run_all", True)) else 0,
                     float(cfg.get("buy_threshold", 0.6)),
                     float(cfg.get("sell_threshold", 0.4)),
+                    str(cfg.get("stop_loss_strategy", "none")),
+                    float(cfg.get("fixed_stop_pct", 2.0)),
                 ),
             )
 

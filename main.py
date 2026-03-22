@@ -21,6 +21,7 @@ from quant.ml import (
     train_strategy_models,
     train_test_split,
 )
+from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, validate_fixed_stop_pct
 from quant.storage import (
     list_saved_models,
     load_model_bundle,
@@ -43,6 +44,8 @@ def default_model_config() -> Dict[str, object]:
         "include_in_run_all": True,
         "buy_threshold": 0.6,
         "sell_threshold": 0.4,
+        "stop_loss_strategy": StopLossStrategy.NONE.value,
+        "fixed_stop_pct": 2.0,
     }
 
 
@@ -178,6 +181,8 @@ def create_app() -> "Flask":
                     rows_raw = request.form.get("rows", "250").strip()
                     buy_raw = request.form.get("buy_threshold", "").strip()
                     sell_raw = request.form.get("sell_threshold", "").strip()
+                    stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
+                    fixed_stop_pct = validate_fixed_stop_pct(float(request.form.get("fixed_stop_pct", "2.0").strip() or "2.0"))
                     include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
                     rows = int(rows_raw)
                     buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
@@ -192,6 +197,8 @@ def create_app() -> "Flask":
                         "include_in_run_all": include_in_run_all,
                         "buy_threshold": buy_threshold,
                         "sell_threshold": sell_threshold,
+                        "stop_loss_strategy": stop_loss_strategy.value,
+                        "fixed_stop_pct": fixed_stop_pct,
                     }
                     save_model_configs(mode_key, model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
@@ -238,10 +245,12 @@ def create_app() -> "Flask":
                 f"data-rows='{int(cfg.get('rows', 250))}' "
                 f"data-include='{1 if cfg.get('include_in_run_all', True) else 0}' "
                 f"data-buy='{float(cfg.get('buy_threshold', 0.6)):.2f}' "
-                f"data-sell='{float(cfg.get('sell_threshold', 0.4)):.2f}'>"
+                f"data-sell='{float(cfg.get('sell_threshold', 0.4)):.2f}' "
+                f"data-stop-loss='{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}' "
+                f"data-fixed-stop='{float(cfg.get('fixed_stop_pct', 2.0)):.2f}'>"
                 f"<strong>{model_name}</strong>"
                 f"<span>{cfg.get('ticker')} • {cfg.get('interval')} • {int(cfg.get('rows', 250))} rows • "
-                f"BUY>{float(cfg.get('buy_threshold', 0.6)):.2f} / SELL<{float(cfg.get('sell_threshold', 0.4)):.2f}</span>"
+                f"BUY>{float(cfg.get('buy_threshold', 0.6)):.2f} / SELL<{float(cfg.get('sell_threshold', 0.4)):.2f} • SL {cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</span>"
                 f"<em>{include_badge}</em>"
                 "</button>"
             )
@@ -342,6 +351,18 @@ def create_app() -> "Flask":
                     <label>SELL if P(Up) &lt;
                       <input type="number" min="0" max="1" step="0.01" name="sell_threshold" id="cfgSellThreshold" placeholder="0.40" />
                     </label>
+                    <label>Stop Loss Strategy
+                      <select name="stop_loss_strategy" id="cfgStopLossStrategy">
+                        <option value="none">None</option>
+                        <option value="atr">Volatility Buffer (ATR-Based)</option>
+                        <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
+                        <option value="time_decay">Time-Decay (Temporal Exit)</option>
+                        <option value="fixed_percentage">Fixed Percentage</option>
+                      </select>
+                    </label>
+                    <label id="cfgFixedStopWrap">Fixed Stop Loss %
+                      <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="cfgFixedStopPct" placeholder="2.0" />
+                    </label>
                     <label>Include in Run All
                       <select name="include_in_run_all" id="cfgInclude">
                         <option value="1">Yes</option>
@@ -398,8 +419,17 @@ def create_app() -> "Flask":
                 document.getElementById("cfgRows").value = card.dataset.rows || "250";
                 document.getElementById("cfgBuyThreshold").value = card.dataset.buy || "0.60";
                 document.getElementById("cfgSellThreshold").value = card.dataset.sell || "0.40";
+                document.getElementById("cfgStopLossStrategy").value = card.dataset.stopLoss || "none";
+                document.getElementById("cfgFixedStopPct").value = card.dataset.fixedStop || "2.0";
                 document.getElementById("cfgInclude").value = card.dataset.include || "1";
+                toggleCfgFixedStop();
                 settingsModal.style.display = "flex";
+              }}
+
+              function toggleCfgFixedStop() {{
+                const strategy = document.getElementById("cfgStopLossStrategy").value;
+                const wrap = document.getElementById("cfgFixedStopWrap");
+                wrap.style.display = strategy === "fixed_percentage" ? "block" : "none";
               }}
 
               function openRename() {{
@@ -428,6 +458,8 @@ def create_app() -> "Flask":
                   menu.style.display = "block";
                 }});
               }});
+              document.getElementById("cfgStopLossStrategy").addEventListener("change", toggleCfgFixedStop);
+              toggleCfgFixedStop();
 
               window.addEventListener("click", (evt) => {{
                 if (evt.target === settingsModal || evt.target === renameModal) {{
@@ -494,6 +526,8 @@ def create_app() -> "Flask":
         buy_threshold_raw = request.form.get("buy_threshold", "").strip()
         sell_threshold_raw = request.form.get("sell_threshold", "").strip()
         model_name = request.form.get("model_name", "").strip()
+        stop_loss_strategy_raw = request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value).strip()
+        fixed_stop_pct_raw = request.form.get("fixed_stop_pct", "2.0").strip()
         selected_model = request.form.get("selected_model", "__new__")
         present_ticker = request.form.get("present_ticker", ticker).upper().strip()
         present_interval = request.form.get("present_interval", interval)
@@ -548,6 +582,9 @@ def create_app() -> "Flask":
                 else:
                     row_count = int(rows)
                     buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
+                    stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
+                    fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_pct_raw or "2.0"))
+                    stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
                     tickers = parse_csv_values(ticker, uppercase=True)
@@ -577,6 +614,7 @@ def create_app() -> "Flask":
                                 buy_threshold=buy_threshold,
                                 sell_threshold=sell_threshold,
                                 allow_short=allow_short,
+                                stop_loss=stop_loss_config,
                             )
                             trained_model_name = ""
                             if train_action == "train":
@@ -591,6 +629,8 @@ def create_app() -> "Flask":
                                         "include_in_run_all": True,
                                         "buy_threshold": buy_threshold,
                                         "sell_threshold": sell_threshold,
+                                        "stop_loss_strategy": stop_loss_strategy.value,
+                                        "fixed_stop_pct": fixed_stop_pct,
                                     }
                             multi_rows.append(
                                 "<tr>"
@@ -646,6 +686,7 @@ def create_app() -> "Flask":
                                 buy_threshold=buy_threshold,
                                 sell_threshold=sell_threshold,
                                 allow_short=allow_short,
+                                stop_loss=stop_loss_config,
                             )
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
@@ -661,6 +702,7 @@ def create_app() -> "Flask":
                                 buy_threshold=buy_threshold,
                                 sell_threshold=sell_threshold,
                                 allow_short=allow_short,
+                                stop_loss=stop_loss_config,
                             )
                             metrics["train_size"] = bundle["train_size"]
                             if train_action == "train" and model_name:
@@ -673,6 +715,8 @@ def create_app() -> "Flask":
                                     "include_in_run_all": True,
                                     "buy_threshold": buy_threshold,
                                     "sell_threshold": sell_threshold,
+                                    "stop_loss_strategy": stop_loss_strategy.value,
+                                    "fixed_stop_pct": fixed_stop_pct,
                                 }
                                 save_model_configs(mode_key, model_configs)
                                 metrics["saved_model"] = model_name
@@ -768,7 +812,7 @@ def create_app() -> "Flask":
                         </article>
                         <article class="card">
                           <h3>Decision Strategy</h3>
-                          <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Cost 0.05%</p>
+                          <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Stop {metrics['strategy']['stop_loss_strategy']} · Cost 0.05%</p>
                           <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                           <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                           <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
@@ -777,6 +821,8 @@ def create_app() -> "Flask":
                           <p><span class="muted">Win Rate / Trades</span> {metrics['strategy']['win_rate']:.2%} / {int(metrics['strategy']['trade_count'])}</p>
                           <p><span class="muted">Average Gain per Trade</span> {metrics['strategy']['avg_gain_per_trade']:+.4%}</p>
                           <p><span class="muted">Max Loss per Trade</span> {metrics['strategy']['max_loss_per_trade']:+.4%}</p>
+                          <p><span class="muted">Stop-loss Exits</span> {int(metrics['strategy']['stop_loss_exits'])}</p>
+                          <p><span class="muted">Time-decay Exits</span> {int(metrics['strategy']['time_decay_exits'])} (limit: {int(metrics['strategy']['time_decay_bars'])} bars)</p>
                           <div style="margin-top:0.55rem;">
                             <p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>
                             {hold_time_boxplot}
@@ -1080,6 +1126,18 @@ def create_app() -> "Flask":
               <label>SELL if P(Up) &lt; (optional):
                 <input type="number" min="0" max="1" step="0.01" name="sell_threshold" value="{sell_threshold_raw}" placeholder="0.40" />
               </label>
+              <label>Stop Loss Strategy:
+                <select name="stop_loss_strategy" id="stopLossStrategy">
+                  <option value="none" {"selected" if stop_loss_strategy_raw == "none" else ""}>None</option>
+                  <option value="atr" {"selected" if stop_loss_strategy_raw == "atr" else ""}>Volatility Buffer (ATR-Based)</option>
+                  <option value="model_invalidation" {"selected" if stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation (MAE-Linked)</option>
+                  <option value="time_decay" {"selected" if stop_loss_strategy_raw == "time_decay" else ""}>Time-Decay (Temporal Exit)</option>
+                  <option value="fixed_percentage" {"selected" if stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option>
+                </select>
+              </label>
+              <label id="fixedStopLossWrap">Fixed Stop Loss %:
+                <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
+              </label>
               <label>&nbsp;
                 <div class="button-row">
                   <button type="submit" name="train_action" value="train">Download + Train</button>
@@ -1214,6 +1272,17 @@ def create_app() -> "Flask":
                   }}
                 }});
               }});
+
+              const stopLossStrategyEl = document.getElementById("stopLossStrategy");
+              const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
+              function toggleFixedStopField() {{
+                if (!stopLossStrategyEl || !fixedStopLossWrapEl) return;
+                fixedStopLossWrapEl.style.display = stopLossStrategyEl.value === "fixed_percentage" ? "block" : "none";
+              }}
+              if (stopLossStrategyEl) {{
+                stopLossStrategyEl.addEventListener("change", toggleFixedStopField);
+                toggleFixedStopField();
+              }}
             </script>
           </body>
         </html>
