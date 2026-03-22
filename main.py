@@ -1467,8 +1467,19 @@ def create_app() -> "Flask":
               <p class="muted">Runs each saved model in this mode only (isolated from the other mode) and shows the live prediction.</p>
               <button type="submit">Run All Present Models</button>
               {run_all_html}
-              <table>
-                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
+              <table id="runAllTable">
+                <tr>
+                  <th data-sort-type="text">Model</th>
+                  <th data-sort-type="text">Ticker</th>
+                  <th data-sort-type="text">Candle</th>
+                  <th data-sort-type="number">Rows</th>
+                  <th data-sort-type="text">BUY/SELL</th>
+                  <th data-sort-type="text">Stop Strategy</th>
+                  <th data-sort-type="percent">Expected Return (next candle)</th>
+                  <th data-sort-type="percent">P(Up)</th>
+                  <th data-sort-type="number">Stop Price</th>
+                  <th data-sort-type="text">Action</th>
+                </tr>
                 {run_all_rows if run_all_rows else "<tr><td colspan='10' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
               </table>
             </form>
@@ -1600,6 +1611,64 @@ def create_app() -> "Flask":
 
               const stopLossStrategyEl = document.getElementById("stopLossStrategy");
               const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
+              const runAllTable = document.getElementById("runAllTable");
+              const sortDirections = {{}};
+
+              function parseSortValue(rawValue, sortType) {{
+                const textValue = (rawValue || "").trim();
+                if (sortType === "number") {{
+                  const parsed = Number.parseFloat(textValue.replace(/,/g, ""));
+                  return Number.isFinite(parsed) ? parsed : null;
+                }}
+                if (sortType === "percent") {{
+                  const parsed = Number.parseFloat(textValue.replace("%", "").replace(/,/g, ""));
+                  return Number.isFinite(parsed) ? parsed : null;
+                }}
+                return textValue.toLowerCase();
+              }}
+
+              function sortRunAllTable(columnIndex, direction, sortType) {{
+                if (!runAllTable) return;
+                const rows = Array.from(runAllTable.querySelectorAll("tr")).slice(1);
+                if (!rows.length) return;
+
+                rows.sort((leftRow, rightRow) => {{
+                  const leftCell = leftRow.children[columnIndex];
+                  const rightCell = rightRow.children[columnIndex];
+                  const leftValue = parseSortValue(leftCell?.textContent || "", sortType);
+                  const rightValue = parseSortValue(rightCell?.textContent || "", sortType);
+
+                  if (sortType === "number" || sortType === "percent") {{
+                    if (leftValue === null && rightValue === null) return 0;
+                    if (leftValue === null) return 1;
+                    if (rightValue === null) return -1;
+                    return direction === "desc" ? rightValue - leftValue : leftValue - rightValue;
+                  }}
+
+                  if (leftValue === rightValue) return 0;
+                  if (direction === "desc") {{
+                    return String(rightValue).localeCompare(String(leftValue));
+                  }}
+                  return String(leftValue).localeCompare(String(rightValue));
+                }});
+
+                rows.forEach((row) => runAllTable.appendChild(row));
+              }}
+
+              if (runAllTable) {{
+                const headerCells = Array.from(runAllTable.querySelectorAll("th"));
+                headerCells.forEach((headerCell, index) => {{
+                  headerCell.style.cursor = "pointer";
+                  headerCell.title = "Click to sort";
+                  headerCell.addEventListener("click", () => {{
+                    const currentDirection = sortDirections[index] || "asc";
+                    const nextDirection = currentDirection === "asc" ? "desc" : "asc";
+                    sortDirections[index] = nextDirection;
+                    sortRunAllTable(index, nextDirection, headerCell.dataset.sortType || "text");
+                  }});
+                }});
+              }}
+
               function toggleFixedStopField() {{
                 if (!stopLossStrategyEl || !fixedStopLossWrapEl) return;
                 const fixedStopInput = fixedStopLossWrapEl.querySelector('input[name="fixed_stop_pct"]');
