@@ -23,7 +23,7 @@ from quant.ml import (
     train_strategy_models,
     train_test_split,
 )
-from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, validate_fixed_stop_pct
+from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, stop_loss_price, validate_fixed_stop_pct
 from quant.storage import (
     list_saved_models,
     list_evaluation_snapshots,
@@ -83,9 +83,45 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
             buy_threshold = float(cfg.get("buy_threshold", 0.6))
             sell_threshold = float(cfg.get("sell_threshold", 0.4))
             prediction = predict_signal(bundle, latest_row, buy_threshold=buy_threshold, sell_threshold=sell_threshold, long_only=long_only)
-            run_all_rows += ("<tr>" f"<td>{model_name}</td>" f"<td>{cfg.get('ticker')}</td>" f"<td>{cfg.get('interval')}</td>" f"<td>{int(cfg.get('rows', 250))}</td>" f"<td>{buy_threshold:.2f} / {sell_threshold:.2f}</td>" f"<td>{prediction['expected_return']:+.4%}</td>" f"<td>{prediction['p_up']:.2%}</td>" f"<td><strong>{prediction['action']}</strong></td>" "</tr>")
+            stop_strategy = parse_stop_loss_strategy(str(cfg.get("stop_loss_strategy", StopLossStrategy.NONE.value)))
+            stop_price_value = stop_loss_price(
+                strategy=stop_strategy,
+                action=str(prediction["action"]),
+                reference_price=float(latest_row.get("close", 0.0)),
+                expected_return=float(prediction["expected_return"]),
+                fixed_pct=float(cfg.get("fixed_stop_pct", 2.0)),
+                atr_fraction=float(latest_row.get("atr_frac", 0.0)),
+                model_mae=MODEL_MAE_DEFAULT,
+            )
+            stop_price_display = f"{stop_price_value:.4f}" if stop_price_value is not None else "n/a"
+            run_all_rows += (
+                "<tr>"
+                f"<td>{model_name}</td>"
+                f"<td>{cfg.get('ticker')}</td>"
+                f"<td>{cfg.get('interval')}</td>"
+                f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{buy_threshold:.2f} / {sell_threshold:.2f}</td>"
+                f"<td>{stop_strategy.value}</td>"
+                f"<td>{prediction['expected_return']:+.4%}</td>"
+                f"<td>{prediction['p_up']:.2%}</td>"
+                f"<td>{stop_price_display}</td>"
+                f"<td><strong>{prediction['action']}</strong></td>"
+                "</tr>"
+            )
         except Exception as exc:
-            run_all_rows += ("<tr>" f"<td>{model_name}</td>" f"<td>{cfg.get('ticker')}</td>" f"<td>{cfg.get('interval')}</td>" f"<td>{int(cfg.get('rows', 250))}</td>" f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f} / {float(cfg.get('sell_threshold', 0.4)):.2f}</td>" "<td colspan='3' style='color:#ff7b7b;'>" f"Run failed: {exc}" "</td>" "</tr>")
+            run_all_rows += (
+                "<tr>"
+                f"<td>{model_name}</td>"
+                f"<td>{cfg.get('ticker')}</td>"
+                f"<td>{cfg.get('interval')}</td>"
+                f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f} / {float(cfg.get('sell_threshold', 0.4)):.2f}</td>"
+                f"<td>{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</td>"
+                "<td colspan='4' style='color:#ff7b7b;'>"
+                f"Run failed: {exc}"
+                "</td>"
+                "</tr>"
+            )
     return run_all_rows
 
 
@@ -321,7 +357,7 @@ def create_app() -> "Flask":
             </nav>
             <div class="container">
               <h1>{heading_label}</h1>
-              <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, buy/sell thresholds, include in Run All). Right-click a model for rename/delete.</p>
+              <p class="muted">Click a model to edit preset settings (ticker, candle length, rows, buy/sell thresholds, stop-loss strategy, include in Run All). Right-click a model for rename/delete.</p>
               {message_html}
               {error_html}
               <div class="card">
@@ -544,6 +580,8 @@ def create_app() -> "Flask":
         present_buy_raw = request.form.get("present_buy_threshold", "").strip()
         present_sell_raw = request.form.get("present_sell_threshold", "").strip()
         present_model = request.form.get("present_model", selected_model)
+        present_stop_loss_strategy_raw = request.form.get("present_stop_loss_strategy", stop_loss_strategy_raw).strip()
+        present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", fixed_stop_pct_raw).strip()
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
         saved_models = list_saved_models(mode_key)
@@ -619,6 +657,10 @@ def create_app() -> "Flask":
                 elif mode == "present":
                     present_row_count = int(present_rows)
                     present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
+                    present_stop_loss_strategy = parse_stop_loss_strategy(present_stop_loss_strategy_raw)
+                    present_fixed_stop_pct = 2.0
+                    if present_stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                        present_fixed_stop_pct = validate_fixed_stop_pct(float(present_fixed_stop_pct_raw or "2.0"))
                     dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
                     present_rows_used_note = "" if len(dataset) >= present_row_count else f"Only {len(dataset)} frames were available and used for this run."
                     latest_row = dataset[-1]
@@ -633,6 +675,16 @@ def create_app() -> "Flask":
                         sell_threshold=present_sell_threshold,
                         long_only=is_spot,
                     )
+                    present_stop_price = stop_loss_price(
+                        strategy=present_stop_loss_strategy,
+                        action=str(prediction["action"]),
+                        reference_price=float(latest_row.get("close", 0.0)),
+                        expected_return=float(prediction["expected_return"]),
+                        fixed_pct=present_fixed_stop_pct,
+                        atr_fraction=float(latest_row.get("atr_frac", 0.0)),
+                        model_mae=MODEL_MAE_DEFAULT,
+                    )
+                    present_stop_price_html = f"{present_stop_price:.4f}" if present_stop_price is not None else "n/a"
                     present_html = f"""
                     <section class="results">
                       <article class="card">
@@ -642,6 +694,8 @@ def create_app() -> "Flask":
                         <p class="muted">{present_rows_used_note or f"Using requested {present_row_count} frames."}</p>
                         <p><span class="muted">Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>
                         <p><span class="muted">P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>
+                        <p><span class="muted">Stop Loss Strategy</span> <strong>{present_stop_loss_strategy.value}</strong></p>
+                        <p><span class="muted">Calculated Stop Price</span> <strong>{present_stop_price_html}</strong></p>
                         <p><span class="muted">Action</span> <strong>{prediction['action']}</strong></p>
                       </article>
                     </section>
@@ -1385,6 +1439,18 @@ def create_app() -> "Flask":
               <label>SELL if P(Up) &lt; (optional):
                 <input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" />
               </label>
+              <label>Stop Loss Strategy:
+                <select name="present_stop_loss_strategy" id="presentStopLossStrategy">
+                  <option value="none" {"selected" if present_stop_loss_strategy_raw == "none" else ""}>None</option>
+                  <option value="atr" {"selected" if present_stop_loss_strategy_raw == "atr" else ""}>Volatility Buffer (ATR-Based)</option>
+                  <option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation (MAE-Linked)</option>
+                  <option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time-Decay (Temporal Exit)</option>
+                  <option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option>
+                </select>
+              </label>
+              <label id="presentFixedStopLossWrap">Present Fixed Stop Loss %:
+                <input type="number" min="0.01" step="any" name="present_fixed_stop_pct" value="{present_fixed_stop_pct_raw}" placeholder="2.0" />
+              </label>
               <label>&nbsp;
                 <button type="submit">Run Present Mode</button>
               </label>
@@ -1397,8 +1463,8 @@ def create_app() -> "Flask":
               <button type="submit">Run All Present Models</button>
               {run_all_html}
               <table>
-                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Action</th></tr>
-                {run_all_rows if run_all_rows else "<tr><td colspan='8' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
+                <tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return (next candle)</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
+                {run_all_rows if run_all_rows else "<tr><td colspan='10' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
               </table>
             </form>
             {message_html}
@@ -1544,6 +1610,24 @@ def create_app() -> "Flask":
               if (stopLossStrategyEl) {{
                 stopLossStrategyEl.addEventListener("change", toggleFixedStopField);
                 toggleFixedStopField();
+              }}
+              const presentStopLossStrategyEl = document.getElementById("presentStopLossStrategy");
+              const presentFixedStopLossWrapEl = document.getElementById("presentFixedStopLossWrap");
+              function togglePresentFixedStopField() {{
+                if (!presentStopLossStrategyEl || !presentFixedStopLossWrapEl) return;
+                const fixedStopInput = presentFixedStopLossWrapEl.querySelector('input[name="present_fixed_stop_pct"]');
+                const isFixed = presentStopLossStrategyEl.value === "fixed_percentage";
+                presentFixedStopLossWrapEl.style.display = isFixed ? "block" : "none";
+                if (fixedStopInput) {{
+                  fixedStopInput.disabled = !isFixed;
+                  if (!isFixed) {{
+                    fixedStopInput.setCustomValidity("");
+                  }}
+                }}
+              }}
+              if (presentStopLossStrategyEl) {{
+                presentStopLossStrategyEl.addEventListener("change", togglePresentFixedStopField);
+                togglePresentFixedStopField();
               }}
 
               function closeSavedEvaluationsModal() {{

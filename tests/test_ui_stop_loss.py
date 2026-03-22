@@ -29,6 +29,11 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn('id="fixedStopLossWrap"', html)
         self.assertIn("toggleFixedStopField", html)
         self.assertIn('step="any" name="fixed_stop_pct"', html)
+        self.assertIn('name="present_stop_loss_strategy"', html)
+        self.assertIn('id="presentFixedStopLossWrap"', html)
+        self.assertIn("togglePresentFixedStopField", html)
+        self.assertIn("Stop Strategy", html)
+        self.assertIn("Stop Price", html)
 
     @patch("main.fetch_yahoo_rows")
     @patch("main.evaluate_bundle")
