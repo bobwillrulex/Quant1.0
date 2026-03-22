@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import csv
+import json
 import random
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 from typing import List, Sequence
 
 from .types import Row
@@ -156,3 +160,70 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
     if not best_rows:
         raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
     return best_rows
+
+
+def _twelve_interval(interval: str) -> str:
+    interval_map = {"1d": "1day", "1h": "1h", "15m": "15min", "5m": "5min"}
+    if interval not in interval_map:
+        raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
+    return interval_map[interval]
+
+
+def _ticker_is_unavailable_for_twelve_data(ticker: str) -> bool:
+    upper = ticker.upper().strip()
+    if "-" in upper:
+        return True
+    non_us_equity_suffixes = (".TO", ".V", ".CN", ".NE", ".AX", ".L")
+    return upper.endswith(non_us_equity_suffixes)
+
+
+def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: str) -> List[Row]:
+    if row_count < 50:
+        raise ValueError("Please request at least 50 rows.")
+    query = urlencode(
+        {
+            "symbol": ticker,
+            "interval": _twelve_interval(interval),
+            "outputsize": min(5000, max(50, row_count + 100)),
+            "order": "asc",
+            "timezone": "Exchange",
+            "apikey": api_key,
+        }
+    )
+    endpoint = f"https://api.twelvedata.com/time_series?{query}"
+    try:
+        with urlopen(endpoint, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except URLError as exc:
+        raise ValueError(f"Twelve Data request failed: {exc}") from exc
+    if payload.get("status") == "error":
+        message = str(payload.get("message", "Unknown Twelve Data API error"))
+        raise ValueError(message)
+    values = payload.get("values")
+    if not isinstance(values, list) or not values:
+        raise ValueError("Twelve Data returned no candles.")
+    highs = [float(item["high"]) for item in values]
+    lows = [float(item["low"]) for item in values]
+    closes = [float(item["close"]) for item in values]
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+    return rows[-row_count:] if len(rows) >= row_count else rows
+
+
+def fetch_market_rows(ticker: str, interval: str, row_count: int, provider: str, twelve_api_key: str) -> tuple[List[Row], str | None]:
+    selected_provider = provider.strip().lower()
+    if selected_provider not in ("yfinance", "twelvedata"):
+        raise ValueError("Data provider must be either yfinance or twelvedata.")
+    if selected_provider == "yfinance":
+        return fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count), None
+    if _ticker_is_unavailable_for_twelve_data(ticker):
+        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+        return rows, (
+            f"Twelve Data does not support this instrument in the current setup ({ticker}). "
+            "Fell back to yfinance."
+        )
+    try:
+        rows = fetch_twelve_data_rows(ticker=ticker, interval=interval, row_count=row_count, api_key=twelve_api_key)
+        return rows, None
+    except Exception as exc:
+        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+        return rows, f"Twelve Data failed for {ticker} ({exc}). Fell back to yfinance."

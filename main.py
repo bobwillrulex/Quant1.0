@@ -13,7 +13,7 @@ from html import escape
 from typing import TYPE_CHECKING, Dict
 
 from quant.constants import OPTIONS_MODE, SPOT_MODE
-from quant.data import fetch_yahoo_rows, load_csv, synthetic_data
+from quant.data import fetch_market_rows, load_csv, synthetic_data
 from quant.ml import (
     build_default_strategy_features,
     evaluate_bundle,
@@ -72,13 +72,22 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
 
 def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
     run_all_rows = ""
+    data_provider = str(model_configs.get("__ui_data_provider__", "yfinance"))
+    twelve_api_key = str(model_configs.get("__ui_twelve_api_key__", ""))
     for model_name in saved_models:
         cfg = get_model_config(model_name, model_configs)
         if not cfg.get("include_in_run_all", True):
             continue
         try:
-            dataset = fetch_yahoo_rows(ticker=str(cfg.get("ticker", "AAPL")), interval=str(cfg.get("interval", "1d")), row_count=int(cfg.get("rows", 250)))
+            dataset, provider_notice = fetch_market_rows(
+                ticker=str(cfg.get("ticker", "AAPL")),
+                interval=str(cfg.get("interval", "1d")),
+                row_count=int(cfg.get("rows", 250)),
+                provider=data_provider,
+                twelve_api_key=twelve_api_key,
+            )
             latest_row = dataset[-1]
+            provider_notice_html = f"<br><span class='muted'>{provider_notice}</span>" if provider_notice else ""
             bundle = load_model_bundle(mode, model_name)
             buy_threshold = float(cfg.get("buy_threshold", 0.6))
             sell_threshold = float(cfg.get("sell_threshold", 0.4))
@@ -105,7 +114,7 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
                 f"<td>{prediction['expected_return']:+.4%}</td>"
                 f"<td>{prediction['p_up']:.2%}</td>"
                 f"<td>{stop_price_display}</td>"
-                f"<td><strong>{prediction['action']}</strong></td>"
+                f"<td><strong>{prediction['action']}</strong>{provider_notice_html}</td>"
                 "</tr>"
             )
         except Exception as exc:
@@ -782,6 +791,11 @@ def create_app() -> "Flask":
         present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", fixed_stop_pct_raw).strip()
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
+        data_provider = request.form.get("data_provider", "yfinance").strip().lower()
+        if data_provider not in ("yfinance", "twelvedata"):
+            data_provider = "yfinance"
+        twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "e90093c59e7a436d9436e34b56a6e6a5").strip()
+        provider_notices: list[str] = []
         saved_models = list_saved_models(mode_key)
         saved_evaluations = list_evaluation_snapshots(mode_key)
         present_html = ""
@@ -792,7 +806,11 @@ def create_app() -> "Flask":
 
         if request.method == "POST":
             try:
-                if mode == "saved_eval":
+                if mode == "provider_toggle":
+                    toggled_provider = request.form.get("toggle_to", "yfinance").strip().lower()
+                    data_provider = toggled_provider if toggled_provider in ("yfinance", "twelvedata") else "yfinance"
+                    message_html = f"<p style='color:#7bd88f;'><strong>Data provider:</strong> {data_provider}</p>"
+                elif mode == "saved_eval":
                     eval_action = request.form.get("eval_action", "").strip()
                     if eval_action == "save":
                         payload_raw = request.form.get("evaluation_payload", "").strip()
@@ -820,6 +838,7 @@ def create_app() -> "Flask":
                             model_name = str(form_state.get("model_name", model_name))
                             stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                             fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                            data_provider = str(form_state.get("data_provider", data_provider)).strip().lower()
                     elif eval_action == "open":
                         snapshot_id = int(request.form.get("evaluation_id", "0"))
                         snapshot = load_evaluation_snapshot(mode_key, snapshot_id)
@@ -859,7 +878,15 @@ def create_app() -> "Flask":
                     present_fixed_stop_pct = 2.0
                     if present_stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
                         present_fixed_stop_pct = validate_fixed_stop_pct(float(present_fixed_stop_pct_raw or "2.0"))
-                    dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
+                    dataset, provider_notice = fetch_market_rows(
+                        ticker=present_ticker,
+                        interval=present_interval,
+                        row_count=present_row_count,
+                        provider=data_provider,
+                        twelve_api_key=twelve_api_key,
+                    )
+                    if provider_notice:
+                        provider_notices.append(provider_notice)
                     present_rows_used_note = "" if len(dataset) >= present_row_count else f"Only {len(dataset)} frames were available and used for this run."
                     latest_row = dataset[-1]
                     if present_model == "__new__":
@@ -901,6 +928,8 @@ def create_app() -> "Flask":
                 elif mode == "present_all":
                     model_configs = load_model_configs(mode_key)
                     model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
+                    model_configs["__ui_data_provider__"] = data_provider
+                    model_configs["__ui_twelve_api_key__"] = twelve_api_key
                     run_all_rows = build_run_all_rows(saved_models, model_configs, mode=mode_key, long_only=is_spot)
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
@@ -926,7 +955,15 @@ def create_app() -> "Flask":
                         model_configs = load_model_configs(mode_key)
                         multi_rows_used_notes = []
                         for idx, ticker_symbol in enumerate(tickers):
-                            dataset = fetch_yahoo_rows(ticker=ticker_symbol, interval=interval, row_count=row_count)
+                            dataset, provider_notice = fetch_market_rows(
+                                ticker=ticker_symbol,
+                                interval=interval,
+                                row_count=row_count,
+                                provider=data_provider,
+                                twelve_api_key=twelve_api_key,
+                            )
+                            if provider_notice:
+                                provider_notices.append(provider_notice)
                             if len(dataset) < row_count:
                                 multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
                             bundle = train_strategy_models(dataset, split_style=split_style)
@@ -989,7 +1026,15 @@ def create_app() -> "Flask":
                     else:
                         ticker = tickers[0]
                     if len(tickers) == 1:
-                        dataset = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+                        dataset, provider_notice = fetch_market_rows(
+                            ticker=ticker,
+                            interval=interval,
+                            row_count=row_count,
+                            provider=data_provider,
+                            twelve_api_key=twelve_api_key,
+                        )
+                        if provider_notice:
+                            provider_notices.append(provider_notice)
                         features = build_default_strategy_features()
                         if train_action == "evaluate":
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for evaluation."
@@ -1263,11 +1308,21 @@ def create_app() -> "Flask":
                                 "model_name": model_name,
                                 "stop_loss_strategy": stop_loss_strategy_raw,
                                 "fixed_stop_pct": fixed_stop_pct_raw,
+                                "data_provider": data_provider,
                             },
                             "result_html": result_html,
                         }
             except Exception as exc:
                 error_html = f"<p style='color:red;'><strong>Error:</strong> {exc}</p>"
+
+        provider_notice_html = ""
+        if provider_notices:
+            provider_notice_items = "".join(f"<li>{escape(note)}</li>" for note in dict.fromkeys(provider_notices))
+            provider_notice_html = (
+                "<div class='card' style='margin-top:1rem;'><h3>Data Provider Notices</h3>"
+                "<p class='muted'>Some requests fell back to yfinance.</p>"
+                f"<ul>{provider_notice_items}</ul></div>"
+            )
 
         current_eval_payload_json = (json.dumps(current_evaluation_payload).replace("</", "<\\/") if current_evaluation_payload else "null")
         saved_eval_items_json = json.dumps(saved_evaluations).replace("</", "<\\/")
@@ -1529,6 +1584,12 @@ def create_app() -> "Flask":
               .context-menu button:hover {{
                 background: {theme_surface};
               }}
+              .provider-pill {{
+                width: auto;
+                margin-top: 0;
+                font-size: 0.82rem;
+                padding: 0.32rem 0.55rem;
+              }}
               .topbar-btn {{
                 font-size: 0.85rem;
                 padding: 0.32rem 0.55rem;
@@ -1543,6 +1604,12 @@ def create_app() -> "Flask":
                 <a href="{manage_href}" class="tab-link">Manage Models</a>
                 <a href="#present-mode" class="tab-link">Present Mode</a>
                 <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
+                <form method="post" style="margin:0;">
+                  <input type="hidden" name="mode" value="provider_toggle" />
+                  <input type="hidden" name="toggle_to" value="{'yfinance' if data_provider == 'twelvedata' else 'twelvedata'}" />
+                  <input type="hidden" name="data_provider" value="{data_provider}" />
+                  <button type="submit" class="secondary provider-pill">Data: {'Twelve Data' if data_provider == 'twelvedata' else 'YFinance'}</button>
+                </form>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
             </nav>
@@ -1550,6 +1617,7 @@ def create_app() -> "Flask":
             <h1>{trainer_heading}</h1>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <div class="form-grid">
               <label>Ticker:
                 <input type="text" name="ticker" value="{ticker}" required />
@@ -1608,6 +1676,7 @@ def create_app() -> "Flask":
             </form>
             <form method="post" class="card" id="present-mode">
               <input type="hidden" name="mode" value="present" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <h2>Present Mode</h2>
               <p class="muted">Get current model call using the same thresholds used in testing (BUY &gt; 0.60, SELL &lt; 0.40, else HOLD).</p>
               <div class="form-grid">
@@ -1656,6 +1725,7 @@ def create_app() -> "Flask":
             </form>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="present_all" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <h2>Run All Present Models</h2>
               <p class="muted">Runs each saved model in this mode only (isolated from the other mode) and shows the live prediction.</p>
               <button type="submit">Run All Present Models</button>
@@ -1680,6 +1750,7 @@ def create_app() -> "Flask":
             {error_html}
             {present_html}
             {result_html}
+            {provider_notice_html}
             </div>
             <div id="savedEvalsModal" class="modal" aria-hidden="true">
               <div class="modal-card">
@@ -1696,16 +1767,19 @@ def create_app() -> "Flask":
             </div>
             <form id="openSavedEvalForm" method="post" style="display:none;">
               <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <input type="hidden" name="eval_action" value="open" />
               <input type="hidden" name="evaluation_id" id="openSavedEvalId" />
             </form>
             <form id="deleteSavedEvalForm" method="post" style="display:none;">
               <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <input type="hidden" name="eval_action" value="delete" />
               <input type="hidden" name="evaluation_id" id="deleteSavedEvalId" />
             </form>
             <form id="saveEvalForm" method="post" style="display:none;">
               <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
               <input type="hidden" name="eval_action" value="save" />
               <input type="hidden" name="evaluation_name" id="evaluationNameInput" />
               <input type="hidden" name="evaluation_payload" id="evaluationPayloadInput" />
