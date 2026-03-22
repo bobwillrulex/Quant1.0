@@ -278,12 +278,12 @@ def create_app() -> "Flask":
             model_configs = load_model_configs(mode_key)
             model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
 
-        model_cards = ""
+        model_rows = ""
         for model_name in saved_models:
             cfg = get_model_config(model_name, model_configs)
             include_badge = "Included in Run All" if cfg.get("include_in_run_all", True) else "Excluded from Run All"
-            model_cards += (
-                f"<button type='button' class='model-card' "
+            model_rows += (
+                f"<tr class='model-row' "
                 f"data-model='{model_name}' "
                 f"data-ticker='{cfg.get('ticker')}' "
                 f"data-interval='{cfg.get('interval')}' "
@@ -293,11 +293,16 @@ def create_app() -> "Flask":
                 f"data-sell='{float(cfg.get('sell_threshold', 0.4)):.2f}' "
                 f"data-stop-loss='{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}' "
                 f"data-fixed-stop='{float(cfg.get('fixed_stop_pct', 2.0)):.2f}'>"
-                f"<strong>{model_name}</strong>"
-                f"<span>{cfg.get('ticker')} • {cfg.get('interval')} • {int(cfg.get('rows', 250))} rows • "
-                f"BUY>{float(cfg.get('buy_threshold', 0.6)):.2f} / SELL<{float(cfg.get('sell_threshold', 0.4)):.2f} • SL {cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</span>"
-                f"<em>{include_badge}</em>"
-                "</button>"
+                f"<td>{model_name}</td>"
+                f"<td>{cfg.get('ticker')}</td>"
+                f"<td>{cfg.get('interval')}</td>"
+                f"<td>{int(cfg.get('rows', 250))}</td>"
+                f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f}</td>"
+                f"<td>{float(cfg.get('sell_threshold', 0.4)):.2f}</td>"
+                f"<td>{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</td>"
+                f"<td>{float(cfg.get('fixed_stop_pct', 2.0)):.2f}%</td>"
+                f"<td>{include_badge}</td>"
+                "</tr>"
             )
 
         return f"""
@@ -324,10 +329,19 @@ def create_app() -> "Flask":
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
-              .model-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }}
-              .model-card {{ text-align: left; border: 1px solid var(--border); border-radius: 12px; background: {theme_surface}; color: var(--text); padding: 0.8rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.35rem; }}
-              .model-card span {{ color: var(--muted); font-size: 0.92rem; }}
-              .model-card em {{ color: {theme_badge}; font-style: normal; font-size: 0.82rem; }}
+              .models-toolbar {{ display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
+              .models-toolbar input {{ max-width: 360px; }}
+              .models-table-wrap {{ border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }}
+              .models-table {{ width: 100%; border-collapse: collapse; }}
+              .models-table thead th {{ background: {theme_panel2}; color: {theme_table_head}; padding: 0.6rem; font-size: 0.9rem; letter-spacing: 0.01em; }}
+              .model-row {{ cursor: pointer; }}
+              .model-row td {{ padding: 0.62rem 0.6rem; }}
+              .models-table tbody tr.model-row:nth-child(4n+1),
+              .models-table tbody tr.model-row:nth-child(4n+2) {{ background: {theme_surface}; }}
+              .models-table tbody tr.model-row:nth-child(4n+3),
+              .models-table tbody tr.model-row:nth-child(4n+4) {{ background: {theme_panel}; }}
+              .models-table tbody tr.model-row:hover {{ outline: 1px solid {theme_badge}; outline-offset: -1px; }}
+              .hidden-row {{ display: none; }}
               table {{ width: 100%; border-collapse: collapse; }}
               th, td {{ border-bottom: 1px solid var(--border); padding: 0.45rem 0.35rem; text-align: left; }}
               th {{ color: {theme_table_head}; }}
@@ -362,9 +376,33 @@ def create_app() -> "Flask":
               {error_html}
               <div class="card">
                 <h2>Saved Models</h2>
-                <div class="model-grid">
-                  {model_cards if model_cards else "<p class='muted'>No saved models yet. Train and save one from the main page.</p>"}
+                <div class="models-toolbar">
+                  <label for="modelSearch" class="muted">Search models by name</label>
+                  <input type="text" id="modelSearch" placeholder="Type model name (e.g. ab)" />
                 </div>
+                {f'''
+                <div class="models-table-wrap">
+                  <table class="models-table">
+                    <thead>
+                      <tr>
+                        <th>Model Name</th>
+                        <th>Ticker</th>
+                        <th>Interval</th>
+                        <th>Rows</th>
+                        <th>Buy &gt;</th>
+                        <th>Sell &lt;</th>
+                        <th>Stop Loss</th>
+                        <th>Fixed Stop</th>
+                        <th>Run All</th>
+                      </tr>
+                    </thead>
+                    <tbody id="modelsTableBody">
+                      {model_rows}
+                    </tbody>
+                  </table>
+                </div>
+                <p id="modelSearchEmpty" class="muted" style="display:none; margin-top:0.8rem;">No models match that search.</p>
+                ''' if model_rows else "<p class='muted'>No saved models yet. Train and save one from the main page.</p>"}
               </div>
             </div>
 
@@ -498,7 +536,26 @@ def create_app() -> "Flask":
                 }}
               }}
 
-              document.querySelectorAll(".model-card").forEach((card) => {{
+              const modelRows = Array.from(document.querySelectorAll(".model-row"));
+              const modelSearch = document.getElementById("modelSearch");
+              const modelSearchEmpty = document.getElementById("modelSearchEmpty");
+
+              function applyModelFilter() {{
+                if (!modelSearch) return;
+                const query = modelSearch.value.trim().toLowerCase();
+                let visibleCount = 0;
+                modelRows.forEach((row) => {{
+                  const name = (row.dataset.model || "").toLowerCase();
+                  const show = !query || name.includes(query);
+                  row.classList.toggle("hidden-row", !show);
+                  if (show) visibleCount += 1;
+                }});
+                if (modelSearchEmpty) {{
+                  modelSearchEmpty.style.display = visibleCount === 0 ? "block" : "none";
+                }}
+              }}
+
+              modelRows.forEach((card) => {{
                 card.addEventListener("click", () => openModel(card));
                 card.addEventListener("contextmenu", (evt) => {{
                   evt.preventDefault();
@@ -508,6 +565,10 @@ def create_app() -> "Flask":
                   menu.style.display = "block";
                 }});
               }});
+              if (modelSearch) {{
+                modelSearch.addEventListener("input", applyModelFilter);
+              }}
+              applyModelFilter();
               document.getElementById("cfgStopLossStrategy").addEventListener("change", toggleCfgFixedStop);
               toggleCfgFixedStop();
 
