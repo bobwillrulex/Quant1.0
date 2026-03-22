@@ -869,6 +869,12 @@ def create_app() -> "Flask":
                         <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
                         {model_msg}
                       </div>
+                      <div class="results-toolbar">
+                        <div class="save-eval-panel">
+                          <p class="muted">Save this evaluation</p>
+                          <button type="button" id="saveEvaluationBtn" class="secondary">Save</button>
+                        </div>
+                      </div>
                       <div class="card-grid">
                         <article class="card">
                           <h3>Linear Model</h3>
@@ -1186,6 +1192,29 @@ def create_app() -> "Flask":
                 gap: 0.6rem;
                 flex-wrap: wrap;
               }}
+              .results-toolbar {{
+                display: flex;
+                justify-content: flex-end;
+                margin-bottom: 0.75rem;
+              }}
+              .save-eval-panel {{
+                background: {theme_surface};
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 0.55rem 0.65rem;
+                display: inline-flex;
+                align-items: center;
+                gap: 0.55rem;
+              }}
+              .save-eval-panel p {{
+                margin: 0;
+                font-size: 0.82rem;
+              }}
+              .save-eval-panel button {{
+                width: auto;
+                padding: 0.45rem 0.7rem;
+                font-size: 0.82rem;
+              }}
               .saved-eval-actions button {{
                 width: auto;
                 padding: 0.55rem 0.85rem;
@@ -1250,6 +1279,10 @@ def create_app() -> "Flask":
               .context-menu button:hover {{
                 background: {theme_surface};
               }}
+              .topbar-btn {{
+                font-size: 0.85rem;
+                padding: 0.32rem 0.55rem;
+              }}
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
@@ -1257,19 +1290,12 @@ def create_app() -> "Flask":
                 <a href="{home_href}" class="tab-link active">Model</a>
                 <a href="{manage_href}" class="tab-link">Manage Models</a>
                 <a href="#present-mode" class="tab-link">Present Mode</a>
+                <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
             </nav>
             <div class="container">
             <h1>{trainer_heading}</h1>
-            <section class="card">
-              <h2>Saved Evaluations</h2>
-              <p class="muted">Save the current evaluation, reopen it instantly, or right-click an item to delete it.</p>
-              <div class="saved-eval-actions">
-                <button type="button" id="saveEvaluationBtn" class="secondary">Save Current Evaluation</button>
-                <button type="button" id="openEvaluationsBtn" class="secondary">Open Saved Evaluations</button>
-              </div>
-            </section>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
