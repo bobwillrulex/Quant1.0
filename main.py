@@ -866,10 +866,7 @@ def create_app() -> "Flask":
                       <div class="section-heading">
                         <div class="results-heading-row">
                           <h2>Results • {ticker} ({interval})</h2>
-                          <div class="save-eval-panel">
-                            <p class="muted">Save this evaluation</p>
-                            <button type="button" id="saveEvaluationBtn" class="secondary">Save</button>
-                          </div>
+                          <button type="button" id="saveEvaluationBtn" class="secondary save-eval-btn">Save</button>
                         </div>
                         <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
                         <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
@@ -1195,25 +1192,14 @@ def create_app() -> "Flask":
               .results-heading-row {{
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
                 gap: 0.75rem;
-                flex-wrap: wrap;
                 margin-bottom: 0.5rem;
               }}
-              .save-eval-panel {{
-                background: {theme_surface};
-                border: 1px solid var(--border);
-                border-radius: 10px;
-                padding: 0.55rem 0.65rem;
-                display: inline-flex;
-                align-items: center;
-                gap: 0.55rem;
-              }}
-              .save-eval-panel p {{
+              .results-heading-row h2 {{
                 margin: 0;
-                font-size: 0.82rem;
               }}
-              .save-eval-panel button {{
+              .save-eval-btn {{
+                margin-left: auto;
                 width: auto;
                 padding: 0.45rem 0.7rem;
                 font-size: 0.82rem;
@@ -1222,6 +1208,9 @@ def create_app() -> "Flask":
                 .results-heading-row {{
                   align-items: flex-start;
                   flex-direction: column;
+                }}
+                .save-eval-btn {{
+                  margin-left: 0;
                 }}
               }}
               .saved-eval-actions button {{
