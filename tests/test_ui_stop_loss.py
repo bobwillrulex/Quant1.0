@@ -35,6 +35,13 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn("Stop Strategy", html)
         self.assertIn("Stop Price", html)
 
+    def test_manage_models_disables_fixed_stop_input_when_not_fixed_strategy(self):
+        response = self.app.get("/manage-models")
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('id="cfgFixedStopPct"', html)
+        self.assertIn("fixedStopInput.disabled = !isFixed;", html)
+
     @patch("main.fetch_yahoo_rows")
     @patch("main.evaluate_bundle")
     @patch("main.train_strategy_models")

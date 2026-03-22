@@ -474,7 +474,12 @@ def create_app() -> "Flask":
               function toggleCfgFixedStop() {{
                 const strategy = document.getElementById("cfgStopLossStrategy").value;
                 const wrap = document.getElementById("cfgFixedStopWrap");
-                wrap.style.display = strategy === "fixed_percentage" ? "block" : "none";
+                const fixedStopInput = document.getElementById("cfgFixedStopPct");
+                const isFixed = strategy === "fixed_percentage";
+                wrap.style.display = isFixed ? "block" : "none";
+                if (fixedStopInput) {{
+                  fixedStopInput.disabled = !isFixed;
+                }}
               }}
 
               function openRename() {{
