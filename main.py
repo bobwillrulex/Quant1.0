@@ -1282,6 +1282,8 @@ def create_app() -> "Flask":
               .topbar-btn {{
                 font-size: 0.85rem;
                 padding: 0.32rem 0.55rem;
+                width: auto;
+                margin-top: 0;
               }}
             </style>
             <nav class="topbar">
