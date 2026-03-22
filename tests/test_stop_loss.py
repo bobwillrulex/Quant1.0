@@ -1,10 +1,29 @@
 import unittest
 
 from quant.ml import strategy_metrics
-from quant.stop_loss import StopLossConfig, StopLossStrategy
+from quant.stop_loss import StopLossConfig, StopLossStrategy, stop_loss_price
 
 
 class StopLossStrategyTests(unittest.TestCase):
+    def test_stop_loss_price_fixed_long(self):
+        price = stop_loss_price(
+            strategy=StopLossStrategy.FIXED_PERCENTAGE,
+            action="BUY",
+            reference_price=100.0,
+            fixed_pct=2.0,
+        )
+        self.assertAlmostEqual(price or 0.0, 98.0, places=6)
+
+    def test_stop_loss_price_model_invalidation_short(self):
+        price = stop_loss_price(
+            strategy=StopLossStrategy.MODEL_INVALIDATION,
+            action="SELL",
+            reference_price=100.0,
+            expected_return=0.01,
+            model_mae=0.02,
+        )
+        self.assertAlmostEqual(price or 0.0, 103.0, places=6)
+
     def test_fixed_percentage_generates_stop_exits(self):
         returns = [-0.01, -0.015, -0.01, 0.005, 0.004]
         probs = [0.8] * len(returns)

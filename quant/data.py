@@ -97,11 +97,34 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     signal = ema(macd, 9)
     macd_hist = [m - s for m, s in zip(macd, signal)]
     macd_hist_delta = [0.0] + [macd_hist[i] - macd_hist[i - 1] for i in range(1, len(macd_hist))]
+    close_returns = [0.0] + [((closes[i] - closes[i - 1]) / closes[i - 1]) if closes[i - 1] != 0 else 0.0 for i in range(1, n)]
+    atr_frac: List[float] = []
+    atr_window = 14
+    abs_ret_window: List[float] = []
+    for value in close_returns:
+        abs_ret_window.append(abs(value))
+        if len(abs_ret_window) > atr_window:
+            abs_ret_window.pop(0)
+        atr_frac.append(sum(abs_ret_window) / len(abs_ret_window))
     rows: List[Row] = []
     for i in range(2, n - 1):
         bullish_gap = max(0.0, lows[i] - highs[i - 2])
         bearish_gap = max(0.0, lows[i - 2] - highs[i])
-        rows.append({"stoch_rsi": stoch_rsi[i], "macd_hist": macd_hist[i], "macd_hist_delta": macd_hist_delta[i], "fvg_green_size": bullish_gap, "fvg_red_size": bearish_gap, "fvg_red_above_green": 1.0 if bearish_gap > 0 else 0.0, "first_green_fvg_dip": 1.0 if (bullish_gap > 0 and lows[i + 1] <= highs[i - 2]) else 0.0, "first_red_fvg_touch": 1.0 if (bearish_gap > 0 and highs[i + 1] >= lows[i - 2]) else 0.0, "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0})
+        rows.append(
+            {
+                "stoch_rsi": stoch_rsi[i],
+                "macd_hist": macd_hist[i],
+                "macd_hist_delta": macd_hist_delta[i],
+                "fvg_green_size": bullish_gap,
+                "fvg_red_size": bearish_gap,
+                "fvg_red_above_green": 1.0 if bearish_gap > 0 else 0.0,
+                "first_green_fvg_dip": 1.0 if (bullish_gap > 0 and lows[i + 1] <= highs[i - 2]) else 0.0,
+                "first_red_fvg_touch": 1.0 if (bearish_gap > 0 and highs[i + 1] >= lows[i - 2]) else 0.0,
+                "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
+                "close": closes[i],
+                "atr_frac": atr_frac[i],
+            }
+        )
     if not rows:
         raise ValueError("Could not build feature rows from downloaded candles.")
     return rows
