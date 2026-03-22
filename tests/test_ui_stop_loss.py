@@ -41,6 +41,9 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('id="cfgFixedStopPct"', html)
         self.assertIn("fixedStopInput.disabled = !isFixed;", html)
+        self.assertIn("Edit all model presets", html)
+        self.assertIn('value="save_all_configs"', html)
+        self.assertIn("openAllSettings", html)
 
     @patch("main.fetch_yahoo_rows")
     @patch("main.evaluate_bundle")

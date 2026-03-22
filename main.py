@@ -247,6 +247,39 @@ def create_app() -> "Flask":
                     }
                     save_model_configs(mode_key, model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
+                elif action == "save_all_configs":
+                    if not saved_models:
+                        raise ValueError("No models found to update.")
+                    ticker = request.form.get("ticker", "AAPL").upper().strip()
+                    interval = request.form.get("interval", "1d").strip()
+                    rows_raw = request.form.get("rows", "250").strip()
+                    buy_raw = request.form.get("buy_threshold", "").strip()
+                    sell_raw = request.form.get("sell_threshold", "").strip()
+                    stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
+                    fixed_stop_raw = request.form.get("fixed_stop_pct", "2.0").strip()
+                    fixed_stop_pct = 2.0
+                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                        fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
+                    include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
+                    rows = int(rows_raw)
+                    buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
+                    if interval not in ("1d", "1h", "15m", "5m"):
+                        raise ValueError("Candle length must be one of: 1d, 1h, 15m, 5m.")
+                    if rows < 50:
+                        raise ValueError("Rows must be at least 50.")
+                    for saved_model_name in saved_models:
+                        model_configs[saved_model_name] = {
+                            "ticker": ticker,
+                            "interval": interval,
+                            "rows": rows,
+                            "include_in_run_all": include_in_run_all,
+                            "buy_threshold": buy_threshold,
+                            "sell_threshold": sell_threshold,
+                            "stop_loss_strategy": stop_loss_strategy.value,
+                            "fixed_stop_pct": fixed_stop_pct,
+                        }
+                    save_model_configs(mode_key, model_configs)
+                    message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for all models:</strong> {len(saved_models)} model(s) updated.</p>"
                 elif action == "rename_model":
                     new_name = sanitize_model_name(request.form.get("new_name", "").strip())
                     if model_name not in saved_models:
@@ -329,8 +362,11 @@ def create_app() -> "Flask":
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
-              .models-toolbar {{ display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
+              .models-toolbar {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
               .models-toolbar input {{ max-width: 360px; }}
+              .toolbar-right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 0.45rem; }}
+              .toolbar-right .small-btn {{ border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.6rem; background: {theme_secondary_bg}; color: {theme_secondary_text}; cursor: pointer; font-size: 0.82rem; }}
+              .toolbar-right .small-btn:hover {{ filter: brightness(1.07); }}
               .models-table-wrap {{ border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }}
               .models-table {{ width: 100%; border-collapse: collapse; }}
               .models-table thead th {{ background: {theme_panel2}; color: {theme_table_head}; padding: 0.6rem; font-size: 0.9rem; letter-spacing: 0.01em; }}
@@ -378,7 +414,10 @@ def create_app() -> "Flask":
                 <h2>Saved Models</h2>
                 <div class="models-toolbar">
                   <label for="modelSearch" class="muted">Search models by name</label>
-                  <input type="text" id="modelSearch" placeholder="Type model name (e.g. ab)" />
+                  <div class="toolbar-right">
+                    <button type="button" class="small-btn" onclick="openAllSettings()">Edit all model presets</button>
+                    <input type="text" id="modelSearch" placeholder="Type model name (e.g. ab)" />
+                  </div>
                 </div>
                 {f'''
                 <div class="models-table-wrap">
@@ -476,6 +515,55 @@ def create_app() -> "Flask":
               </div>
             </div>
 
+            <div id="allSettingsModal" class="modal-backdrop">
+              <div class="modal">
+                <h3>Global Preset Settings (All Models)</h3>
+                <form method="post">
+                  <input type="hidden" name="action" value="save_all_configs" />
+                  <div class="form-grid">
+                    <label>Ticker<input type="text" name="ticker" id="allTicker" required /></label>
+                    <label>Candle Length
+                      <select name="interval" id="allInterval">
+                        <option value="1d">Daily</option>
+                        <option value="1h">1 hour</option>
+                        <option value="15m">15 min</option>
+                        <option value="5m">5 min</option>
+                      </select>
+                    </label>
+                    <label>Rows<input type="number" min="50" name="rows" id="allRows" required /></label>
+                    <label>BUY if P(Up) &gt;
+                      <input type="number" min="0" max="1" step="0.01" name="buy_threshold" id="allBuyThreshold" placeholder="0.60" />
+                    </label>
+                    <label>SELL if P(Up) &lt;
+                      <input type="number" min="0" max="1" step="0.01" name="sell_threshold" id="allSellThreshold" placeholder="0.40" />
+                    </label>
+                    <label>Stop Loss Strategy
+                      <select name="stop_loss_strategy" id="allStopLossStrategy">
+                        <option value="none">None</option>
+                        <option value="atr">Volatility Buffer (ATR-Based)</option>
+                        <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
+                        <option value="time_decay">Time-Decay (Temporal Exit)</option>
+                        <option value="fixed_percentage">Fixed Percentage</option>
+                      </select>
+                    </label>
+                    <label id="allFixedStopWrap">Fixed Stop Loss %
+                      <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="allFixedStopPct" placeholder="2.0" />
+                    </label>
+                    <label>Include in Run All
+                      <select name="include_in_run_all" id="allInclude">
+                        <option value="1">Yes</option>
+                        <option value="0">No</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="row-actions">
+                    <button class="primary" type="submit">Save For All Models</button>
+                    <button class="secondary" type="button" onclick="closeModals()">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
             <form id="deleteForm" method="post" style="display:none;">
               <input type="hidden" name="action" value="delete_model" />
               <input type="hidden" name="model_name" id="deleteModelName" />
@@ -484,12 +572,14 @@ def create_app() -> "Flask":
             <script>
               const settingsModal = document.getElementById("settingsModal");
               const renameModal = document.getElementById("renameModal");
+              const allSettingsModal = document.getElementById("allSettingsModal");
               const menu = document.getElementById("contextMenu");
               let menuModelName = "";
 
               function closeModals() {{
                 settingsModal.style.display = "none";
                 renameModal.style.display = "none";
+                allSettingsModal.style.display = "none";
                 menu.style.display = "none";
               }}
 
@@ -526,6 +616,41 @@ def create_app() -> "Flask":
                 document.getElementById("renameInput").value = menuModelName;
                 renameModal.style.display = "flex";
                 menu.style.display = "none";
+              }}
+
+              function openAllSettings() {{
+                document.getElementById("allTicker").value = "AAPL";
+                document.getElementById("allInterval").value = "1d";
+                document.getElementById("allRows").value = "250";
+                document.getElementById("allBuyThreshold").value = "0.60";
+                document.getElementById("allSellThreshold").value = "0.40";
+                document.getElementById("allStopLossStrategy").value = "none";
+                document.getElementById("allFixedStopPct").value = "2.0";
+                document.getElementById("allInclude").value = "1";
+                const source = modelRows[0];
+                if (source) {{
+                  document.getElementById("allTicker").value = source.dataset.ticker || "AAPL";
+                  document.getElementById("allInterval").value = source.dataset.interval || "1d";
+                  document.getElementById("allRows").value = source.dataset.rows || "250";
+                  document.getElementById("allBuyThreshold").value = source.dataset.buy || "0.60";
+                  document.getElementById("allSellThreshold").value = source.dataset.sell || "0.40";
+                  document.getElementById("allStopLossStrategy").value = source.dataset.stopLoss || "none";
+                  document.getElementById("allFixedStopPct").value = source.dataset.fixedStop || "2.0";
+                  document.getElementById("allInclude").value = source.dataset.include || "1";
+                }}
+                toggleAllFixedStop();
+                allSettingsModal.style.display = "flex";
+              }}
+
+              function toggleAllFixedStop() {{
+                const strategy = document.getElementById("allStopLossStrategy").value;
+                const wrap = document.getElementById("allFixedStopWrap");
+                const fixedStopInput = document.getElementById("allFixedStopPct");
+                const isFixed = strategy === "fixed_percentage";
+                wrap.style.display = isFixed ? "block" : "none";
+                if (fixedStopInput) {{
+                  fixedStopInput.disabled = !isFixed;
+                }}
               }}
 
               function deleteModel() {{
@@ -570,10 +695,12 @@ def create_app() -> "Flask":
               }}
               applyModelFilter();
               document.getElementById("cfgStopLossStrategy").addEventListener("change", toggleCfgFixedStop);
+              document.getElementById("allStopLossStrategy").addEventListener("change", toggleAllFixedStop);
               toggleCfgFixedStop();
+              toggleAllFixedStop();
 
               window.addEventListener("click", (evt) => {{
-                if (evt.target === settingsModal || evt.target === renameModal) {{
+                if (evt.target === settingsModal || evt.target === renameModal || evt.target === allSettingsModal) {{
                   closeModals();
                   return;
                 }}
