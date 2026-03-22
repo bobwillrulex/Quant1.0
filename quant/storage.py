@@ -54,6 +54,16 @@ def ensure_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                mode TEXT NOT NULL,
+                setting_key TEXT NOT NULL,
+                setting_value TEXT NOT NULL,
+                PRIMARY KEY (mode, setting_key)
+            )
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
@@ -256,6 +266,32 @@ def load_evaluation_snapshot(mode: str, snapshot_id: int) -> Dict[str, object]:
         "updated_at": str(row[3]),
         "payload": payload,
     }
+
+
+def get_app_setting(mode: str, key: str, default: str = "") -> str:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        row = conn.execute(
+            "SELECT setting_value FROM app_settings WHERE mode = ? AND setting_key = ?",
+            (mode, key),
+        ).fetchone()
+    if row is None:
+        return default
+    return str(row[0])
+
+
+def set_app_setting(mode: str, key: str, value: str) -> None:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (mode, setting_key, setting_value)
+            VALUES (?, ?, ?)
+            ON CONFLICT(mode, setting_key)
+            DO UPDATE SET setting_value = excluded.setting_value
+            """,
+            (mode, key, value),
+        )
 
 
 def delete_evaluation_snapshot(mode: str, snapshot_id: int) -> None:

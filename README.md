@@ -35,3 +35,12 @@ CLI mode (synthetic data):
 ```bash
 python main.py
 ```
+
+## Discord Continuous Run-All Alerts
+
+In the web UI, use **Continuous Run All + Discord** to:
+
+- Save a Discord webhook URL.
+- Start a background monitor that checks all presets included in **Run All** every 10 minutes.
+- Only poll during U.S. market hours (Mon–Fri, 9:30 AM–4:00 PM ET).
+- Send a Discord message only when a model action changes (e.g., HOLD ➜ BUY).
