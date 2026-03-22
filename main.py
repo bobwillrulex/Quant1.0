@@ -8,12 +8,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
+import time
 from datetime import datetime
 from html import escape
 from typing import TYPE_CHECKING, Dict
+from zoneinfo import ZoneInfo
 
 from quant.constants import OPTIONS_MODE, SPOT_MODE
 from quant.data import fetch_market_rows, load_csv, synthetic_data
+from quant.discord_notify import send_discord_webhook
 from quant.ml import (
     build_default_strategy_features,
     evaluate_bundle,
@@ -25,6 +29,7 @@ from quant.ml import (
 )
 from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, stop_loss_price, validate_fixed_stop_pct
 from quant.storage import (
+    get_app_setting,
     list_saved_models,
     list_evaluation_snapshots,
     load_evaluation_snapshot,
@@ -35,6 +40,7 @@ from quant.storage import (
     save_evaluation_snapshot,
     save_model_bundle,
     save_model_configs,
+    set_app_setting,
     delete_evaluation_snapshot,
 )
 
@@ -70,10 +76,10 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
     return values
 
 
-def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
-    run_all_rows = ""
-    data_provider = str(model_configs.get("__ui_data_provider__", "yfinance"))
-    twelve_api_key = str(model_configs.get("__ui_twelve_api_key__", ""))
+def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only: bool) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    data_provider = str(model_configs.get("__ui_data_provider__", "yfinance")).strip().lower()
+    twelve_api_key = str(model_configs.get("__ui_twelve_api_key__", "")).strip()
     for model_name in saved_models:
         cfg = get_model_config(model_name, model_configs)
         if not cfg.get("include_in_run_all", True):
@@ -102,36 +108,174 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
                 atr_fraction=float(latest_row.get("atr_frac", 0.0)),
                 model_mae=MODEL_MAE_DEFAULT,
             )
-            stop_price_display = f"{stop_price_value:.4f}" if stop_price_value is not None else "n/a"
-            run_all_rows += (
-                "<tr>"
-                f"<td>{model_name}</td>"
-                f"<td>{cfg.get('ticker')}</td>"
-                f"<td>{cfg.get('interval')}</td>"
-                f"<td>{int(cfg.get('rows', 250))}</td>"
-                f"<td>{buy_threshold:.2f} / {sell_threshold:.2f}</td>"
-                f"<td>{stop_strategy.value}</td>"
-                f"<td>{prediction['expected_return']:+.4%}</td>"
-                f"<td>{prediction['p_up']:.2%}</td>"
-                f"<td>{stop_price_display}</td>"
-                f"<td><strong>{prediction['action']}</strong>{provider_notice_html}</td>"
-                "</tr>"
+            rows.append(
+                {
+                    "model_name": model_name,
+                    "ticker": str(cfg.get("ticker", "AAPL")),
+                    "interval": str(cfg.get("interval", "1d")),
+                    "row_count": int(cfg.get("rows", 250)),
+                    "buy_threshold": buy_threshold,
+                    "sell_threshold": sell_threshold,
+                    "stop_strategy": stop_strategy.value,
+                    "expected_return": float(prediction["expected_return"]),
+                    "p_up": float(prediction["p_up"]),
+                    "stop_price": stop_price_value,
+                    "action": str(prediction["action"]),
+                    "provider_notice": provider_notice_html,
+                    "error": "",
+                }
             )
         except Exception as exc:
+            rows.append(
+                {
+                    "model_name": model_name,
+                    "ticker": str(cfg.get("ticker", "AAPL")),
+                    "interval": str(cfg.get("interval", "1d")),
+                    "row_count": int(cfg.get("rows", 250)),
+                    "buy_threshold": float(cfg.get("buy_threshold", 0.6)),
+                    "sell_threshold": float(cfg.get("sell_threshold", 0.4)),
+                    "stop_strategy": str(cfg.get("stop_loss_strategy", StopLossStrategy.NONE.value)),
+                    "expected_return": 0.0,
+                    "p_up": 0.0,
+                    "stop_price": None,
+                    "action": "ERROR",
+                    "provider_notice": "",
+                    "error": str(exc),
+                }
+            )
+    return rows
+
+
+def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
+    run_all_rows = ""
+    for item in evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only):
+        if item["error"]:
             run_all_rows += (
                 "<tr>"
-                f"<td>{model_name}</td>"
-                f"<td>{cfg.get('ticker')}</td>"
-                f"<td>{cfg.get('interval')}</td>"
-                f"<td>{int(cfg.get('rows', 250))}</td>"
-                f"<td>{float(cfg.get('buy_threshold', 0.6)):.2f} / {float(cfg.get('sell_threshold', 0.4)):.2f}</td>"
-                f"<td>{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</td>"
+                f"<td>{item['model_name']}</td>"
+                f"<td>{item['ticker']}</td>"
+                f"<td>{item['interval']}</td>"
+                f"<td>{int(item['row_count'])}</td>"
+                f"<td>{float(item['buy_threshold']):.2f} / {float(item['sell_threshold']):.2f}</td>"
+                f"<td>{item['stop_strategy']}</td>"
                 "<td colspan='4' style='color:#ff7b7b;'>"
-                f"Run failed: {exc}"
+                f"Run failed: {item['error']}"
                 "</td>"
                 "</tr>"
             )
+            continue
+        stop_price = item["stop_price"]
+        stop_price_display = f"{float(stop_price):.4f}" if stop_price is not None else "n/a"
+        run_all_rows += (
+            "<tr>"
+            f"<td>{item['model_name']}</td>"
+            f"<td>{item['ticker']}</td>"
+            f"<td>{item['interval']}</td>"
+            f"<td>{int(item['row_count'])}</td>"
+            f"<td>{float(item['buy_threshold']):.2f} / {float(item['sell_threshold']):.2f}</td>"
+            f"<td>{item['stop_strategy']}</td>"
+            f"<td>{float(item['expected_return']):+.4%}</td>"
+            f"<td>{float(item['p_up']):.2%}</td>"
+            f"<td>{stop_price_display}</td>"
+            f"<td><strong>{item['action']}</strong>{item['provider_notice']}</td>"
+            "</tr>"
+        )
     return run_all_rows
+
+
+def is_us_market_open(now: datetime | None = None) -> bool:
+    ts = now or datetime.now(tz=ZoneInfo("America/New_York"))
+    if ts.weekday() >= 5:
+        return False
+    minute_of_day = ts.hour * 60 + ts.minute
+    return (9 * 60 + 30) <= minute_of_day < (16 * 60)
+
+
+class RunAllMonitor:
+    def __init__(self) -> None:
+        self._state: dict[str, dict[str, object]] = {
+            OPTIONS_MODE: {"running": False, "thread": None, "last_actions": {}, "last_tick": ""},
+            SPOT_MODE: {"running": False, "thread": None, "last_actions": {}, "last_tick": ""},
+        }
+        self._lock = threading.Lock()
+
+    def status(self, mode: str) -> dict[str, object]:
+        with self._lock:
+            mode_state = dict(self._state[mode])
+            mode_state["last_actions_count"] = len(dict(mode_state.get("last_actions", {})))
+            mode_state.pop("thread", None)
+            return mode_state
+
+    def start(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
+        with self._lock:
+            mode_state = self._state[mode]
+            if bool(mode_state.get("running")):
+                return
+            mode_state["running"] = True
+            mode_state["last_actions"] = {}
+            mode_state["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            worker = threading.Thread(
+                target=self._loop,
+                kwargs={
+                    "mode": mode,
+                    "long_only": long_only,
+                    "data_provider": data_provider,
+                    "twelve_api_key": twelve_api_key,
+                    "webhook_url": webhook_url,
+                },
+                daemon=True,
+            )
+            mode_state["thread"] = worker
+            worker.start()
+
+    def stop(self, mode: str) -> None:
+        with self._lock:
+            self._state[mode]["running"] = False
+
+    def _loop(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
+        while True:
+            with self._lock:
+                if not bool(self._state[mode]["running"]):
+                    self._state[mode]["thread"] = None
+                    return
+            if is_us_market_open():
+                try:
+                    configs = load_model_configs(mode)
+                    configs["__ui_data_provider__"] = data_provider
+                    configs["__ui_twelve_api_key__"] = twelve_api_key
+                    models = list_saved_models(mode)
+                    rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
+                    self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
+                except Exception:
+                    pass
+                finally:
+                    with self._lock:
+                        self._state[mode]["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            time.sleep(600)
+
+    def _notify_action_changes(self, *, mode: str, rows: list[dict[str, object]], webhook_url: str) -> None:
+        with self._lock:
+            known = dict(self._state[mode].get("last_actions", {}))
+        new_known = dict(known)
+        for row in rows:
+            if row["error"]:
+                continue
+            model_name = str(row["model_name"])
+            action = str(row["action"])
+            prev = str(known.get(model_name, ""))
+            new_known[model_name] = action
+            if not prev or prev == action:
+                continue
+            content = (
+                f"📈 Quant1.0 {mode.upper()} action change for {row['ticker']} ({model_name})\n"
+                f"{prev} ➜ {action} | P(Up): {float(row['p_up']):.2%} | Exp Ret: {float(row['expected_return']):+.4%}"
+            )
+            send_discord_webhook(webhook_url, content)
+        with self._lock:
+            self._state[mode]["last_actions"] = new_known
+
+
+RUN_ALL_MONITOR = RunAllMonitor()
 
 
 def render_hold_time_boxplot(stats: Dict[str, object], *, stroke: str = "#8ca0bf", accent: str = "#cfd8e6") -> str:
@@ -795,6 +939,7 @@ def create_app() -> "Flask":
         if data_provider not in ("yfinance", "twelvedata"):
             data_provider = "yfinance"
         twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "e90093c59e7a436d9436e34b56a6e6a5").strip()
+        webhook_url = get_app_setting(mode_key, "discord_webhook_url", "")
         provider_notices: list[str] = []
         saved_models = list_saved_models(mode_key)
         saved_evaluations = list_evaluation_snapshots(mode_key)
@@ -810,6 +955,35 @@ def create_app() -> "Flask":
                     toggled_provider = request.form.get("toggle_to", "yfinance").strip().lower()
                     data_provider = toggled_provider if toggled_provider in ("yfinance", "twelvedata") else "yfinance"
                     message_html = f"<p style='color:#7bd88f;'><strong>Data provider:</strong> {data_provider}</p>"
+                elif mode == "run_all_monitor":
+                    monitor_action = request.form.get("monitor_action", "").strip()
+                    webhook_input = request.form.get("discord_webhook_url", "").strip()
+                    if webhook_input:
+                        webhook_url = webhook_input
+                        set_app_setting(mode_key, "discord_webhook_url", webhook_url)
+                    if monitor_action == "start":
+                        if not webhook_url:
+                            raise ValueError("Please enter and save a Discord webhook URL before starting continuous mode.")
+                        RUN_ALL_MONITOR.start(
+                            mode=mode_key,
+                            long_only=is_spot,
+                            data_provider=data_provider,
+                            twelve_api_key=twelve_api_key,
+                            webhook_url=webhook_url,
+                        )
+                        message_html = (
+                            "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong> "
+                            "Checks every 10 minutes while U.S. market hours are open (Mon-Fri 9:30-16:00 ET).</p>"
+                        )
+                    elif monitor_action == "stop":
+                        RUN_ALL_MONITOR.stop(mode_key)
+                        message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode stopped.</strong></p>"
+                    elif monitor_action == "save_webhook":
+                        if not webhook_url:
+                            raise ValueError("Please enter a Discord webhook URL.")
+                        message_html = "<p style='color:#7bd88f;'><strong>Discord webhook URL saved.</strong></p>"
+                    else:
+                        raise ValueError("Unsupported monitor action.")
                 elif mode == "saved_eval":
                     eval_action = request.form.get("eval_action", "").strip()
                     if eval_action == "save":
@@ -1323,6 +1497,14 @@ def create_app() -> "Flask":
                 "<p class='muted'>Some requests fell back to yfinance.</p>"
                 f"<ul>{provider_notice_items}</ul></div>"
             )
+        monitor_state = RUN_ALL_MONITOR.status(mode_key)
+        monitor_running = bool(monitor_state.get("running"))
+        monitor_last_tick = escape(str(monitor_state.get("last_tick", "")))
+        monitor_status_html = (
+            f"<p class='muted'><strong>Status:</strong> {'Running' if monitor_running else 'Stopped'}"
+            f" | Last poll: {monitor_last_tick or 'n/a'}"
+            f" | Tracked models: {int(monitor_state.get('last_actions_count', 0))}</p>"
+        )
 
         current_eval_payload_json = (json.dumps(current_evaluation_payload).replace("</", "<\\/") if current_evaluation_payload else "null")
         saved_eval_items_json = json.dumps(saved_evaluations).replace("</", "<\\/")
@@ -1745,6 +1927,21 @@ def create_app() -> "Flask":
                 </tr>
                 {run_all_rows if run_all_rows else "<tr><td colspan='10' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
               </table>
+            </form>
+            <form method="post" class="card">
+              <input type="hidden" name="mode" value="run_all_monitor" />
+              <input type="hidden" name="data_provider" value="{data_provider}" />
+              <h2>Continuous Run All + Discord</h2>
+              <p class="muted">When running, this polls every 10 minutes. It only evaluates during U.S. market hours (Mon-Fri 9:30-16:00 ET) and posts to Discord when a model action changes.</p>
+              {monitor_status_html}
+              <label>Discord Webhook URL:
+                <input type="text" name="discord_webhook_url" value="{escape(webhook_url)}" placeholder="https://discord.com/api/webhooks/..." />
+              </label>
+              <div class="button-row" style="margin-top:0.8rem;">
+                <button type="submit" name="monitor_action" value="save_webhook" class="secondary">Save Webhook</button>
+                <button type="submit" name="monitor_action" value="start">Start Continuous Mode</button>
+                <button type="submit" name="monitor_action" value="stop" class="secondary">Stop Continuous Mode</button>
+              </div>
             </form>
             {message_html}
             {error_html}
