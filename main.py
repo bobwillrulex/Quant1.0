@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import datetime
+from html import escape
 from typing import TYPE_CHECKING, Dict
 
 from quant.constants import OPTIONS_MODE, SPOT_MODE
@@ -24,12 +26,16 @@ from quant.ml import (
 from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, validate_fixed_stop_pct
 from quant.storage import (
     list_saved_models,
+    list_evaluation_snapshots,
+    load_evaluation_snapshot,
     load_model_bundle,
     load_model_configs,
     mode_model_dir,
     sanitize_model_name,
+    save_evaluation_snapshot,
     save_model_bundle,
     save_model_configs,
+    delete_evaluation_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -541,13 +547,76 @@ def create_app() -> "Flask":
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
         saved_models = list_saved_models(mode_key)
+        saved_evaluations = list_evaluation_snapshots(mode_key)
         present_html = ""
         run_all_html = ""
         run_all_rows = ""
+        message_html = ""
+        current_evaluation_payload: Dict[str, object] | None = None
 
         if request.method == "POST":
             try:
-                if mode == "present":
+                if mode == "saved_eval":
+                    eval_action = request.form.get("eval_action", "").strip()
+                    if eval_action == "save":
+                        payload_raw = request.form.get("evaluation_payload", "").strip()
+                        snapshot_name = request.form.get("evaluation_name", "").strip()
+                        if not payload_raw:
+                            raise ValueError("No evaluation payload was provided.")
+                        payload = json.loads(payload_raw)
+                        if not isinstance(payload, dict):
+                            raise ValueError("Invalid evaluation payload.")
+                        if not snapshot_name:
+                            raise ValueError("Please provide a name for the saved evaluation.")
+                        save_evaluation_snapshot(mode_key, snapshot_name, payload)
+                        message_html = f"<p style='color:#7bd88f;'><strong>Saved evaluation:</strong> {escape(snapshot_name)}</p>"
+                        current_evaluation_payload = payload
+                        result_html = str(payload.get("result_html", ""))
+                        form_state = payload.get("form_state", {})
+                        if isinstance(form_state, dict):
+                            ticker = str(form_state.get("ticker", ticker))
+                            interval = str(form_state.get("interval", interval))
+                            rows = str(form_state.get("rows", rows))
+                            split_style = str(form_state.get("split_style", split_style))
+                            buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
+                            sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
+                            selected_model = str(form_state.get("selected_model", selected_model))
+                            model_name = str(form_state.get("model_name", model_name))
+                            stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
+                            fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                    elif eval_action == "open":
+                        snapshot_id = int(request.form.get("evaluation_id", "0"))
+                        snapshot = load_evaluation_snapshot(mode_key, snapshot_id)
+                        payload = snapshot["payload"]
+                        if not isinstance(payload, dict):
+                            raise ValueError("Saved evaluation payload is invalid.")
+                        current_evaluation_payload = payload
+                        result_html = str(payload.get("result_html", ""))
+                        form_state = payload.get("form_state", {})
+                        if not isinstance(form_state, dict):
+                            raise ValueError("Saved evaluation form state is invalid.")
+                        ticker = str(form_state.get("ticker", ticker))
+                        interval = str(form_state.get("interval", interval))
+                        rows = str(form_state.get("rows", rows))
+                        split_style = str(form_state.get("split_style", split_style))
+                        buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
+                        sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
+                        selected_model = str(form_state.get("selected_model", selected_model))
+                        model_name = str(form_state.get("model_name", model_name))
+                        stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
+                        fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                        message_html = (
+                            f"<p style='color:#7bd88f;'><strong>Loaded saved evaluation:</strong> "
+                            f"{escape(str(snapshot.get('name', 'Saved evaluation')))}</p>"
+                        )
+                    elif eval_action == "delete":
+                        snapshot_id = int(request.form.get("evaluation_id", "0"))
+                        delete_evaluation_snapshot(mode_key, snapshot_id)
+                        message_html = "<p style='color:#7bd88f;'><strong>Deleted saved evaluation.</strong></p>"
+                    else:
+                        raise ValueError("Unsupported saved evaluation action.")
+                    saved_evaluations = list_evaluation_snapshots(mode_key)
+                elif mode == "present":
                     present_row_count = int(present_rows)
                     present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
                     dataset = fetch_yahoo_rows(ticker=present_ticker, interval=present_interval, row_count=present_row_count)
@@ -926,8 +995,39 @@ def create_app() -> "Flask":
                       </article>
                     </section>
                     """
+                        current_evaluation_payload = {
+                            "saved_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                            "form_state": {
+                                "ticker": ticker,
+                                "interval": interval,
+                                "rows": str(row_count),
+                                "split_style": split_style,
+                                "buy_threshold": buy_threshold_raw,
+                                "sell_threshold": sell_threshold_raw,
+                                "selected_model": selected_model,
+                                "model_name": model_name,
+                                "stop_loss_strategy": stop_loss_strategy_raw,
+                                "fixed_stop_pct": fixed_stop_pct_raw,
+                            },
+                            "result_html": result_html,
+                        }
             except Exception as exc:
                 error_html = f"<p style='color:red;'><strong>Error:</strong> {exc}</p>"
+
+        current_eval_payload_json = (json.dumps(current_evaluation_payload).replace("</", "<\\/") if current_evaluation_payload else "null")
+        saved_eval_items_json = json.dumps(saved_evaluations).replace("</", "<\\/")
+        saved_eval_rows_html = "".join(
+            (
+                "<button type='button' class='saved-eval-item' "
+                f"data-id='{int(item['id'])}' "
+                f"data-name='{escape(str(item['name']))}' "
+                f"data-updated-at='{escape(str(item['updated_at']))}'>"
+                f"<strong>{escape(str(item['name']))}</strong>"
+                f"<span>{escape(str(item['updated_at']))}</span>"
+                "</button>"
+            )
+            for item in saved_evaluations
+        )
 
         return f"""
         <html>
@@ -1081,6 +1181,75 @@ def create_app() -> "Flask":
                 color: var(--muted);
                 font-size: 0.92rem;
               }}
+              .saved-eval-actions {{
+                display: flex;
+                gap: 0.6rem;
+                flex-wrap: wrap;
+              }}
+              .saved-eval-actions button {{
+                width: auto;
+                padding: 0.55rem 0.85rem;
+              }}
+              .modal {{
+                position: fixed;
+                inset: 0;
+                z-index: 900;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                background: rgba(0, 0, 0, 0.58);
+              }}
+              .modal-card {{
+                width: min(560px, 94vw);
+                max-height: 80vh;
+                overflow: auto;
+                background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 1rem;
+              }}
+              .saved-eval-list {{
+                display: grid;
+                gap: 0.6rem;
+                margin-top: 0.8rem;
+              }}
+              .saved-eval-item {{
+                text-align: left;
+                background: {theme_surface};
+                border: 1px solid var(--border);
+              }}
+              .saved-eval-item strong {{
+                display: block;
+                color: {theme_heading};
+              }}
+              .saved-eval-item span {{
+                display: block;
+                margin-top: 0.2rem;
+                color: var(--muted);
+                font-size: 0.82rem;
+              }}
+              .context-menu {{
+                position: fixed;
+                z-index: 1100;
+                display: none;
+                min-width: 180px;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: var(--panel-2);
+                box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+                padding: 0.25rem;
+              }}
+              .context-menu button {{
+                width: 100%;
+                text-align: left;
+                border: none;
+                background: transparent;
+                color: var(--text);
+                padding: 0.55rem 0.6rem;
+              }}
+              .context-menu button:hover {{
+                background: {theme_surface};
+              }}
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
@@ -1093,6 +1262,14 @@ def create_app() -> "Flask":
             </nav>
             <div class="container">
             <h1>{trainer_heading}</h1>
+            <section class="card">
+              <h2>Saved Evaluations</h2>
+              <p class="muted">Save the current evaluation, reopen it instantly, or right-click an item to delete it.</p>
+              <div class="saved-eval-actions">
+                <button type="button" id="saveEvaluationBtn" class="secondary">Save Current Evaluation</button>
+                <button type="button" id="openEvaluationsBtn" class="secondary">Open Saved Evaluations</button>
+              </div>
+            </section>
             <form method="post" class="card">
               <input type="hidden" name="mode" value="train" />
               <div class="form-grid">
@@ -1198,10 +1375,40 @@ def create_app() -> "Flask":
                 {run_all_rows if run_all_rows else "<tr><td colspan='8' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
               </table>
             </form>
+            {message_html}
             {error_html}
             {present_html}
             {result_html}
             </div>
+            <div id="savedEvalsModal" class="modal" aria-hidden="true">
+              <div class="modal-card">
+                <h3>Saved Evaluations</h3>
+                <p class="muted">Click to open. Right-click any item to delete it.</p>
+                <div class="saved-eval-list">
+                  {saved_eval_rows_html if saved_eval_rows_html else "<p class='muted'>No saved evaluations yet.</p>"}
+                </div>
+                <button type="button" id="closeSavedEvalsBtn" class="secondary" style="margin-top:0.8rem;">Close</button>
+              </div>
+            </div>
+            <div id="savedEvalContextMenu" class="context-menu">
+              <button type="button" id="deleteSavedEvalBtn">Delete saved evaluation</button>
+            </div>
+            <form id="openSavedEvalForm" method="post" style="display:none;">
+              <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="eval_action" value="open" />
+              <input type="hidden" name="evaluation_id" id="openSavedEvalId" />
+            </form>
+            <form id="deleteSavedEvalForm" method="post" style="display:none;">
+              <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="eval_action" value="delete" />
+              <input type="hidden" name="evaluation_id" id="deleteSavedEvalId" />
+            </form>
+            <form id="saveEvalForm" method="post" style="display:none;">
+              <input type="hidden" name="mode" value="saved_eval" />
+              <input type="hidden" name="eval_action" value="save" />
+              <input type="hidden" name="evaluation_name" id="evaluationNameInput" />
+              <input type="hidden" name="evaluation_payload" id="evaluationPayloadInput" />
+            </form>
             <div id="loadingOverlay" class="loading-overlay" aria-live="polite" aria-busy="true">
               <div class="loading-card">
                 <h3 id="loadingTitle" class="loading-title">Working...</h3>
@@ -1220,7 +1427,23 @@ def create_app() -> "Flask":
               const progressFill = document.getElementById("progressFill");
               const progressText = document.getElementById("progressText");
               const etaText = document.getElementById("etaText");
+              const saveEvaluationBtn = document.getElementById("saveEvaluationBtn");
+              const openEvaluationsBtn = document.getElementById("openEvaluationsBtn");
+              const savedEvalsModal = document.getElementById("savedEvalsModal");
+              const closeSavedEvalsBtn = document.getElementById("closeSavedEvalsBtn");
+              const openSavedEvalForm = document.getElementById("openSavedEvalForm");
+              const openSavedEvalId = document.getElementById("openSavedEvalId");
+              const deleteSavedEvalForm = document.getElementById("deleteSavedEvalForm");
+              const deleteSavedEvalId = document.getElementById("deleteSavedEvalId");
+              const saveEvalForm = document.getElementById("saveEvalForm");
+              const evaluationNameInput = document.getElementById("evaluationNameInput");
+              const evaluationPayloadInput = document.getElementById("evaluationPayloadInput");
+              const savedEvalContextMenu = document.getElementById("savedEvalContextMenu");
+              const deleteSavedEvalBtn = document.getElementById("deleteSavedEvalBtn");
+              const currentEvaluationPayload = {current_eval_payload_json};
+              const savedEvaluations = {saved_eval_items_json};
               let loadingTimer = null;
+              let contextTargetId = null;
 
               function formatEta(seconds) {{
                 const sec = Math.max(0, Math.ceil(seconds));
@@ -1295,6 +1518,82 @@ def create_app() -> "Flask":
               if (stopLossStrategyEl) {{
                 stopLossStrategyEl.addEventListener("change", toggleFixedStopField);
                 toggleFixedStopField();
+              }}
+
+              function closeSavedEvaluationsModal() {{
+                if (!savedEvalsModal) return;
+                savedEvalsModal.style.display = "none";
+                savedEvalsModal.setAttribute("aria-hidden", "true");
+              }}
+
+              if (openEvaluationsBtn && savedEvalsModal) {{
+                openEvaluationsBtn.addEventListener("click", () => {{
+                  savedEvalsModal.style.display = "flex";
+                  savedEvalsModal.setAttribute("aria-hidden", "false");
+                }});
+              }}
+              if (closeSavedEvalsBtn) {{
+                closeSavedEvalsBtn.addEventListener("click", closeSavedEvaluationsModal);
+              }}
+              if (savedEvalsModal) {{
+                savedEvalsModal.addEventListener("click", (evt) => {{
+                  if (evt.target === savedEvalsModal) {{
+                    closeSavedEvaluationsModal();
+                  }}
+                }});
+              }}
+
+              document.querySelectorAll(".saved-eval-item").forEach((btn) => {{
+                btn.addEventListener("click", () => {{
+                  if (!openSavedEvalForm || !openSavedEvalId) return;
+                  openSavedEvalId.value = btn.dataset.id || "";
+                  openSavedEvalForm.submit();
+                }});
+                btn.addEventListener("contextmenu", (evt) => {{
+                  evt.preventDefault();
+                  const id = btn.dataset.id || "";
+                  if (!id || !savedEvalContextMenu) return;
+                  contextTargetId = id;
+                  savedEvalContextMenu.style.display = "block";
+                  savedEvalContextMenu.style.left = `${{evt.clientX}}px`;
+                  savedEvalContextMenu.style.top = `${{evt.clientY}}px`;
+                }});
+              }});
+
+              if (deleteSavedEvalBtn) {{
+                deleteSavedEvalBtn.addEventListener("click", () => {{
+                  if (!contextTargetId || !deleteSavedEvalId || !deleteSavedEvalForm) return;
+                  const target = savedEvaluations.find((item) => String(item.id) === String(contextTargetId));
+                  const targetName = target?.name || "this evaluation";
+                  const shouldDelete = window.confirm(`Delete "${{targetName}}"?`);
+                  if (!shouldDelete) return;
+                  deleteSavedEvalId.value = contextTargetId;
+                  deleteSavedEvalForm.submit();
+                }});
+              }}
+
+              document.addEventListener("click", () => {{
+                if (savedEvalContextMenu) {{
+                  savedEvalContextMenu.style.display = "none";
+                }}
+              }});
+
+              if (saveEvaluationBtn) {{
+                saveEvaluationBtn.addEventListener("click", () => {{
+                  if (!currentEvaluationPayload) {{
+                    window.alert("Run a single-ticker evaluation first, then save it.");
+                    return;
+                  }}
+                  const defaultName = currentEvaluationPayload.form_state?.ticker
+                    ? `${{currentEvaluationPayload.form_state.ticker}}_${{currentEvaluationPayload.form_state.interval}}_${{new Date().toISOString().slice(0, 16)}}`
+                    : `evaluation_${{new Date().toISOString().slice(0, 16)}}`;
+                  const name = window.prompt("Name this saved evaluation:", defaultName);
+                  if (!name) return;
+                  if (!evaluationNameInput || !evaluationPayloadInput || !saveEvalForm) return;
+                  evaluationNameInput.value = name.trim();
+                  evaluationPayloadInput.value = JSON.stringify(currentEvaluationPayload);
+                  saveEvalForm.submit();
+                }});
               }}
             </script>
           </body>
