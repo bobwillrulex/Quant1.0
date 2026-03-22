@@ -182,7 +182,10 @@ def create_app() -> "Flask":
                     buy_raw = request.form.get("buy_threshold", "").strip()
                     sell_raw = request.form.get("sell_threshold", "").strip()
                     stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
-                    fixed_stop_pct = validate_fixed_stop_pct(float(request.form.get("fixed_stop_pct", "2.0").strip() or "2.0"))
+                    fixed_stop_raw = request.form.get("fixed_stop_pct", "2.0").strip()
+                    fixed_stop_pct = 2.0
+                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                        fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
                     include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
                     rows = int(rows_raw)
                     buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
@@ -583,7 +586,9 @@ def create_app() -> "Flask":
                     row_count = int(rows)
                     buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
                     stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
-                    fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_pct_raw or "2.0"))
+                    fixed_stop_pct = 2.0
+                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                        fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_pct_raw or "2.0"))
                     stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
@@ -1136,7 +1141,7 @@ def create_app() -> "Flask":
                 </select>
               </label>
               <label id="fixedStopLossWrap">Fixed Stop Loss %:
-                <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
+                <input type="number" min="0.01" step="any" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
               </label>
               <label>&nbsp;
                 <div class="button-row">
@@ -1277,7 +1282,15 @@ def create_app() -> "Flask":
               const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
               function toggleFixedStopField() {{
                 if (!stopLossStrategyEl || !fixedStopLossWrapEl) return;
-                fixedStopLossWrapEl.style.display = stopLossStrategyEl.value === "fixed_percentage" ? "block" : "none";
+                const fixedStopInput = fixedStopLossWrapEl.querySelector('input[name="fixed_stop_pct"]');
+                const isFixed = stopLossStrategyEl.value === "fixed_percentage";
+                fixedStopLossWrapEl.style.display = isFixed ? "block" : "none";
+                if (fixedStopInput) {{
+                  fixedStopInput.disabled = !isFixed;
+                  if (!isFixed) {{
+                    fixedStopInput.setCustomValidity("");
+                  }}
+                }}
               }}
               if (stopLossStrategyEl) {{
                 stopLossStrategyEl.addEventListener("change", toggleFixedStopField);
