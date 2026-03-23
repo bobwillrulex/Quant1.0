@@ -1675,6 +1675,10 @@ def create_app() -> "Flask":
               }}
               th {{ color: {theme_table_head}; font-weight: 600; }}
               td {{ color: var(--text); }}
+              #runAllTable td,
+              #runAllTable td strong {{
+                color: var(--text) !important;
+              }}
               pre {{
                 white-space: pre-wrap;
                 background: {theme_surface};
