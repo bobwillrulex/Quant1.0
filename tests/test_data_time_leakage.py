@@ -35,3 +35,25 @@ def test_fvg_features_do_not_depend_on_next_candle_values() -> None:
     ]
     for key in keys:
         assert rows_a[row_index][key] == rows_b[row_index][key]
+
+
+def test_feature2_columns_are_present_in_rows() -> None:
+    highs, lows, closes = _build_ohlc(80)
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+    sample = rows[-1]
+    for key in [
+        "stoch_velocity",
+        "stoch_low_zone",
+        "stoch_high_zone",
+        "macd_delta",
+        "ret_1",
+        "ret_3",
+        "ret_5",
+        "trend_20",
+        "vol_20",
+        "dist_to_bull_fvg",
+        "dist_to_bear_fvg",
+        "inside_bull_fvg",
+        "inside_bear_fvg",
+    ]:
+        assert key in sample

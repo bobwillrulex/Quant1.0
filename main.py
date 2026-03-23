@@ -967,7 +967,7 @@ def create_app() -> "Flask":
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
         split_style = request.form.get("split_style", "shuffled")
-        feature_set = normalize_feature_set(request.form.get("feature_set", "new"))
+        feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
         buy_threshold_raw = request.form.get("buy_threshold", "").strip()
         sell_threshold_raw = request.form.get("sell_threshold", "").strip()
         model_name = request.form.get("model_name", "").strip()
@@ -1926,7 +1926,8 @@ def create_app() -> "Flask":
               </label>
               <label>Feature Pipeline:
                 <select name="feature_set">
-                  <option value="new" {"selected" if feature_set == "new" else ""}>New (default)</option>
+                  <option value="feature2" {"selected" if feature_set == "feature2" else ""}>Feature 2 (default)</option>
+                  <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
               </label>
@@ -2370,9 +2371,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feature-set",
-        choices=["new", "legacy"],
-        default="new",
-        help="Feature pipeline to use for CLI training/evaluation. Default: new.",
+        choices=["feature2", "new", "legacy"],
+        default="feature2",
+        help="Feature pipeline to use for CLI training/evaluation. Default: feature2.",
     )
     parser.add_argument("--ui", action="store_true", help="Run Flask UI.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Flask host when using --ui.")
