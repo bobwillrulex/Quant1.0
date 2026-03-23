@@ -95,12 +95,19 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         lo = min(window)
         hi = max(window)
         stoch_rsi.append(50.0 if hi - lo < 1e-12 else 100.0 * ((rsi[i] - lo) / (hi - lo)))
+    ema_9 = ema(closes, 9)
     ema_12 = ema(closes, 12)
     ema_26 = ema(closes, 26)
     macd = [a - b for a, b in zip(ema_12, ema_26)]
     signal = ema(macd, 9)
     macd_hist = [m - s for m, s in zip(macd, signal)]
     macd_hist_delta = [0.0] + [macd_hist[i] - macd_hist[i - 1] for i in range(1, len(macd_hist))]
+    ema9_derivative_1 = [0.0] + [ema_9[i] - ema_9[i - 1] for i in range(1, len(ema_9))]
+    ema9_derivative_2 = [0.0] + [ema9_derivative_1[i] - ema9_derivative_1[i - 1] for i in range(1, len(ema9_derivative_1))]
+    ema9_derivative_3 = [0.0] + [ema9_derivative_2[i] - ema9_derivative_2[i - 1] for i in range(1, len(ema9_derivative_2))]
+    ema26_derivative_1 = [0.0] + [ema_26[i] - ema_26[i - 1] for i in range(1, len(ema_26))]
+    ema26_derivative_2 = [0.0] + [ema26_derivative_1[i] - ema26_derivative_1[i - 1] for i in range(1, len(ema26_derivative_1))]
+    ema26_derivative_3 = [0.0] + [ema26_derivative_2[i] - ema26_derivative_2[i - 1] for i in range(1, len(ema26_derivative_2))]
     close_returns = [0.0] + [((closes[i] - closes[i - 1]) / closes[i - 1]) if closes[i - 1] != 0 else 0.0 for i in range(1, n)]
     atr_frac: List[float] = []
     atr_window = 14
@@ -139,6 +146,10 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         ma20 = sum(ma_window) / max(1, len(ma_window))
         prev_bullish_gap = max(0.0, lows[i - 1] - highs[i - 3])
         prev_bearish_gap = max(0.0, lows[i - 3] - highs[i - 1])
+        macd_green_increasing = 1.0 if (macd_hist[i] > 0 and macd_hist_delta[i] > 0) else 0.0
+        macd_red_recovering = 1.0 if (macd_hist[i] < 0 and macd_hist_delta[i] > 0) else 0.0
+        macd_green_fading = 1.0 if (macd_hist[i] > 0 and macd_hist_delta[i] < 0) else 0.0
+        macd_red_deepening = 1.0 if (macd_hist[i] < 0 and macd_hist_delta[i] < 0) else 0.0
         rows.append(
             {
                 "stoch_rsi": stoch_rsi[i],
@@ -148,6 +159,18 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "macd_hist": macd_hist[i],
                 "macd_hist_delta": macd_hist_delta[i],
                 "macd_delta": macd_hist_delta[i],
+                "macd_green_increasing": macd_green_increasing,
+                "macd_red_recovering": macd_red_recovering,
+                "macd_green_fading": macd_green_fading,
+                "macd_red_deepening": macd_red_deepening,
+                "ema9": ema_9[i],
+                "ema26": ema_26[i],
+                "ema9_derivative_1": ema9_derivative_1[i],
+                "ema9_derivative_2": ema9_derivative_2[i],
+                "ema9_derivative_3": ema9_derivative_3[i],
+                "ema26_derivative_1": ema26_derivative_1[i],
+                "ema26_derivative_2": ema26_derivative_2[i],
+                "ema26_derivative_3": ema26_derivative_3[i],
                 "ret_1": close_returns[i],
                 "ret_3": ((closes[i] / closes[i - 3]) - 1.0) if closes[i - 3] != 0 else 0.0,
                 "ret_5": ((closes[i] / closes[i - 5]) - 1.0) if (i >= 5 and closes[i - 5] != 0) else 0.0,
