@@ -111,17 +111,59 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
             abs_ret_window.pop(0)
         atr_frac.append(sum(abs_ret_window) / len(abs_ret_window))
     rows: List[Row] = []
+    last_bull_gap_low = 0.0
+    last_bull_gap_high = 0.0
+    last_bear_gap_low = 0.0
+    last_bear_gap_high = 0.0
     # Build each row at index i using only information available by candle close i.
     # We intentionally lag FVG features one bar so "first touch/dip" is observable at i
     # without peeking into i+1.
     for i in range(3, n - 1):
+        stoch_now = stoch_rsi[i] / 100.0
+        stoch_prev = stoch_rsi[i - 1] / 100.0 if i > 0 else stoch_now
+        gap_up = lows[i] > highs[i - 1]
+        gap_down = highs[i] < lows[i - 1]
+        if gap_up:
+            last_bull_gap_low = highs[i - 1]
+            last_bull_gap_high = lows[i]
+        if gap_down:
+            last_bear_gap_low = highs[i]
+            last_bear_gap_high = lows[i - 1]
+        close_now = closes[i]
+        inside_bull_fvg = 1.0 if (last_bull_gap_low > 0.0 and last_bull_gap_low <= close_now <= last_bull_gap_high) else 0.0
+        inside_bear_fvg = 1.0 if (last_bear_gap_low > 0.0 and last_bear_gap_low <= close_now <= last_bear_gap_high) else 0.0
+        ret_window = close_returns[max(0, i - 19) : i + 1]
+        mean_ret = sum(ret_window) / max(1, len(ret_window))
+        ret_var = sum((value - mean_ret) ** 2 for value in ret_window) / max(1, len(ret_window))
+        ma_window = closes[max(0, i - 19) : i + 1]
+        ma20 = sum(ma_window) / max(1, len(ma_window))
         prev_bullish_gap = max(0.0, lows[i - 1] - highs[i - 3])
         prev_bearish_gap = max(0.0, lows[i - 3] - highs[i - 1])
         rows.append(
             {
                 "stoch_rsi": stoch_rsi[i],
+                "stoch_velocity": stoch_now - stoch_prev,
+                "stoch_low_zone": max(0.0, 0.2 - stoch_now),
+                "stoch_high_zone": max(0.0, stoch_now - 0.8),
                 "macd_hist": macd_hist[i],
                 "macd_hist_delta": macd_hist_delta[i],
+                "macd_delta": macd_hist_delta[i],
+                "ret_1": close_returns[i],
+                "ret_3": ((closes[i] / closes[i - 3]) - 1.0) if closes[i - 3] != 0 else 0.0,
+                "ret_5": ((closes[i] / closes[i - 5]) - 1.0) if (i >= 5 and closes[i - 5] != 0) else 0.0,
+                "ma20": ma20,
+                "trend_20": ((close_now - ma20) / ma20) if ma20 != 0 else 0.0,
+                "vol_20": ret_var ** 0.5,
+                "gap_up": 1.0 if gap_up else 0.0,
+                "gap_down": 1.0 if gap_down else 0.0,
+                "last_bull_gap_low": last_bull_gap_low,
+                "last_bull_gap_high": last_bull_gap_high,
+                "last_bear_gap_low": last_bear_gap_low,
+                "last_bear_gap_high": last_bear_gap_high,
+                "dist_to_bull_fvg": ((close_now - last_bull_gap_low) / close_now) if (close_now != 0 and last_bull_gap_low > 0.0) else 0.0,
+                "dist_to_bear_fvg": ((last_bear_gap_high - close_now) / close_now) if (close_now != 0 and last_bear_gap_high > 0.0) else 0.0,
+                "inside_bull_fvg": inside_bull_fvg,
+                "inside_bear_fvg": inside_bear_fvg,
                 "fvg_green_size": prev_bullish_gap,
                 "fvg_red_size": prev_bearish_gap,
                 "fvg_red_above_green": 1.0 if prev_bearish_gap > 0 else 0.0,
