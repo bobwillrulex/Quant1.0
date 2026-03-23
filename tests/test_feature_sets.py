@@ -33,6 +33,16 @@ def test_derivative_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_fvg2_feature_set_splits_stoch_extremes() -> None:
+    assert normalize_feature_set("fvg_2") == "fvg2"
+    builder = get_strategy_feature_builder("fvg2")
+    names = builder.names()
+    assert "stoch_extreme_80" in names
+    assert "stoch_extreme_20" in names
+    assert "stoch_extreme" not in names
+    assert "fvg_conflict_penalty" in names
+
+
 def test_derivative2_feature_set_is_supported() -> None:
     assert normalize_feature_set("derivate2") == "derivative2"
     builder = get_strategy_feature_builder("derivative2")
