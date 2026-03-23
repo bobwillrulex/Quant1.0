@@ -1928,6 +1928,7 @@ def create_app() -> "Flask":
                 <select name="feature_set">
                   <option value="feature2" {"selected" if feature_set == "feature2" else ""}>Feature 2 (default)</option>
                   <option value="derivative" {"selected" if feature_set == "derivative" else ""}>Derivative set</option>
+                  <option value="derivative2" {"selected" if feature_set == "derivative2" else ""}>Derivatives 2 set</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
@@ -2372,7 +2373,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feature-set",
-        choices=["feature2", "derivative", "new", "legacy"],
+        choices=["feature2", "derivative", "derivative2", "new", "legacy"],
         default="feature2",
         help="Feature pipeline to use for CLI training/evaluation. Default: feature2.",
     )
