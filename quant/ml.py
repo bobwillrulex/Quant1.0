@@ -422,9 +422,13 @@ def strategy_metrics(
     time_decay_limit = max(1, int(stop_cfg.time_decay_bars))
     atr_window = 14
     atr_returns: List[float] = []
+    forced_stop_returns: Dict[int, float] = {}
+
+    effective_returns: List[float] = list(returns)
 
     for idx, p in enumerate(smoothed_probs):
         bar_ret = returns[idx] if idx < len(returns) else 0.0
+        prior_synthetic_price = synthetic_price
         atr_returns.append(abs(bar_ret))
         if len(atr_returns) > atr_window:
             atr_returns.pop(0)
@@ -463,6 +467,13 @@ def strategy_metrics(
                 cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
                 model_invalidation_hit = cumulative_return <= threshold
             if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
+                if (fixed_or_atr_hit or model_invalidation_hit) and prior_synthetic_price > 0 and idx < len(effective_returns):
+                    effective_stop_price = stop_price
+                    if model_invalidation_hit:
+                        threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                        effective_stop_price = entry_price * (1.0 + threshold)
+                    effective_returns[idx] = (effective_stop_price / prior_synthetic_price) - 1.0
+                    forced_stop_returns[idx] = effective_returns[idx]
                 current_pos = 0
                 bars_in_position = 0
                 if time_decay_hit:
@@ -483,6 +494,13 @@ def strategy_metrics(
                 cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
                 model_invalidation_hit = cumulative_return >= -threshold
             if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
+                if (fixed_or_atr_hit or model_invalidation_hit) and prior_synthetic_price > 0 and idx < len(effective_returns):
+                    effective_stop_price = stop_price
+                    if model_invalidation_hit:
+                        threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                        effective_stop_price = entry_price * (1.0 - threshold)
+                    effective_returns[idx] = (effective_stop_price / prior_synthetic_price) - 1.0
+                    forced_stop_returns[idx] = -effective_returns[idx]
                 current_pos = 0
                 bars_in_position = 0
                 if time_decay_hit:
@@ -502,9 +520,11 @@ def strategy_metrics(
     in_trade = False
     trade_pnl = 0.0
     closed_trade_pnls: List[float] = []
-    for pos, ret in zip(positions, returns):
+    for idx, (pos, ret) in enumerate(zip(positions, effective_returns)):
         turnover = abs(pos - prev_pos)
         day_pnl = pos * ret - turnover * trade_cost
+        if idx in forced_stop_returns:
+            day_pnl += forced_stop_returns[idx]
         pnl.append(day_pnl)
         if prev_pos == 0 and pos != 0:
             in_trade = True
