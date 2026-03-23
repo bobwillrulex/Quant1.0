@@ -1373,6 +1373,10 @@ def create_app() -> "Flask":
                             "</tr>"
                             for item in metrics["feature_ablation"]
                         )
+                        feature_items = "".join(
+                            f"<li><code>{feature_name}</code></li>"
+                            for feature_name in metrics["features"]
+                        )
                         hold_time_boxplot = render_hold_time_boxplot(
                             metrics["strategy"]["hold_time_stats"],
                             stroke=theme_border,
@@ -1423,10 +1427,13 @@ def create_app() -> "Flask":
                           </div>
                         </article>
                       </div>
-    
+
                       <article class="card">
-                        <h3>Feature Set</h3>
-                        <p>{', '.join(metrics['features'])}</p>
+                        <h3>Feature Set (Current Model Inputs)</h3>
+                        <p class="muted">Total Features: <strong>{len(metrics['features'])}</strong> · Synced to current model configuration</p>
+                        <ul class="feature-list">
+                          {feature_items}
+                        </ul>
                       </article>
     
                       <div class="table-grid">
@@ -1760,6 +1767,26 @@ def create_app() -> "Flask":
                 margin-left: auto;
                 width: auto;
                 padding: 0.45rem 0.7rem;
+                font-size: 0.82rem;
+              }}
+              .feature-list {{
+                margin: 0.65rem 0 0;
+                padding: 0;
+                list-style: none;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.45rem;
+              }}
+              .feature-list li {{
+                margin: 0;
+              }}
+              .feature-list code {{
+                display: inline-block;
+                background: {theme_surface};
+                border: 1px solid var(--border);
+                border-radius: 999px;
+                padding: 0.25rem 0.6rem;
+                color: var(--text);
                 font-size: 0.82rem;
               }}
               @media (max-width: 720px) {{
