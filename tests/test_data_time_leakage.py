@@ -57,3 +57,26 @@ def test_feature2_columns_are_present_in_rows() -> None:
         "inside_bear_fvg",
     ]:
         assert key in sample
+
+
+def test_derivative_columns_are_present_in_rows() -> None:
+    highs, lows, closes = _build_ohlc(80)
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+    sample = rows[-1]
+    for key in [
+        "macd_hist",
+        "macd_hist_delta",
+        "macd_green_increasing",
+        "macd_red_recovering",
+        "macd_green_fading",
+        "macd_red_deepening",
+        "ema9",
+        "ema26",
+        "ema9_derivative_1",
+        "ema9_derivative_2",
+        "ema9_derivative_3",
+        "ema26_derivative_1",
+        "ema26_derivative_2",
+        "ema26_derivative_3",
+    ]:
+        assert key in sample

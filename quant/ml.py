@@ -109,7 +109,7 @@ class LogisticRegressionGD:
 
 
 SplitStyle = Literal["shuffled", "chronological"]
-FeatureSet = Literal["feature2", "new", "legacy"]
+FeatureSet = Literal["feature2", "new", "legacy", "derivative"]
 
 
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
@@ -167,6 +167,8 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
     value = feature_set.strip().lower()
     if value in ("feature2", "v2", "new2", "default"):
         return "feature2"
+    if value in ("derivative", "derivatives", "deriv", "ema-derivative"):
+        return "derivative"
     if value in ("legacy", "old"):
         return "legacy"
     return "new"
@@ -241,10 +243,34 @@ def build_feature2_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_derivative_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("macd_green_increasing", lambda r: g(r, "macd_green_increasing"))
+    builder.add("macd_red_recovering", lambda r: g(r, "macd_red_recovering"))
+    builder.add("macd_green_fading", lambda r: g(r, "macd_green_fading"))
+    builder.add("macd_red_deepening", lambda r: g(r, "macd_red_deepening"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema26", lambda r: g(r, "ema26"))
+    builder.add("ema9_derivative_1", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema9_derivative_2", lambda r: g(r, "ema9_derivative_2"))
+    builder.add("ema9_derivative_3", lambda r: g(r, "ema9_derivative_3"))
+    builder.add("ema26_derivative_1", lambda r: g(r, "ema26_derivative_1"))
+    builder.add("ema26_derivative_2", lambda r: g(r, "ema26_derivative_2"))
+    builder.add("ema26_derivative_3", lambda r: g(r, "ema26_derivative_3"))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
         return build_legacy_strategy_features()
+    if normalized == "derivative":
+        return build_derivative_strategy_features()
     if normalized == "feature2":
         return build_feature2_strategy_features()
     return build_default_strategy_features()
@@ -257,6 +283,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
     names = bundle.get("feature_names", [])
     if isinstance(names, list) and "stoch_extreme" in names:
         return "legacy"
+    if isinstance(names, list) and "ema9_derivative_3" in names:
+        return "derivative"
     if isinstance(names, list) and "macd_delta" in names and "oversold_reversal" not in names:
         return "feature2"
     return "new"
