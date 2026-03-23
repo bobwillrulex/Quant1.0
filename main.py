@@ -194,14 +194,37 @@ def is_us_market_open(now: datetime | None = None) -> bool:
 class RunAllMonitor:
     def __init__(self) -> None:
         self._state: dict[str, dict[str, object]] = {
-            OPTIONS_MODE: {"running": False, "thread": None, "last_actions": {}, "last_tick": ""},
-            SPOT_MODE: {"running": False, "thread": None, "last_actions": {}, "last_tick": ""},
+            OPTIONS_MODE: {
+                "running": False,
+                "thread": None,
+                "last_actions": {},
+                "last_tick": "",
+                "started_at": "",
+                "last_error": "",
+                "last_market_state": "unknown",
+                "worker_state": "stopped",
+            },
+            SPOT_MODE: {
+                "running": False,
+                "thread": None,
+                "last_actions": {},
+                "last_tick": "",
+                "started_at": "",
+                "last_error": "",
+                "last_market_state": "unknown",
+                "worker_state": "stopped",
+            },
         }
         self._lock = threading.Lock()
 
     def status(self, mode: str) -> dict[str, object]:
         with self._lock:
             mode_state = dict(self._state[mode])
+            worker = mode_state.get("thread")
+            mode_state["worker_alive"] = bool(worker and isinstance(worker, threading.Thread) and worker.is_alive())
+            running_requested = bool(mode_state.get("running"))
+            if running_requested and not mode_state["worker_alive"] and mode_state.get("worker_state") != "crashed":
+                mode_state["worker_state"] = "stopped"
             mode_state["last_actions_count"] = len(dict(mode_state.get("last_actions", {})))
             mode_state.pop("thread", None)
             return mode_state
@@ -213,7 +236,11 @@ class RunAllMonitor:
                 return
             mode_state["running"] = True
             mode_state["last_actions"] = {}
-            mode_state["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            now_iso = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            mode_state["started_at"] = now_iso
+            mode_state["last_tick"] = now_iso
+            mode_state["last_error"] = ""
+            mode_state["worker_state"] = "running"
             worker = threading.Thread(
                 target=self._loop,
                 kwargs={
@@ -231,27 +258,45 @@ class RunAllMonitor:
     def stop(self, mode: str) -> None:
         with self._lock:
             self._state[mode]["running"] = False
+            self._state[mode]["worker_state"] = "stopped"
 
     def _loop(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
-        while True:
-            with self._lock:
-                if not bool(self._state[mode]["running"]):
-                    self._state[mode]["thread"] = None
-                    return
-            if is_us_market_open():
-                try:
-                    configs = load_model_configs(mode)
-                    configs["__ui_data_provider__"] = data_provider
-                    configs["__ui_twelve_api_key__"] = twelve_api_key
-                    models = list_saved_models(mode)
-                    rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
-                    self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
-                except Exception:
-                    pass
-                finally:
+        try:
+            while True:
+                with self._lock:
+                    if not bool(self._state[mode]["running"]):
+                        self._state[mode]["thread"] = None
+                        return
+                market_open = is_us_market_open()
+                with self._lock:
+                    self._state[mode]["last_market_state"] = "open" if market_open else "closed"
+                if market_open:
+                    try:
+                        configs = load_model_configs(mode)
+                        configs["__ui_data_provider__"] = data_provider
+                        configs["__ui_twelve_api_key__"] = twelve_api_key
+                        models = list_saved_models(mode)
+                        rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
+                        self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
+                        with self._lock:
+                            self._state[mode]["last_error"] = ""
+                    except Exception as exc:
+                        with self._lock:
+                            self._state[mode]["last_error"] = str(exc)
+                    finally:
+                        with self._lock:
+                            self._state[mode]["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                else:
                     with self._lock:
                         self._state[mode]["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-            time.sleep(600)
+                time.sleep(600)
+        except Exception as exc:
+            with self._lock:
+                self._state[mode]["running"] = False
+                self._state[mode]["thread"] = None
+                self._state[mode]["worker_state"] = "crashed"
+                self._state[mode]["last_error"] = str(exc)
+            return
 
     def _notify_action_changes(self, *, mode: str, rows: list[dict[str, object]], webhook_url: str) -> None:
         with self._lock:
@@ -1499,11 +1544,29 @@ def create_app() -> "Flask":
             )
         monitor_state = RUN_ALL_MONITOR.status(mode_key)
         monitor_running = bool(monitor_state.get("running"))
+        worker_alive = bool(monitor_state.get("worker_alive"))
+        worker_state = escape(str(monitor_state.get("worker_state", "stopped")))
+        monitor_started_at = escape(str(monitor_state.get("started_at", "")))
         monitor_last_tick = escape(str(monitor_state.get("last_tick", "")))
+        monitor_last_error = escape(str(monitor_state.get("last_error", "")))
+        monitor_market_state = str(monitor_state.get("last_market_state", "unknown")).strip().lower()
+        if monitor_market_state == "open":
+            market_label = "Open"
+        elif monitor_market_state == "closed":
+            market_label = "Closed"
+        else:
+            market_label = "Unknown"
+        worker_label = "Online" if worker_alive else "Offline"
+        lifecycle_label = "Crashed" if worker_state == "crashed" else ("Running" if monitor_running else "Stopped")
+        error_line = f"<br><span style='color:#ff7b7b;'><strong>Last error:</strong> {monitor_last_error}</span>" if monitor_last_error else ""
         monitor_status_html = (
-            f"<p class='muted'><strong>Status:</strong> {'Running' if monitor_running else 'Stopped'}"
+            f"<p class='muted'><strong>Bot:</strong> {worker_label}"
+            f" | <strong>Lifecycle:</strong> {lifecycle_label}"
+            f" | <strong>Market:</strong> {market_label}"
+            f" | <strong>Started:</strong> {monitor_started_at or 'n/a'}"
             f" | Last poll: {monitor_last_tick or 'n/a'}"
             f" | Tracked models: {int(monitor_state.get('last_actions_count', 0))}</p>"
+            f"{error_line}"
         )
 
         current_eval_payload_json = (json.dumps(current_evaluation_payload).replace("</", "<\\/") if current_evaluation_payload else "null")
