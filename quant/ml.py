@@ -109,6 +109,7 @@ class LogisticRegressionGD:
 
 
 SplitStyle = Literal["shuffled", "chronological"]
+FeatureSet = Literal["new", "legacy"]
 
 
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
@@ -162,7 +163,14 @@ def mae(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     return sum(abs(a - b) for a, b in zip(y_true, y_pred)) / max(1, len(y_true))
 
 
-def build_default_strategy_features() -> StrategyFeatureBuilder:
+def normalize_feature_set(feature_set: str) -> FeatureSet:
+    value = feature_set.strip().lower()
+    if value in ("legacy", "old"):
+        return "legacy"
+    return "new"
+
+
+def build_legacy_strategy_features() -> StrategyFeatureBuilder:
     builder = StrategyFeatureBuilder()
     builder.add("stoch_extreme", lambda r: 1.0 if (r["stoch_rsi"] > 80 or r["stoch_rsi"] < 20) else 0.0)
     builder.add("macd_hist", lambda r: r["macd_hist"])
@@ -179,6 +187,50 @@ def build_default_strategy_features() -> StrategyFeatureBuilder:
     builder.add("fvg_bear_signal", lambda r: r["first_red_fvg_touch"] * min(r["fvg_red_size"], 3.0))
     builder.add("fvg_conflict_penalty", lambda r: r["fvg_red_above_green"] * min(r["fvg_green_size"], 3.0))
     return builder
+
+
+def build_default_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("stoch_rsi", lambda r: g(r, "stoch_rsi") / 100.0)
+    builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
+    builder.add("stoch_low_zone", lambda r: g(r, "stoch_low_zone"))
+    builder.add("stoch_high_zone", lambda r: g(r, "stoch_high_zone"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta"))
+    builder.add("ret_1", lambda r: g(r, "ret_1"))
+    builder.add("ret_3", lambda r: g(r, "ret_3"))
+    builder.add("ret_5", lambda r: g(r, "ret_5"))
+    builder.add("trend_20", lambda r: g(r, "trend_20"))
+    builder.add("vol_20", lambda r: g(r, "vol_20"))
+    builder.add("dist_to_bull_fvg", lambda r: g(r, "dist_to_bull_fvg"))
+    builder.add("dist_to_bear_fvg", lambda r: g(r, "dist_to_bear_fvg"))
+    builder.add("inside_bull_fvg", lambda r: g(r, "inside_bull_fvg"))
+    builder.add("inside_bear_fvg", lambda r: g(r, "inside_bear_fvg"))
+    builder.add("oversold_reversal", lambda r: g(r, "oversold_reversal"))
+    builder.add("overbought_reversal", lambda r: g(r, "overbought_reversal"))
+    builder.add("bull_confluence", lambda r: g(r, "bull_confluence"))
+    builder.add("bear_confluence", lambda r: g(r, "bear_confluence"))
+    return builder
+
+
+def get_strategy_feature_builder(feature_set: FeatureSet | str = "new") -> StrategyFeatureBuilder:
+    normalized = normalize_feature_set(feature_set)
+    if normalized == "legacy":
+        return build_legacy_strategy_features()
+    return build_default_strategy_features()
+
+
+def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
+    explicit = bundle.get("feature_set")
+    if isinstance(explicit, str):
+        return normalize_feature_set(explicit)
+    names = bundle.get("feature_names", [])
+    if isinstance(names, list) and "stoch_extreme" in names:
+        return "legacy"
+    return "new"
 
 
 def standardize_fit(x: Sequence[Sequence[float]]) -> Tuple[List[List[float]], List[float], List[float]]:
@@ -211,9 +263,10 @@ def parse_thresholds(buy_raw: str, sell_raw: str, *, default_buy: float = 0.6, d
     return buy_threshold, sell_threshold
 
 
-def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffled") -> Dict[str, object]:
+def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffled", feature_set: FeatureSet | str = "new") -> Dict[str, object]:
     train_rows, test_rows = train_test_split(rows, split_style=split_style)
-    features = build_default_strategy_features()
+    resolved_feature_set = normalize_feature_set(feature_set)
+    features = get_strategy_feature_builder(resolved_feature_set)
     x_train_raw = features.transform(train_rows)
     x_test_raw = features.transform(test_rows)
     x_train, means, stds = standardize_fit(x_train_raw)
@@ -225,7 +278,7 @@ def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffl
     lin.fit(x_train, y_train_ret)
     logit = LogisticRegressionGD(learning_rate=0.05, epochs=700)
     logit.fit(x_train, y_train_dir)
-    return {"feature_names": features.names(), "means": means, "stds": stds, "lin_weights": lin.weights, "lin_bias": lin.bias, "logit_weights": logit.weights, "logit_bias": logit.bias, "train_size": len(train_rows), "test_size": len(test_rows), "split_style": split_style, "x_test_raw": x_test_raw, "y_test_ret": y_test_ret, "y_test_dir": y_test_dir}
+    return {"feature_names": features.names(), "feature_set": resolved_feature_set, "means": means, "stds": stds, "lin_weights": lin.weights, "lin_bias": lin.bias, "logit_weights": logit.weights, "logit_bias": logit.bias, "train_size": len(train_rows), "test_size": len(test_rows), "split_style": split_style, "x_test_raw": x_test_raw, "y_test_ret": y_test_ret, "y_test_dir": y_test_dir}
 
 
 def calibration_buckets(y_true: Sequence[int], y_prob: Sequence[float], bucket_size: float = 0.05) -> List[Dict[str, float]]:
@@ -521,10 +574,10 @@ def pnl_market_regime_breakdown(returns: Sequence[float], probs: Sequence[float]
     return result
 
 
-def walk_forward_validation_rows(rows: Sequence[Row], max_windows: int = 4) -> List[Dict[str, float]]:
+def walk_forward_validation_rows(rows: Sequence[Row], max_windows: int = 4, feature_set: FeatureSet | str = "new") -> List[Dict[str, float]]:
     if len(rows) < 120:
         return []
-    features = build_default_strategy_features()
+    features = get_strategy_feature_builder(feature_set)
     chunk = len(rows) // (max_windows + 2)
     results: List[Dict[str, float]] = []
     for idx in range(max_windows):
@@ -552,13 +605,13 @@ def walk_forward_validation_rows(rows: Sequence[Row], max_windows: int = 4) -> L
     return results
 
 
-def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str], split_style: SplitStyle = "shuffled") -> List[Dict[str, float]]:
+def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str], split_style: SplitStyle = "shuffled", feature_set: FeatureSet | str = "new") -> List[Dict[str, float]]:
     if len(rows) < 100:
         return []
     if len(rows) > 600:
         rows = list(rows)[-600:]
     train_rows, test_rows = train_test_split(rows, split_style=split_style)
-    features = build_default_strategy_features()
+    features = get_strategy_feature_builder(feature_set)
     x_train_raw_full = features.transform(train_rows)
     x_test_raw_full = features.transform(test_rows)
     x_train_full, means_full, stds_full = standardize_fit(x_train_raw_full)
@@ -578,7 +631,7 @@ def feature_ablation_analysis(rows: Sequence[Row], feature_names: Sequence[str],
     out: List[Dict[str, float]] = []
     for removed in feature_names:
         builder = StrategyFeatureBuilder()
-        default_builder = build_default_strategy_features()
+        default_builder = get_strategy_feature_builder(feature_set)
         for feature in default_builder._features:
             if feature.name != removed:
                 builder.add(feature.name, feature.fn)
@@ -626,6 +679,7 @@ def evaluate_bundle(
     allow_short: bool = True,
     stop_loss: StopLossConfig | None = None,
 ) -> Dict[str, object]:
+    feature_set = infer_bundle_feature_set(bundle)
     if not x_test_raw:
         raise ValueError("No rows available for evaluation.")
     if len(x_test_raw[0]) != len(bundle["feature_names"]):
@@ -650,6 +704,7 @@ def evaluate_bundle(
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     return {
         "features": bundle["feature_names"],
+        "feature_set": feature_set,
         "mse": mse(y_test_ret, ret_pred),
         "mae": mae(y_test_ret, ret_pred),
         "accuracy": cls["accuracy"],
@@ -671,14 +726,14 @@ def evaluate_bundle(
         "strategy": strategy,
         "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
         "pnl_by_regime": pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
-        "walk_forward": walk_forward_validation_rows(rows=eval_rows, max_windows=4) if eval_rows else [],
-        "feature_ablation": feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style) if eval_rows else [],
+        "walk_forward": walk_forward_validation_rows(rows=eval_rows, max_windows=4, feature_set=feature_set) if eval_rows else [],
+        "feature_ablation": feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style, feature_set=feature_set) if eval_rows else [],
         "error_analysis": error_analysis(y_test_ret, up_prob, ret_pred, top_n=5),
     }
 
 
-def run_model(rows: Sequence[Row]) -> None:
-    bundle = train_strategy_models(rows)
+def run_model(rows: Sequence[Row], feature_set: FeatureSet | str = "new") -> None:
+    bundle = train_strategy_models(rows, feature_set=feature_set)
     metrics = evaluate_bundle(
         bundle,
         bundle["x_test_raw"],
@@ -708,15 +763,15 @@ def run_model(rows: Sequence[Row]) -> None:
     print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
 
 
-def run_model_metrics(rows: Sequence[Row]) -> Dict[str, object]:
-    bundle = train_strategy_models(rows)
+def run_model_metrics(rows: Sequence[Row], feature_set: FeatureSet | str = "new") -> Dict[str, object]:
+    bundle = train_strategy_models(rows, feature_set=feature_set)
     metrics = evaluate_bundle(bundle, bundle["x_test_raw"], bundle["y_test_ret"], bundle["y_test_dir"], eval_rows=rows, split_style=bundle["split_style"])
     metrics["train_size"] = bundle["train_size"]
     return metrics
 
 
 def predict_signal(bundle: Dict[str, object], row: Row, *, buy_threshold: float = 0.6, sell_threshold: float = 0.4, long_only: bool = False) -> Dict[str, float | str]:
-    feature_builder = build_default_strategy_features()
+    feature_builder = get_strategy_feature_builder(infer_bundle_feature_set(bundle))
     row_features = feature_builder.transform([row])
     if len(row_features[0]) != len(bundle["feature_names"]):
         raise ValueError("Saved model feature size does not match current strategy feature set.")

@@ -19,8 +19,10 @@ from quant.constants import OPTIONS_MODE, SPOT_MODE
 from quant.data import fetch_market_rows, load_csv, synthetic_data
 from quant.discord_notify import send_discord_webhook
 from quant.ml import (
-    build_default_strategy_features,
     evaluate_bundle,
+    get_strategy_feature_builder,
+    infer_bundle_feature_set,
+    normalize_feature_set,
     parse_thresholds,
     predict_signal,
     run_model,
@@ -965,6 +967,7 @@ def create_app() -> "Flask":
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
         split_style = request.form.get("split_style", "shuffled")
+        feature_set = normalize_feature_set(request.form.get("feature_set", "new"))
         buy_threshold_raw = request.form.get("buy_threshold", "").strip()
         sell_threshold_raw = request.form.get("sell_threshold", "").strip()
         model_name = request.form.get("model_name", "").strip()
@@ -1052,6 +1055,7 @@ def create_app() -> "Flask":
                             interval = str(form_state.get("interval", interval))
                             rows = str(form_state.get("rows", rows))
                             split_style = str(form_state.get("split_style", split_style))
+                            feature_set = normalize_feature_set(str(form_state.get("feature_set", feature_set)))
                             buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
                             sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
                             selected_model = str(form_state.get("selected_model", selected_model))
@@ -1074,6 +1078,7 @@ def create_app() -> "Flask":
                         interval = str(form_state.get("interval", interval))
                         rows = str(form_state.get("rows", rows))
                         split_style = str(form_state.get("split_style", split_style))
+                        feature_set = normalize_feature_set(str(form_state.get("feature_set", feature_set)))
                         buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
                         sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
                         selected_model = str(form_state.get("selected_model", selected_model))
@@ -1110,7 +1115,7 @@ def create_app() -> "Flask":
                     present_rows_used_note = "" if len(dataset) >= present_row_count else f"Only {len(dataset)} frames were available and used for this run."
                     latest_row = dataset[-1]
                     if present_model == "__new__":
-                        bundle = train_strategy_models(dataset, split_style=split_style)
+                        bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
                     else:
                         bundle = load_model_bundle(mode_key, present_model)
                     prediction = predict_signal(
@@ -1186,7 +1191,7 @@ def create_app() -> "Flask":
                                 provider_notices.append(provider_notice)
                             if len(dataset) < row_count:
                                 multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
-                            bundle = train_strategy_models(dataset, split_style=split_style)
+                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
                             metrics = evaluate_bundle(
                                 bundle,
                                 bundle["x_test_raw"],
@@ -1255,18 +1260,19 @@ def create_app() -> "Flask":
                         )
                         if provider_notice:
                             provider_notices.append(provider_notice)
-                        features = build_default_strategy_features()
                         if train_action == "evaluate":
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for evaluation."
                             eval_rows = dataset
                         else:
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
                             _, eval_rows = train_test_split(dataset, split_style=split_style)
-                        x_test_raw = features.transform(eval_rows)
                         y_test_ret = [r["return_next"] for r in eval_rows]
                         y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                         if selected_model != "__new__":
                             loaded = load_model_bundle(mode_key, selected_model)
+                            loaded_feature_set = infer_bundle_feature_set(loaded)
+                            features = get_strategy_feature_builder(loaded_feature_set)
+                            x_test_raw = features.transform(eval_rows)
                             metrics = evaluate_bundle(
                                 loaded,
                                 x_test_raw,
@@ -1282,7 +1288,7 @@ def create_app() -> "Flask":
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
                         else:
-                            bundle = train_strategy_models(dataset, split_style=split_style)
+                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
                             metrics = evaluate_bundle(
                                 bundle,
                                 bundle["x_test_raw"],
@@ -1529,6 +1535,7 @@ def create_app() -> "Flask":
                                 "interval": interval,
                                 "rows": str(row_count),
                                 "split_style": split_style,
+                                "feature_set": feature_set,
                                 "buy_threshold": buy_threshold_raw,
                                 "sell_threshold": sell_threshold_raw,
                                 "selected_model": selected_model,
@@ -1915,6 +1922,12 @@ def create_app() -> "Flask":
                 <select name="split_style">
                   <option value="shuffled" {"selected" if split_style == "shuffled" else ""}>Legacy (shuffled)</option>
                   <option value="chronological" {"selected" if split_style == "chronological" else ""}>Time-aware (chronological)</option>
+                </select>
+              </label>
+              <label>Feature Pipeline:
+                <select name="feature_set">
+                  <option value="new" {"selected" if feature_set == "new" else ""}>New (default)</option>
+                  <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
               </label>
               <label>Saved Model:
@@ -2353,7 +2366,13 @@ def parse_args() -> argparse.Namespace:
         "--csv",
         type=str,
         default="",
-        help="Optional CSV path with columns: stoch_rsi, macd_hist, macd_hist_delta, fvg_green_size, fvg_red_size, fvg_red_above_green, first_green_fvg_dip, first_red_fvg_touch, return_next",
+        help="Optional CSV path. Supports both new modular features (stoch/macd/returns/trend/vol/FVG/interactions + return_next) and legacy feature columns.",
+    )
+    parser.add_argument(
+        "--feature-set",
+        choices=["new", "legacy"],
+        default="new",
+        help="Feature pipeline to use for CLI training/evaluation. Default: new.",
     )
     parser.add_argument("--ui", action="store_true", help="Run Flask UI.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Flask host when using --ui.")
@@ -2375,7 +2394,7 @@ def main() -> None:
         rows = synthetic_data()
         print(f"No CSV provided. Using synthetic dataset ({len(rows)} rows).")
 
-    run_model(rows)
+    run_model(rows, feature_set=args.feature_set)
 
 
 if __name__ == "__main__":
