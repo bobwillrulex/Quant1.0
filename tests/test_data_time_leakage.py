@@ -78,5 +78,48 @@ def test_derivative_columns_are_present_in_rows() -> None:
         "ema26_derivative_1",
         "ema26_derivative_2",
         "ema26_derivative_3",
+        "ema_derivative_1_diff",
+        "ema_derivative_2_diff",
+        "ema_derivative_3_diff",
+        "ema_derivative_1_cross",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+        "ema_derivative_2_cross",
+        "ema_derivative_2_cross_positive",
+        "ema_derivative_2_cross_negative",
+        "ema_derivative_3_cross",
+        "ema_derivative_3_cross_positive",
+        "ema_derivative_3_cross_negative",
     ]:
         assert key in sample
+
+
+def test_derivative_crossovers_use_only_current_and_previous_bar() -> None:
+    highs_a, lows_a, closes_a = _build_ohlc(80)
+    highs_b, lows_b, closes_b = _build_ohlc(80)
+
+    i = 20  # row index in output is i - 3
+    highs_a[i + 1] = highs_a[i + 1] + 15.0
+    lows_a[i + 1] = lows_a[i + 1] - 15.0
+    closes_a[i + 1] = closes_a[i + 1] + 20.0
+
+    rows_a = compute_strategy_rows_from_prices(highs=highs_a, lows=lows_a, closes=closes_a)
+    rows_b = compute_strategy_rows_from_prices(highs=highs_b, lows=lows_b, closes=closes_b)
+
+    row_index = i - 3
+    keys = [
+        "ema_derivative_1_diff",
+        "ema_derivative_1_cross",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+        "ema_derivative_2_diff",
+        "ema_derivative_2_cross",
+        "ema_derivative_2_cross_positive",
+        "ema_derivative_2_cross_negative",
+        "ema_derivative_3_diff",
+        "ema_derivative_3_cross",
+        "ema_derivative_3_cross_positive",
+        "ema_derivative_3_cross_negative",
+    ]
+    for key in keys:
+        assert rows_a[row_index][key] == rows_b[row_index][key]

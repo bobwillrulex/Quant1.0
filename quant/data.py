@@ -108,6 +108,9 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     ema26_derivative_1 = [0.0] + [ema_26[i] - ema_26[i - 1] for i in range(1, len(ema_26))]
     ema26_derivative_2 = [0.0] + [ema26_derivative_1[i] - ema26_derivative_1[i - 1] for i in range(1, len(ema26_derivative_1))]
     ema26_derivative_3 = [0.0] + [ema26_derivative_2[i] - ema26_derivative_2[i - 1] for i in range(1, len(ema26_derivative_2))]
+    ema_derivative_1_diff = [a - b for a, b in zip(ema9_derivative_1, ema26_derivative_1)]
+    ema_derivative_2_diff = [a - b for a, b in zip(ema9_derivative_2, ema26_derivative_2)]
+    ema_derivative_3_diff = [a - b for a, b in zip(ema9_derivative_3, ema26_derivative_3)]
     close_returns = [0.0] + [((closes[i] - closes[i - 1]) / closes[i - 1]) if closes[i - 1] != 0 else 0.0 for i in range(1, n)]
     atr_frac: List[float] = []
     atr_window = 14
@@ -150,6 +153,21 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         macd_red_recovering = 1.0 if (macd_hist[i] < 0 and macd_hist_delta[i] > 0) else 0.0
         macd_green_fading = 1.0 if (macd_hist[i] > 0 and macd_hist_delta[i] < 0) else 0.0
         macd_red_deepening = 1.0 if (macd_hist[i] < 0 and macd_hist_delta[i] < 0) else 0.0
+        deriv_1_diff_now = ema_derivative_1_diff[i]
+        deriv_1_diff_prev = ema_derivative_1_diff[i - 1]
+        deriv_1_cross = 1.0 if (deriv_1_diff_now == 0.0 or (deriv_1_diff_now * deriv_1_diff_prev) < 0.0) else 0.0
+        deriv_1_cross_positive = 1.0 if (deriv_1_cross > 0.0 and deriv_1_diff_now >= 0.0) else 0.0
+        deriv_1_cross_negative = 1.0 if (deriv_1_cross > 0.0 and deriv_1_diff_now <= 0.0) else 0.0
+        deriv_2_diff_now = ema_derivative_2_diff[i]
+        deriv_2_diff_prev = ema_derivative_2_diff[i - 1]
+        deriv_2_cross = 1.0 if (deriv_2_diff_now == 0.0 or (deriv_2_diff_now * deriv_2_diff_prev) < 0.0) else 0.0
+        deriv_2_cross_positive = 1.0 if (deriv_2_cross > 0.0 and deriv_2_diff_now >= 0.0) else 0.0
+        deriv_2_cross_negative = 1.0 if (deriv_2_cross > 0.0 and deriv_2_diff_now <= 0.0) else 0.0
+        deriv_3_diff_now = ema_derivative_3_diff[i]
+        deriv_3_diff_prev = ema_derivative_3_diff[i - 1]
+        deriv_3_cross = 1.0 if (deriv_3_diff_now == 0.0 or (deriv_3_diff_now * deriv_3_diff_prev) < 0.0) else 0.0
+        deriv_3_cross_positive = 1.0 if (deriv_3_cross > 0.0 and deriv_3_diff_now >= 0.0) else 0.0
+        deriv_3_cross_negative = 1.0 if (deriv_3_cross > 0.0 and deriv_3_diff_now <= 0.0) else 0.0
         rows.append(
             {
                 "stoch_rsi": stoch_rsi[i],
@@ -171,6 +189,18 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "ema26_derivative_1": ema26_derivative_1[i],
                 "ema26_derivative_2": ema26_derivative_2[i],
                 "ema26_derivative_3": ema26_derivative_3[i],
+                "ema_derivative_1_diff": deriv_1_diff_now,
+                "ema_derivative_2_diff": deriv_2_diff_now,
+                "ema_derivative_3_diff": deriv_3_diff_now,
+                "ema_derivative_1_cross": deriv_1_cross,
+                "ema_derivative_1_cross_positive": deriv_1_cross_positive,
+                "ema_derivative_1_cross_negative": deriv_1_cross_negative,
+                "ema_derivative_2_cross": deriv_2_cross,
+                "ema_derivative_2_cross_positive": deriv_2_cross_positive,
+                "ema_derivative_2_cross_negative": deriv_2_cross_negative,
+                "ema_derivative_3_cross": deriv_3_cross,
+                "ema_derivative_3_cross_positive": deriv_3_cross_positive,
+                "ema_derivative_3_cross_negative": deriv_3_cross_negative,
                 "ret_1": close_returns[i],
                 "ret_3": ((closes[i] / closes[i - 3]) - 1.0) if closes[i - 3] != 0 else 0.0,
                 "ret_5": ((closes[i] / closes[i - 5]) - 1.0) if (i >= 5 and closes[i - 5] != 0) else 0.0,

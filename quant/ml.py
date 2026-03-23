@@ -109,7 +109,7 @@ class LogisticRegressionGD:
 
 
 SplitStyle = Literal["shuffled", "chronological"]
-FeatureSet = Literal["feature2", "new", "legacy", "derivative"]
+FeatureSet = Literal["feature2", "new", "legacy", "derivative", "derivative2"]
 
 
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
@@ -167,6 +167,8 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
     value = feature_set.strip().lower()
     if value in ("feature2", "v2", "new2", "default"):
         return "feature2"
+    if value in ("derivative2", "derivatives2", "derivate2", "deriv2", "ema-derivative2"):
+        return "derivative2"
     if value in ("derivative", "derivatives", "deriv", "ema-derivative"):
         return "derivative"
     if value in ("legacy", "old"):
@@ -265,10 +267,32 @@ def build_derivative_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_derivative2_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = build_derivative_strategy_features()
+    builder.add("ema_derivative_1_diff", lambda r: g(r, "ema_derivative_1_diff"))
+    builder.add("ema_derivative_2_diff", lambda r: g(r, "ema_derivative_2_diff"))
+    builder.add("ema_derivative_3_diff", lambda r: g(r, "ema_derivative_3_diff"))
+    builder.add("ema_derivative_1_cross", lambda r: g(r, "ema_derivative_1_cross"))
+    builder.add("ema_derivative_1_cross_positive", lambda r: g(r, "ema_derivative_1_cross_positive"))
+    builder.add("ema_derivative_1_cross_negative", lambda r: g(r, "ema_derivative_1_cross_negative"))
+    builder.add("ema_derivative_2_cross", lambda r: g(r, "ema_derivative_2_cross"))
+    builder.add("ema_derivative_2_cross_positive", lambda r: g(r, "ema_derivative_2_cross_positive"))
+    builder.add("ema_derivative_2_cross_negative", lambda r: g(r, "ema_derivative_2_cross_negative"))
+    builder.add("ema_derivative_3_cross", lambda r: g(r, "ema_derivative_3_cross"))
+    builder.add("ema_derivative_3_cross_positive", lambda r: g(r, "ema_derivative_3_cross_positive"))
+    builder.add("ema_derivative_3_cross_negative", lambda r: g(r, "ema_derivative_3_cross_negative"))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
         return build_legacy_strategy_features()
+    if normalized == "derivative2":
+        return build_derivative2_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -283,6 +307,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
     names = bundle.get("feature_names", [])
     if isinstance(names, list) and "stoch_extreme" in names:
         return "legacy"
+    if isinstance(names, list) and "ema_derivative_3_diff" in names:
+        return "derivative2"
     if isinstance(names, list) and "ema9_derivative_3" in names:
         return "derivative"
     if isinstance(names, list) and "macd_delta" in names and "oversold_reversal" not in names:
