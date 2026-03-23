@@ -111,19 +111,22 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
             abs_ret_window.pop(0)
         atr_frac.append(sum(abs_ret_window) / len(abs_ret_window))
     rows: List[Row] = []
-    for i in range(2, n - 1):
-        bullish_gap = max(0.0, lows[i] - highs[i - 2])
-        bearish_gap = max(0.0, lows[i - 2] - highs[i])
+    # Build each row at index i using only information available by candle close i.
+    # We intentionally lag FVG features one bar so "first touch/dip" is observable at i
+    # without peeking into i+1.
+    for i in range(3, n - 1):
+        prev_bullish_gap = max(0.0, lows[i - 1] - highs[i - 3])
+        prev_bearish_gap = max(0.0, lows[i - 3] - highs[i - 1])
         rows.append(
             {
                 "stoch_rsi": stoch_rsi[i],
                 "macd_hist": macd_hist[i],
                 "macd_hist_delta": macd_hist_delta[i],
-                "fvg_green_size": bullish_gap,
-                "fvg_red_size": bearish_gap,
-                "fvg_red_above_green": 1.0 if bearish_gap > 0 else 0.0,
-                "first_green_fvg_dip": 1.0 if (bullish_gap > 0 and lows[i + 1] <= highs[i - 2]) else 0.0,
-                "first_red_fvg_touch": 1.0 if (bearish_gap > 0 and highs[i + 1] >= lows[i - 2]) else 0.0,
+                "fvg_green_size": prev_bullish_gap,
+                "fvg_red_size": prev_bearish_gap,
+                "fvg_red_above_green": 1.0 if prev_bearish_gap > 0 else 0.0,
+                "first_green_fvg_dip": 1.0 if (prev_bullish_gap > 0 and lows[i] <= highs[i - 3]) else 0.0,
+                "first_red_fvg_touch": 1.0 if (prev_bearish_gap > 0 and highs[i] >= lows[i - 3]) else 0.0,
                 "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
                 "close": closes[i],
                 "atr_frac": atr_frac[i],
