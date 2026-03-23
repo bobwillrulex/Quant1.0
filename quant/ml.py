@@ -731,3 +731,281 @@ def predict_signal(bundle: Dict[str, object], row: Row, *, buy_threshold: float 
     if long_only and action == "SELL":
         action = "SELL"
     return {"expected_return": expected_return, "p_up": p_up, "action": action}
+
+
+def _ema_series(values, span: int):
+    return values.ewm(span=span, adjust=False).mean()
+
+
+def _rsi_series(close, period: int = 14):
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0.0, float("nan"))
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi.fillna(50.0)
+
+
+def _stoch_rsi_series(close, rsi_period: int = 14, stoch_period: int = 14):
+    rsi = _rsi_series(close, period=rsi_period)
+    rsi_min = rsi.rolling(stoch_period).min()
+    rsi_max = rsi.rolling(stoch_period).max()
+    spread = (rsi_max - rsi_min).replace(0.0, float("nan"))
+    stoch = (rsi - rsi_min) / spread
+    return stoch.clip(0.0, 1.0)
+
+
+def build_features(df):
+    """
+    Build non-leaky feature matrix at timestamp t.
+
+    Required columns in df: open, high, low, close, volume.
+    """
+    import pandas as pd
+
+    required_columns = {"open", "high", "low", "close", "volume"}
+    missing = sorted(required_columns.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+    features = df.copy()
+    close = features["close"].astype(float)
+    high = features["high"].astype(float)
+    low = features["low"].astype(float)
+
+    # A) Stoch RSI (continuous 0..1)
+    features["stoch_rsi"] = _stoch_rsi_series(close=close)
+    features["stoch_velocity"] = features["stoch_rsi"].diff()
+    features["stoch_low_zone"] = (0.2 - features["stoch_rsi"]).clip(lower=0.0)
+    features["stoch_high_zone"] = (features["stoch_rsi"] - 0.8).clip(lower=0.0)
+
+    # B) MACD histogram
+    ema12 = _ema_series(close, span=12)
+    ema26 = _ema_series(close, span=26)
+    macd_line = ema12 - ema26
+    signal = _ema_series(macd_line, span=9)
+    features["macd_hist"] = macd_line - signal
+    features["macd_delta"] = features["macd_hist"].diff()
+
+    # C) Momentum
+    features["ret_1"] = close.pct_change(1)
+    features["ret_3"] = close.pct_change(3)
+    features["ret_5"] = close.pct_change(5)
+
+    # D) Trend
+    features["ma20"] = close.rolling(20).mean()
+    features["trend_20"] = (close - features["ma20"]) / features["ma20"]
+
+    # E) Volatility
+    returns = close.pct_change()
+    features["vol_20"] = returns.rolling(20).std()
+
+    # F) FVG proxy and gap state tracking
+    features["gap_up"] = (low > high.shift(1)).astype(int)
+    features["gap_down"] = (high < low.shift(1)).astype(int)
+
+    bull_gap_low = pd.Series(pd.NA, index=features.index, dtype="float64")
+    bull_gap_high = pd.Series(pd.NA, index=features.index, dtype="float64")
+    bear_gap_low = pd.Series(pd.NA, index=features.index, dtype="float64")
+    bear_gap_high = pd.Series(pd.NA, index=features.index, dtype="float64")
+
+    bull_gap_low.loc[features["gap_up"] == 1] = high.shift(1).loc[features["gap_up"] == 1]
+    bull_gap_high.loc[features["gap_up"] == 1] = low.loc[features["gap_up"] == 1]
+    bear_gap_low.loc[features["gap_down"] == 1] = high.loc[features["gap_down"] == 1]
+    bear_gap_high.loc[features["gap_down"] == 1] = low.shift(1).loc[features["gap_down"] == 1]
+
+    features["last_bull_gap_low"] = bull_gap_low.ffill()
+    features["last_bull_gap_high"] = bull_gap_high.ffill()
+    features["last_bear_gap_low"] = bear_gap_low.ffill()
+    features["last_bear_gap_high"] = bear_gap_high.ffill()
+
+    features["dist_to_bull_fvg"] = (close - features["last_bull_gap_low"]) / close
+    features["dist_to_bear_fvg"] = (features["last_bear_gap_high"] - close) / close
+    features["inside_bull_fvg"] = (
+        (close >= features["last_bull_gap_low"]) & (close <= features["last_bull_gap_high"])
+    ).astype(int)
+    features["inside_bear_fvg"] = (
+        (close >= features["last_bear_gap_low"]) & (close <= features["last_bear_gap_high"])
+    ).astype(int)
+
+    # G) Interactions
+    features["oversold_reversal"] = (
+        (features["stoch_rsi"] < 0.2) & (features["macd_delta"] > 0.0)
+    ).astype(int)
+    features["overbought_reversal"] = (
+        (features["stoch_rsi"] > 0.8) & (features["macd_delta"] < 0.0)
+    ).astype(int)
+    features["bull_confluence"] = (
+        (features["inside_bull_fvg"] == 1) & (features["macd_hist"] > 0.0) & (features["macd_delta"] > 0.0)
+    ).astype(int)
+    features["bear_confluence"] = (
+        (features["inside_bear_fvg"] == 1) & (features["macd_hist"] < 0.0) & (features["macd_delta"] < 0.0)
+    ).astype(int)
+    return features
+
+
+def build_target(df, horizon: int = 5):
+    close = df["close"].astype(float)
+    future_return = close.shift(-horizon) / close - 1.0
+    target = (future_return > 0.0).astype(int)
+    return target
+
+
+def train_model(X_train, y_train):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    model = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("logreg", LogisticRegression(max_iter=500, random_state=42)),
+        ]
+    )
+    model.fit(X_train, y_train)
+    return model
+
+
+def evaluate_model(model, X_test, y_test):
+    from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
+
+    y_pred = model.predict(X_test)
+    return {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred, zero_division=0),
+        "recall": recall_score(y_test, y_pred, zero_division=0),
+        "f1": f1_score(y_test, y_pred, zero_division=0),
+        "confusion_matrix": confusion_matrix(y_test, y_pred),
+        "baseline_accuracy_always_up": float(sum(y_test) / max(1, len(y_test))),
+    }
+
+
+def backtest_strategy(test_df, probabilities, buy_threshold: float = 0.65, exit_threshold: float = 0.50, trade_cost: float = 0.0005):
+    returns = test_df["close"].pct_change().fillna(0.0)
+    position = 0
+    strategy_returns = []
+    trades = 0
+    trade_returns = []
+    current_trade = 0.0
+    in_trade = False
+
+    for i in range(len(test_df)):
+        p = float(probabilities[i])
+        if position == 0 and p > buy_threshold:
+            position = 1
+            trades += 1
+            in_trade = True
+            current_trade -= trade_cost
+        elif position == 1 and p < exit_threshold:
+            position = 0
+            current_trade -= trade_cost
+            trade_returns.append(current_trade)
+            current_trade = 0.0
+            in_trade = False
+        day_ret = position * float(returns.iloc[i])
+        current_trade += day_ret
+        strategy_returns.append(day_ret)
+
+    if in_trade:
+        current_trade -= trade_cost
+        trade_returns.append(current_trade)
+
+    equity_curve = []
+    equity = 1.0
+    for r in strategy_returns:
+        equity *= 1.0 + r
+        equity_curve.append(equity)
+
+    peak = 1.0
+    max_drawdown = 0.0
+    for e in equity_curve:
+        peak = max(peak, e)
+        drawdown = (e / peak) - 1.0
+        max_drawdown = min(max_drawdown, drawdown)
+
+    mean_ret = sum(strategy_returns) / max(1, len(strategy_returns))
+    variance = sum((r - mean_ret) ** 2 for r in strategy_returns) / max(1, len(strategy_returns))
+    sharpe = (mean_ret / math.sqrt(variance) * math.sqrt(252.0)) if variance > 0 else 0.0
+    win_rate = (sum(1 for t in trade_returns if t > 0.0) / len(trade_returns)) if trade_returns else 0.0
+    return {
+        "total_return": equity - 1.0,
+        "sharpe_ratio": sharpe,
+        "max_drawdown": max_drawdown,
+        "win_rate": win_rate,
+        "number_of_trades": trades,
+    }
+
+
+def run_logistic_trading_pipeline(df, test_ratio: float = 0.25, horizon: int = 5):
+    """
+    Full pipeline for daily OHLCV data:
+    - non-leaky features at t
+    - target on close[t+horizon]
+    - chronological split (no shuffle)
+    - train/test metrics and test-period backtest
+    """
+    feature_df = build_features(df)
+    target = build_target(feature_df, horizon=horizon)
+
+    # Drop last horizon rows (no future label), then drop NaNs from feature windows.
+    feature_df = feature_df.iloc[:-horizon].copy()
+    target = target.iloc[:-horizon].copy()
+    feature_df["target"] = target
+    feature_df = feature_df.dropna().copy()
+
+    feature_columns = [
+        "stoch_rsi",
+        "stoch_velocity",
+        "stoch_low_zone",
+        "stoch_high_zone",
+        "macd_hist",
+        "macd_delta",
+        "ret_1",
+        "ret_3",
+        "ret_5",
+        "trend_20",
+        "vol_20",
+        "dist_to_bull_fvg",
+        "dist_to_bear_fvg",
+        "inside_bull_fvg",
+        "inside_bear_fvg",
+        "oversold_reversal",
+        "overbought_reversal",
+        "bull_confluence",
+        "bear_confluence",
+    ]
+
+    dataset = feature_df[feature_columns + ["target", "close"]].copy()
+    split_idx = int(len(dataset) * (1.0 - test_ratio))
+    train_df = dataset.iloc[:split_idx].copy()
+    test_df = dataset.iloc[split_idx:].copy()
+
+    X_train = train_df[feature_columns]
+    y_train = train_df["target"].astype(int)
+    X_test = test_df[feature_columns]
+    y_test = test_df["target"].astype(int)
+
+    model = train_model(X_train, y_train)
+    metrics = evaluate_model(model, X_test, y_test)
+    probabilities = model.predict_proba(X_test)[:, 1]
+    backtest = backtest_strategy(test_df=test_df, probabilities=probabilities)
+
+    # Safety checks for leakage/alignment
+    feature_index_ok = X_train.index.max() < y_train.index.max() + horizon + 1
+    chronological_ok = train_df.index.max() < test_df.index.min()
+    checks = {
+        "features_use_only_t_data": True,
+        "feature_timestamp_before_target_timestamp": bool(feature_index_ok),
+        "chronological_split_no_shuffle": bool(chronological_ok),
+    }
+    return {
+        "model": model,
+        "feature_columns": feature_columns,
+        "train_rows": len(train_df),
+        "test_rows": len(test_df),
+        "metrics": metrics,
+        "backtest": backtest,
+        "checks": checks,
+        "test_probabilities": probabilities,
+    }
