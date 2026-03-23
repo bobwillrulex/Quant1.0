@@ -581,7 +581,7 @@ def create_app() -> "Flask":
               .models-table {{ width: 100%; border-collapse: collapse; }}
               .models-table thead th {{ background: {theme_panel2}; color: {theme_table_head}; padding: 0.6rem; font-size: 0.9rem; letter-spacing: 0.01em; }}
               .model-row {{ cursor: pointer; }}
-              .model-row td {{ padding: 0.62rem 0.6rem; }}
+              .model-row td {{ padding: 0.62rem 0.6rem; color: var(--text); }}
               .models-table tbody tr.model-row:nth-child(4n+1),
               .models-table tbody tr.model-row:nth-child(4n+2) {{ background: {theme_surface}; }}
               .models-table tbody tr.model-row:nth-child(4n+3),
@@ -591,6 +591,7 @@ def create_app() -> "Flask":
               table {{ width: 100%; border-collapse: collapse; }}
               th, td {{ border-bottom: 1px solid var(--border); padding: 0.45rem 0.35rem; text-align: left; }}
               th {{ color: {theme_table_head}; }}
+              td {{ color: var(--text); }}
               a, button {{ color: inherit; }}
               .btn-link {{ display: inline-block; margin-bottom: 0.8rem; color: {theme_link}; text-decoration: none; }}
               #contextMenu {{ position: fixed; display: none; z-index: 40; min-width: 170px; background: {theme_context_bg}; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 30px rgba(0,0,0,{'0.18' if is_spot else '0.45'}); }}
@@ -1673,6 +1674,7 @@ def create_app() -> "Flask":
                 padding: 0.45rem 0.35rem;
               }}
               th {{ color: {theme_table_head}; font-weight: 600; }}
+              td {{ color: var(--text); }}
               pre {{
                 white-space: pre-wrap;
                 background: {theme_surface};
