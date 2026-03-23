@@ -31,3 +31,38 @@ def test_derivative_feature_set_is_supported() -> None:
         "ema26_derivative_3",
     }
     assert expected.issubset(set(names))
+
+
+def test_derivative2_feature_set_is_supported() -> None:
+    assert normalize_feature_set("derivate2") == "derivative2"
+    builder = get_strategy_feature_builder("derivative2")
+    names = builder.names()
+    expected = {
+        "macd_hist",
+        "macd_hist_delta",
+        "macd_green_increasing",
+        "macd_red_recovering",
+        "macd_green_fading",
+        "macd_red_deepening",
+        "ema9",
+        "ema26",
+        "ema9_derivative_1",
+        "ema9_derivative_2",
+        "ema9_derivative_3",
+        "ema26_derivative_1",
+        "ema26_derivative_2",
+        "ema26_derivative_3",
+        "ema_derivative_1_diff",
+        "ema_derivative_2_diff",
+        "ema_derivative_3_diff",
+        "ema_derivative_1_cross",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+        "ema_derivative_2_cross",
+        "ema_derivative_2_cross_positive",
+        "ema_derivative_2_cross_negative",
+        "ema_derivative_3_cross",
+        "ema_derivative_3_cross_positive",
+        "ema_derivative_3_cross_negative",
+    }
+    assert expected.issubset(set(names))
