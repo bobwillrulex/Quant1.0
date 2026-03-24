@@ -968,6 +968,7 @@ def create_app() -> "Flask":
         rows = request.form.get("rows", "250")
         split_style = request.form.get("split_style", "shuffled")
         feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
+        dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
         buy_threshold_raw = request.form.get("buy_threshold", "").strip()
         sell_threshold_raw = request.form.get("sell_threshold", "").strip()
         model_name = request.form.get("model_name", "").strip()
@@ -1063,6 +1064,7 @@ def create_app() -> "Flask":
                             stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                             fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
                             data_provider = str(form_state.get("data_provider", data_provider)).strip().lower()
+                            dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
                     elif eval_action == "open":
                         snapshot_id = int(request.form.get("evaluation_id", "0"))
                         snapshot = load_evaluation_snapshot(mode_key, snapshot_id)
@@ -1085,6 +1087,7 @@ def create_app() -> "Flask":
                         model_name = str(form_state.get("model_name", model_name))
                         stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                         fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                        dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
                         message_html = (
                             f"<p style='color:#7bd88f;'><strong>Loaded saved evaluation:</strong> "
                             f"{escape(str(snapshot.get('name', 'Saved evaluation')))}</p>"
@@ -1114,8 +1117,11 @@ def create_app() -> "Flask":
                         provider_notices.append(provider_notice)
                     present_rows_used_note = "" if len(dataset) >= present_row_count else f"Only {len(dataset)} frames were available and used for this run."
                     latest_row = dataset[-1]
+                    present_dqn_episodes = int(dqn_episodes_raw or "120")
+                    if present_dqn_episodes < 1:
+                        raise ValueError("DQN episodes must be at least 1.")
                     if present_model == "__new__":
-                        bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
+                        bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=present_dqn_episodes)
                     else:
                         bundle = load_model_bundle(mode_key, present_model)
                     prediction = predict_signal(
@@ -1167,6 +1173,9 @@ def create_app() -> "Flask":
                     stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
+                    dqn_episodes = int(dqn_episodes_raw or "120")
+                    if dqn_episodes < 1:
+                        raise ValueError("DQN episodes must be at least 1.")
                     tickers = parse_csv_values(ticker, uppercase=True)
                     if not tickers:
                         raise ValueError("Please enter at least one ticker symbol.")
@@ -1191,7 +1200,7 @@ def create_app() -> "Flask":
                                 provider_notices.append(provider_notice)
                             if len(dataset) < row_count:
                                 multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
-                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
+                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
                             metrics = evaluate_bundle(
                                 bundle,
                                 bundle["x_test_raw"],
@@ -1288,7 +1297,7 @@ def create_app() -> "Flask":
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
                         else:
-                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set)
+                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
                             metrics = evaluate_bundle(
                                 bundle,
                                 bundle["x_test_raw"],
@@ -1543,6 +1552,7 @@ def create_app() -> "Flask":
                                 "stop_loss_strategy": stop_loss_strategy_raw,
                                 "fixed_stop_pct": fixed_stop_pct_raw,
                                 "data_provider": data_provider,
+                                "dqn_episodes": dqn_episodes_raw,
                             },
                             "result_html": result_html,
                         }
@@ -1935,6 +1945,9 @@ def create_app() -> "Flask":
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
               </label>
+              <label id="dqnEpisodesWrap">DQN Episodes:
+                <input type="number" min="1" step="1" name="dqn_episodes" value="{dqn_episodes_raw}" />
+              </label>
               <label>Saved Model:
                 <select name="selected_model">
                   <option value="__new__">Train new model</option>
@@ -2171,14 +2184,20 @@ def create_app() -> "Flask":
                   const submitter = evt.submitter;
                   const action = submitter?.value || "";
 
-                  if (mode === "train" && action === "train") {{
+                  if (mode === "train" && (action === "train" || action === "evaluate")) {{
                     const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
-                    const seconds = Math.min(95, Math.max(12, Math.round(rows / 7)));
-                    showLoading("Downloading data and training model...", seconds);
-                  }} else if (mode === "train" && action === "evaluate") {{
-                    const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
-                    const seconds = Math.min(70, Math.max(8, Math.round(rows / 10)));
-                    showLoading("Downloading data and evaluating model...", seconds);
+                    const featureSet = form.querySelector('select[name="feature_set"]')?.value || "feature2";
+                    const dqnEpisodes = Number(form.querySelector('input[name="dqn_episodes"]')?.value || "120");
+                    const isDqn = featureSet === "dqn";
+                    const seconds = isDqn
+                      ? Math.min(3600, Math.max(45, Math.round((rows / 8) + (dqnEpisodes * 4.5))))
+                      : (action === "train"
+                        ? Math.min(95, Math.max(12, Math.round(rows / 7)))
+                        : Math.min(70, Math.max(8, Math.round(rows / 10))));
+                    const title = action === "train"
+                      ? "Downloading data and training model..."
+                      : "Downloading data and evaluating model...";
+                    showLoading(title, seconds);
                   }} else if (mode === "present_all") {{
                     const modelCount = Math.max(1, document.querySelectorAll('table tr').length - 1);
                     const seconds = Math.min(120, Math.max(10, modelCount * 8));
@@ -2187,6 +2206,8 @@ def create_app() -> "Flask":
                 }});
               }});
 
+              const featureSetEl = document.querySelector('select[name="feature_set"]');
+              const dqnEpisodesWrapEl = document.getElementById("dqnEpisodesWrap");
               const stopLossStrategyEl = document.getElementById("stopLossStrategy");
               const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
               const runAllTable = document.getElementById("runAllTable");
@@ -2262,6 +2283,23 @@ def create_app() -> "Flask":
               if (stopLossStrategyEl) {{
                 stopLossStrategyEl.addEventListener("change", toggleFixedStopField);
                 toggleFixedStopField();
+              }}
+
+              function toggleDqnEpisodesField() {{
+                if (!featureSetEl || !dqnEpisodesWrapEl) return;
+                const episodesInput = dqnEpisodesWrapEl.querySelector('input[name="dqn_episodes"]');
+                const isDqn = featureSetEl.value === "dqn";
+                dqnEpisodesWrapEl.style.display = isDqn ? "block" : "none";
+                if (episodesInput) {{
+                  episodesInput.disabled = !isDqn;
+                  if (!isDqn) {{
+                    episodesInput.setCustomValidity("");
+                  }}
+                }}
+              }}
+              if (featureSetEl) {{
+                featureSetEl.addEventListener("change", toggleDqnEpisodesField);
+                toggleDqnEpisodesField();
               }}
               const presentStopLossStrategyEl = document.getElementById("presentStopLossStrategy");
               const presentFixedStopLossWrapEl = document.getElementById("presentFixedStopLossWrap");
