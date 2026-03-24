@@ -173,7 +173,27 @@ def save_model_bundle(mode: str, model_name: str, bundle: Dict[str, object]) -> 
     if not safe_name:
         raise ValueError("Model name must include letters or numbers.")
     path = Path(mode_model_dir(mode)) / f"{safe_name}.json"
-    payload = {k: bundle[k] for k in ["feature_names", "feature_set", "means", "stds", "lin_weights", "lin_bias", "logit_weights", "logit_bias"] if k in bundle}
+    payload = {
+        k: bundle[k]
+        for k in [
+            "feature_names",
+            "feature_set",
+            "model_type",
+            "means",
+            "stds",
+            "lin_weights",
+            "lin_bias",
+            "logit_weights",
+            "logit_bias",
+            "dqn_state_dict",
+            "dqn_state_size",
+            "dqn_action_size",
+            "dqn_action_returns",
+            "dqn_last_epsilon",
+            "dqn_episode_rewards",
+        ]
+        if k in bundle
+    }
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     return str(path)

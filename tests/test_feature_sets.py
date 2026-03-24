@@ -76,3 +76,10 @@ def test_derivative2_feature_set_is_supported() -> None:
         "ema_derivative_3_cross_negative",
     }
     assert expected.issubset(set(names))
+
+
+def test_dqn_feature_set_is_supported() -> None:
+    assert normalize_feature_set("dqn") == "dqn"
+    dqn_builder = get_strategy_feature_builder("dqn")
+    base_builder = get_strategy_feature_builder("feature2")
+    assert dqn_builder.names() == base_builder.names()

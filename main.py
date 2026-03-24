@@ -1927,6 +1927,7 @@ def create_app() -> "Flask":
               <label>Feature Pipeline:
                 <select name="feature_set">
                   <option value="feature2" {"selected" if feature_set == "feature2" else ""}>Feature 2 (default)</option>
+                  <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="derivative" {"selected" if feature_set == "derivative" else ""}>Derivative set</option>
                   <option value="derivative2" {"selected" if feature_set == "derivative2" else ""}>Derivatives 2 set</option>
@@ -2374,7 +2375,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feature-set",
-        choices=["feature2", "fvg2", "derivative", "derivative2", "new", "legacy"],
+        choices=["feature2", "dqn", "fvg2", "derivative", "derivative2", "new", "legacy"],
         default="feature2",
         help="Feature pipeline to use for CLI training/evaluation. Default: feature2.",
     )
