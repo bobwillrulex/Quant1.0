@@ -30,7 +30,7 @@ class StrategyFeatureBuilder:
         return matrix
 
 
-FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "derivative", "derivative2"]
+FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "derivative", "derivative2", "dqn"]
 
 
 def normalize_feature_set(feature_set: str) -> FeatureSet:
@@ -41,6 +41,8 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "derivative2"
     if value in ("derivative", "derivatives", "deriv", "ema-derivative"):
         return "derivative"
+    if value in ("dqn", "deep-q", "deep_q"):
+        return "dqn"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("legacy", "old"):
@@ -190,6 +192,8 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
+        return build_feature2_strategy_features()
+    if normalized == "dqn":
         return build_feature2_strategy_features()
     return build_default_strategy_features()
 

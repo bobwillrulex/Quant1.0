@@ -164,6 +164,245 @@ def standardize_apply(x: Sequence[Sequence[float]], means: Sequence[float], stds
     return [[(row[j] - means[j]) / stds[j] for j in range(len(row))] for row in x]
 
 
+def _softmax(values: Sequence[float]) -> List[float]:
+    if not values:
+        return []
+    max_val = max(values)
+    exps = [math.exp(v - max_val) for v in values]
+    denom = sum(exps) or 1.0
+    return [val / denom for val in exps]
+
+
+def _torch():
+    try:
+        import torch
+        import torch.nn as nn
+        import torch.optim as optim
+    except ModuleNotFoundError as exc:
+        raise ValueError("DQN requires PyTorch. Install it first (e.g. `pip install torch`).") from exc
+
+    return torch, nn, optim
+
+
+class _DQNPolicyNetwork:
+    def __init__(self, state_size: int, action_size: int) -> None:
+        torch, nn, _ = _torch()
+        self.module = nn.Sequential(
+            nn.Linear(state_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, action_size),
+        )
+        self.torch = torch
+
+    def to(self, device):
+        self.module = self.module.to(device)
+        return self
+
+
+class _ReplayBuffer:
+    def __init__(self, capacity: int = 10000) -> None:
+        from collections import deque
+
+        self.memory = deque(maxlen=capacity)
+
+    def push(self, *args) -> None:
+        self.memory.append(args)
+
+    def sample(self, batch_size: int):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self) -> int:
+        return len(self.memory)
+
+
+class _TradingEnv:
+    def __init__(
+        self,
+        rows: Sequence[Row],
+        features: StrategyFeatureBuilder,
+        means: Sequence[float],
+        stds: Sequence[float],
+        lot_size: float = 0.001,
+        start_balance: float = 1000.0,
+        window: int = 6000,
+        fee: float = 0.004,
+    ) -> None:
+        self.rows = list(rows[-window:])
+        self.features = features
+        self.means = list(means)
+        self.stds = list(stds)
+        self.lot_size = lot_size
+        self.start_balance = start_balance
+        self.fee = fee
+        self.reset()
+
+    def reset(self) -> List[float]:
+        self.t = 0
+        self.balance = self.start_balance
+        self.holding_num = 0.0
+        self.done = False
+        return self._get_state()
+
+    def _feature_vector(self, row: Row) -> List[float]:
+        values = self.features.transform([row])[0]
+        return [(values[i] - self.means[i]) / self.stds[i] for i in range(len(values))]
+
+    def _get_state(self) -> List[float]:
+        row = self.rows[self.t]
+        feature_values = self._feature_vector(row)
+        return [
+            *feature_values,
+            self.holding_num / max(1e-12, self.lot_size),
+            self.balance / max(1e-12, self.start_balance),
+        ]
+
+    def step(self, action: int) -> Tuple[List[float], float, bool]:
+        row = self.rows[self.t]
+        price = float(row.get("close", 0.0))
+        old_value = self.balance + (self.holding_num * price)
+        reward = 0.0
+        if action == 1:
+            if self.holding_num == 0.0:
+                cost = price * self.lot_size
+                total_cost = cost * (1.0 + self.fee)
+                if self.balance >= total_cost:
+                    self.balance -= total_cost
+                    self.holding_num = self.lot_size
+                else:
+                    reward = -0.0002
+            else:
+                reward = -0.0002
+        elif action == 2:
+            if self.holding_num > 0.0:
+                revenue = price * self.lot_size
+                net_revenue = revenue * (1.0 - self.fee)
+                self.balance += net_revenue
+                self.holding_num = 0.0
+            else:
+                reward = -0.0002
+
+        self.t += 1
+        self.done = self.t >= len(self.rows) - 1
+        if self.done:
+            return self._get_state(), reward, self.done
+        new_price = float(self.rows[self.t].get("close", 0.0))
+        new_value = self.balance + (self.holding_num * new_price)
+        safe_old = old_value if old_value > 1e-12 else 1e-12
+        safe_new = new_value if new_value > 1e-12 else 1e-12
+        reward += math.log(safe_new / safe_old)
+        return self._get_state(), reward, self.done
+
+
+def _serialize_state_dict(state_dict: Dict[str, object]) -> Dict[str, object]:
+    serialized: Dict[str, object] = {}
+    for key, tensor in state_dict.items():
+        serialized[key] = tensor.detach().cpu().tolist()
+    return serialized
+
+
+def _load_state_dict_from_json(model, state_dict_json: Dict[str, object]) -> None:
+    torch, _, _ = _torch()
+    state_dict = model.state_dict()
+    converted = {}
+    for key, value in state_dict_json.items():
+        if key in state_dict:
+            converted[key] = torch.tensor(value, dtype=state_dict[key].dtype)
+    state_dict.update(converted)
+    model.load_state_dict(state_dict)
+
+
+def _dqn_q_values(bundle: Dict[str, object], state_vector: Sequence[float]) -> List[float]:
+    if "dqn_state_dict" not in bundle:
+        return [0.0, 0.0, 0.0]
+    torch, _, _ = _torch()
+    state_size = int(bundle.get("dqn_state_size", len(state_vector)))
+    action_size = int(bundle.get("dqn_action_size", 3))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net = _DQNPolicyNetwork(state_size=state_size, action_size=action_size).to(device)
+    _load_state_dict_from_json(net.module, bundle["dqn_state_dict"])
+    net.module.eval()
+    with torch.no_grad():
+        state_t = torch.tensor(state_vector, dtype=torch.float32, device=device).unsqueeze(0)
+        return net.module(state_t).squeeze(0).detach().cpu().tolist()
+
+
+def _train_dqn_policy(
+    train_rows: Sequence[Row],
+    features: StrategyFeatureBuilder,
+    means: Sequence[float],
+    stds: Sequence[float],
+    *,
+    episodes: int = 120,
+    gamma: float = 0.95,
+    learning_rate: float = 1e-3,
+    epsilon_decay: float = 0.995,
+    epsilon_min: float = 0.01,
+) -> Tuple[Dict[str, object], List[float], List[float], List[float]]:
+    torch, nn, optim = _torch()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    env = _TradingEnv(train_rows, features=features, means=means, stds=stds)
+    state_size = len(env.reset())
+    action_size = 3
+    policy = _DQNPolicyNetwork(state_size, action_size).to(device).module
+    optimizer = optim.Adam(policy.parameters(), lr=learning_rate)
+    loss_fn = nn.MSELoss()
+    memory = _ReplayBuffer(20000)
+    batch_size = 64
+    epsilon = 1.0
+    episode_rewards: List[float] = []
+    action_returns = [0.0, 0.0, 0.0]
+    action_counts = [0.0, 0.0, 0.0]
+
+    for _ in range(episodes):
+        state = env.reset()
+        total_reward = 0.0
+        while not env.done:
+            if np.random.rand() < epsilon:
+                action = int(np.random.randint(action_size))
+            else:
+                with torch.no_grad():
+                    state_t = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+                    action = int(torch.argmax(policy(state_t)).item())
+            next_state, reward, done = env.step(action)
+            action_returns[action] += reward
+            action_counts[action] += 1.0
+            memory.push(state, action, reward, next_state, done)
+            state = next_state
+            total_reward += reward
+            if len(memory) > batch_size:
+                transitions = memory.sample(batch_size)
+                b_states = torch.tensor(np.array([t[0] for t in transitions]), dtype=torch.float32, device=device)
+                b_actions = torch.tensor([t[1] for t in transitions], dtype=torch.long, device=device)
+                b_rewards = torch.tensor([t[2] for t in transitions], dtype=torch.float32, device=device)
+                b_next_states = torch.tensor(np.array([t[3] for t in transitions]), dtype=torch.float32, device=device)
+                b_dones = torch.tensor([t[4] for t in transitions], dtype=torch.float32, device=device)
+                current_q = policy(b_states).gather(1, b_actions.unsqueeze(1)).squeeze(1)
+                with torch.no_grad():
+                    max_next_q = policy(b_next_states).max(1)[0]
+                    target_q = b_rewards + (gamma * max_next_q * (1 - b_dones))
+                loss = loss_fn(current_q, target_q)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+        episode_rewards.append(total_reward)
+        if epsilon > epsilon_min:
+            epsilon = max(epsilon_min, epsilon * epsilon_decay)
+
+    avg_action_returns = [action_returns[idx] / action_counts[idx] if action_counts[idx] else 0.0 for idx in range(action_size)]
+    return (
+        _serialize_state_dict(policy.state_dict()),
+        avg_action_returns,
+        [float(epsilon)],
+        episode_rewards,
+    )
+
+
 def parse_thresholds(buy_raw: str, sell_raw: str, *, default_buy: float = 0.6, default_sell: float = 0.4) -> Tuple[float, float]:
     buy_text = buy_raw.strip()
     sell_text = sell_raw.strip()
@@ -185,6 +424,37 @@ def train_strategy_models(rows: Sequence[Row], split_style: SplitStyle = "shuffl
     y_test_ret = [r["return_next"] for r in test_rows]
     y_train_dir = [1 if r > 0 else 0 for r in y_train_ret]
     y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
+    if resolved_feature_set == "dqn":
+        dqn_state_dict, action_returns, epsilon_tail, episode_rewards = _train_dqn_policy(
+            train_rows,
+            features=features,
+            means=means,
+            stds=stds,
+        )
+        state_size = len(features.names()) + 2
+        return {
+            "feature_names": features.names(),
+            "feature_set": resolved_feature_set,
+            "model_type": "dqn",
+            "means": means,
+            "stds": stds,
+            "dqn_state_dict": dqn_state_dict,
+            "dqn_state_size": state_size,
+            "dqn_action_size": 3,
+            "dqn_action_returns": action_returns,
+            "dqn_last_epsilon": epsilon_tail[0] if epsilon_tail else 0.0,
+            "dqn_episode_rewards": episode_rewards[-10:],
+            "lin_weights": [0.0] * len(features.names()),
+            "lin_bias": 0.0,
+            "logit_weights": [0.0] * len(features.names()),
+            "logit_bias": 0.0,
+            "train_size": len(train_rows),
+            "test_size": len(test_rows),
+            "split_style": split_style,
+            "x_test_raw": x_test_raw,
+            "y_test_ret": y_test_ret,
+            "y_test_dir": y_test_dir,
+        }
     lin = LinearRegressionGD(learning_rate=0.03, epochs=800)
     lin.fit(x_train, y_train_ret)
     logit = LogisticRegressionGD(learning_rate=0.05, epochs=700)
@@ -610,8 +880,23 @@ def evaluate_bundle(
     if len(x_test_raw[0]) != len(bundle["feature_names"]):
         raise ValueError("Saved model feature size does not match current strategy feature set.")
     x_test = standardize_apply(x_test_raw, bundle["means"], bundle["stds"])
-    ret_pred = [sum(w * v for w, v in zip(bundle["lin_weights"], row)) + bundle["lin_bias"] for row in x_test]
-    up_prob = [sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], row)) + bundle["logit_bias"]) for row in x_test]
+    is_dqn = str(bundle.get("model_type", "")).lower() == "dqn"
+    if is_dqn and "dqn_state_dict" in bundle:
+        action_returns = bundle.get("dqn_action_returns", [0.0, 0.0, 0.0])
+        ret_pred = []
+        up_prob = []
+        for row in x_test:
+            state_vector = [*row, 0.0, 1.0]
+            q_values = _dqn_q_values(bundle, state_vector)
+            action_prob = _softmax(q_values)
+            p_buy = action_prob[1] if len(action_prob) > 1 else 0.0
+            p_sell = action_prob[2] if len(action_prob) > 2 else 0.0
+            up_prob.append(max(0.0, min(1.0, p_buy + (0.5 * (1.0 - p_buy - p_sell)))))
+            expected = sum(action_prob[idx] * float(action_returns[idx]) for idx in range(min(3, len(action_prob))))
+            ret_pred.append(expected)
+    else:
+        ret_pred = [sum(w * v for w, v in zip(bundle["lin_weights"], row)) + bundle["lin_bias"] for row in x_test]
+        up_prob = [sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], row)) + bundle["logit_bias"]) for row in x_test]
     cls = classification_metrics(y_test_dir, up_prob)
     baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
     baseline_zero = [0.0] * len(y_test_ret)
@@ -701,8 +986,19 @@ def predict_signal(bundle: Dict[str, object], row: Row, *, buy_threshold: float 
     if len(row_features[0]) != len(bundle["feature_names"]):
         raise ValueError("Saved model feature size does not match current strategy feature set.")
     x_scaled = standardize_apply(row_features, bundle["means"], bundle["stds"])[0]
-    expected_return = sum(w * v for w, v in zip(bundle["lin_weights"], x_scaled)) + bundle["lin_bias"]
-    p_up = sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], x_scaled)) + bundle["logit_bias"])
+    is_dqn = str(bundle.get("model_type", "")).lower() == "dqn"
+    if is_dqn and "dqn_state_dict" in bundle:
+        state_vector = [*x_scaled, 0.0, 1.0]
+        q_values = _dqn_q_values(bundle, state_vector)
+        action_prob = _softmax(q_values)
+        action_returns = bundle.get("dqn_action_returns", [0.0, 0.0, 0.0])
+        expected_return = sum(action_prob[idx] * float(action_returns[idx]) for idx in range(min(3, len(action_prob))))
+        p_buy = action_prob[1] if len(action_prob) > 1 else 0.0
+        p_sell = action_prob[2] if len(action_prob) > 2 else 0.0
+        p_up = max(0.0, min(1.0, p_buy + (0.5 * (1.0 - p_buy - p_sell))))
+    else:
+        expected_return = sum(w * v for w, v in zip(bundle["lin_weights"], x_scaled)) + bundle["lin_bias"]
+        p_up = sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], x_scaled)) + bundle["logit_bias"])
     action = "HOLD"
     if p_up > buy_threshold:
         action = "BUY"
