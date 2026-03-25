@@ -30,7 +30,7 @@ class StrategyFeatureBuilder:
         return matrix
 
 
-FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "derivative", "derivative2", "dqn"]
+FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "fvg3", "derivative", "derivative2", "dqn"]
 
 
 def normalize_feature_set(feature_set: str) -> FeatureSet:
@@ -45,6 +45,8 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "dqn"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
+    if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
+        return "fvg3"
     if value in ("legacy", "old"):
         return "legacy"
     return "new"
@@ -75,6 +77,26 @@ def build_fvg2_strategy_features() -> StrategyFeatureBuilder:
     builder.add("stoch_extreme_20", lambda r: 1.0 if r["stoch_rsi"] < 20 else 0.0)
     builder.add("macd_hist", lambda r: r["macd_hist"])
     builder.add("macd_hist_delta", lambda r: r["macd_hist_delta"])
+    builder.add("macd_green_increasing", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] > 0) else 0.0)
+    builder.add("macd_red_recovering", lambda r: 1.0 if (r["macd_hist"] < 0 and r["macd_hist_delta"] > 0) else 0.0)
+    builder.add("macd_green_fading", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] < 0) else 0.0)
+    builder.add("macd_red_deepening", lambda r: 1.0 if (r["macd_hist"] < 0 and r["macd_hist_delta"] < 0) else 0.0)
+    builder.add("first_green_fvg_dip", lambda r: r["first_green_fvg_dip"])
+    builder.add("first_red_fvg_touch", lambda r: r["first_red_fvg_touch"])
+    builder.add("fvg_green_size", lambda r: min(r["fvg_green_size"], 3.0))
+    builder.add("fvg_red_size", lambda r: min(r["fvg_red_size"], 3.0))
+    builder.add("fvg_bull_signal", lambda r: r["first_green_fvg_dip"] * min(r["fvg_green_size"], 3.0))
+    builder.add("fvg_bear_signal", lambda r: r["first_red_fvg_touch"] * min(r["fvg_red_size"], 3.0))
+    builder.add("fvg_conflict_penalty", lambda r: r["fvg_red_above_green"] * min(r["fvg_green_size"], 3.0))
+    return builder
+
+
+def build_fvg3_strategy_features() -> StrategyFeatureBuilder:
+    builder = StrategyFeatureBuilder()
+    builder.add("stoch_extreme", lambda r: 1.0 if r["stoch_rsi"] > 80 else 0.0)
+    builder.add("stoch_extreme_neg", lambda r: 1.0 if r["stoch_rsi"] < 20 else 0.0)
+    builder.add("macd_hist", lambda r: r["macd_hist"])
+    builder.add("macd_hist_delta_absolute", lambda r: abs(r["macd_hist_delta"]))
     builder.add("macd_green_increasing", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] > 0) else 0.0)
     builder.add("macd_red_recovering", lambda r: 1.0 if (r["macd_hist"] < 0 and r["macd_hist_delta"] > 0) else 0.0)
     builder.add("macd_green_fading", lambda r: 1.0 if (r["macd_hist"] > 0 and r["macd_hist_delta"] < 0) else 0.0)
@@ -187,6 +209,8 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_legacy_strategy_features()
     if normalized == "fvg2":
         return build_fvg2_strategy_features()
+    if normalized == "fvg3":
+        return build_fvg3_strategy_features()
     if normalized == "derivative2":
         return build_derivative2_strategy_features()
     if normalized == "derivative":
@@ -207,6 +231,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "legacy"
     if isinstance(names, list) and "stoch_extreme_80" in names and "stoch_extreme_20" in names:
         return "fvg2"
+    if isinstance(names, list) and "stoch_extreme_neg" in names and "macd_hist_delta_absolute" in names:
+        return "fvg3"
     if isinstance(names, list) and "ema_derivative_3_diff" in names:
         return "derivative2"
     if isinstance(names, list) and "ema9_derivative_3" in names:

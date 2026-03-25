@@ -91,8 +91,6 @@ def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[
     weights: list[float] = []
     for weight in parsed:
         value = float(weight)
-        if value < 0.0 or value > 1.0:
-            raise ValueError("Each manual feature weight must be between 0 and 1.")
         weights.append(value)
     total = sum(weights)
     if abs(total - 1.0) > 1e-6:
@@ -1024,7 +1022,7 @@ def create_app() -> "Flask":
         current_evaluation_payload: Dict[str, object] | None = None
         feature_name_map = {
             key: get_strategy_feature_builder(key).names()
-            for key in ("feature2", "dqn", "fvg2", "derivative", "derivative2", "new", "legacy")
+            for key in ("feature2", "dqn", "fvg2", "fvg3", "derivative", "derivative2", "new", "legacy")
         }
 
         if request.method == "POST":
@@ -2054,6 +2052,7 @@ def create_app() -> "Flask":
                   <option value="feature2" {"selected" if feature_set == "feature2" else ""}>Feature 2 (default)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
+                  <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
                   <option value="derivative" {"selected" if feature_set == "derivative" else ""}>Derivative set</option>
                   <option value="derivative2" {"selected" if feature_set == "derivative2" else ""}>Derivatives 2 set</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
@@ -2069,7 +2068,7 @@ def create_app() -> "Flask":
               <label id="manualWeightsWrap">Feature Weights (sum must be 1.0):
                 <div id="manualWeightsContainer" class="manual-weights-grid"></div>
                 <input type="hidden" name="manual_feature_weights" id="manualFeatureWeightsInput" value='{manual_weights_json}' />
-                <p class="muted">Weights map to the selected feature set and must be between 0 and 1.</p>
+                <p class="muted">Weights map to the selected feature set and must add up to 1.0.</p>
               </label>
               <label id="dqnEpisodesWrap">DQN Episodes:
                 <input type="number" min="1" step="1" name="dqn_episodes" value="{dqn_episodes_raw}" />
@@ -2457,8 +2456,6 @@ def create_app() -> "Flask":
                       <code>${{name}}</code>
                       <input
                         type="number"
-                        min="0"
-                        max="1"
                         step="0.0001"
                         value="${{Number.isFinite(value) ? value.toFixed(4) : "0.0000"}}"
                         data-weight-index="${{idx}}"
@@ -2622,7 +2619,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feature-set",
-        choices=["feature2", "dqn", "fvg2", "derivative", "derivative2", "new", "legacy"],
+        choices=["feature2", "dqn", "fvg2", "fvg3", "derivative", "derivative2", "new", "legacy"],
         default="feature2",
         help="Feature pipeline to use for CLI training/evaluation. Default: feature2.",
     )

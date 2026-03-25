@@ -43,6 +43,16 @@ def test_fvg2_feature_set_splits_stoch_extremes() -> None:
     assert "fvg_conflict_penalty" in names
 
 
+def test_fvg3_feature_set_is_supported() -> None:
+    assert normalize_feature_set("fvg_3") == "fvg3"
+    builder = get_strategy_feature_builder("fvg3")
+    names = builder.names()
+    assert "stoch_extreme" in names
+    assert "stoch_extreme_neg" in names
+    assert "macd_hist_delta_absolute" in names
+    assert "fvg_conflict_penalty" in names
+
+
 def test_derivative2_feature_set_is_supported() -> None:
     assert normalize_feature_set("derivate2") == "derivative2"
     builder = get_strategy_feature_builder("derivative2")
