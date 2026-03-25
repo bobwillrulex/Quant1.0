@@ -78,6 +78,28 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
     return values
 
 
+def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[float]:
+    if expected_feature_count <= 0:
+        raise ValueError("Feature set must include at least one feature for manual weighting.")
+    if not raw:
+        raise ValueError("Manual feature weights were not provided.")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise ValueError("Manual feature weights must be provided as a list.")
+    if len(parsed) != expected_feature_count:
+        raise ValueError("Manual feature weight count does not match the selected feature set.")
+    weights: list[float] = []
+    for weight in parsed:
+        value = float(weight)
+        if value < 0.0 or value > 1.0:
+            raise ValueError("Each manual feature weight must be between 0 and 1.")
+        weights.append(value)
+    total = sum(weights)
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(f"Manual feature weights must add up to 1.0 (current total: {total:.6f}).")
+    return weights
+
+
 def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only: bool) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     data_provider = str(model_configs.get("__ui_data_provider__", "yfinance")).strip().lower()
@@ -975,6 +997,8 @@ def create_app() -> "Flask":
         stop_loss_strategy_raw = request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value).strip()
         fixed_stop_pct_raw = request.form.get("fixed_stop_pct", "2.0").strip()
         selected_model = request.form.get("selected_model", "__new__")
+        use_manual_weights_raw = request.form.get("use_manual_weights", "no").strip().lower()
+        manual_weights_json = request.form.get("manual_feature_weights", "").strip()
         present_ticker = request.form.get("present_ticker", ticker).upper().strip()
         present_interval = request.form.get("present_interval", interval)
         present_rows = request.form.get("present_rows", rows)
@@ -998,6 +1022,10 @@ def create_app() -> "Flask":
         run_all_rows = ""
         message_html = ""
         current_evaluation_payload: Dict[str, object] | None = None
+        feature_name_map = {
+            key: get_strategy_feature_builder(key).names()
+            for key in ("feature2", "dqn", "fvg2", "derivative", "derivative2", "new", "legacy")
+        }
 
         if request.method == "POST":
             try:
@@ -1065,6 +1093,8 @@ def create_app() -> "Flask":
                             fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
                             data_provider = str(form_state.get("data_provider", data_provider)).strip().lower()
                             dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
+                            use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
+                            manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
                     elif eval_action == "open":
                         snapshot_id = int(request.form.get("evaluation_id", "0"))
                         snapshot = load_evaluation_snapshot(mode_key, snapshot_id)
@@ -1088,6 +1118,8 @@ def create_app() -> "Flask":
                         stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                         fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
                         dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
+                        use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
+                        manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
                         message_html = (
                             f"<p style='color:#7bd88f;'><strong>Loaded saved evaluation:</strong> "
                             f"{escape(str(snapshot.get('name', 'Saved evaluation')))}</p>"
@@ -1176,11 +1208,14 @@ def create_app() -> "Flask":
                     dqn_episodes = int(dqn_episodes_raw or "120")
                     if dqn_episodes < 1:
                         raise ValueError("DQN episodes must be at least 1.")
+                    use_manual_weights = use_manual_weights_raw == "yes"
                     tickers = parse_csv_values(ticker, uppercase=True)
                     if not tickers:
                         raise ValueError("Please enter at least one ticker symbol.")
                     model_names = parse_csv_values(model_name, uppercase=False) if model_name else []
                     if len(tickers) > 1:
+                        if use_manual_weights:
+                            raise ValueError("Manual feature weights currently support single-ticker runs only.")
                         if selected_model != "__new__":
                             raise ValueError("Multi-ticker run only supports training new models (not loading an existing saved model).")
                         if model_names and len(model_names) != len(tickers):
@@ -1278,6 +1313,8 @@ def create_app() -> "Flask":
                         y_test_ret = [r["return_next"] for r in eval_rows]
                         y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                         if selected_model != "__new__":
+                            if use_manual_weights:
+                                raise ValueError("Manual feature weights cannot be used while loading an existing saved model.")
                             loaded = load_model_bundle(mode_key, selected_model)
                             loaded_feature_set = infer_bundle_feature_set(loaded)
                             features = get_strategy_feature_builder(loaded_feature_set)
@@ -1297,12 +1334,34 @@ def create_app() -> "Flask":
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
                         else:
-                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
+                            if use_manual_weights:
+                                if feature_set == "dqn":
+                                    raise ValueError("Manual feature weights are not supported with the DQN feature pipeline.")
+                                feature_builder = get_strategy_feature_builder(feature_set)
+                                feature_names = feature_builder.names()
+                                manual_weights = parse_manual_feature_weights(manual_weights_json, len(feature_names))
+                                bundle = {
+                                    "feature_names": feature_names,
+                                    "feature_set": feature_set,
+                                    "means": [0.0] * len(feature_names),
+                                    "stds": [1.0] * len(feature_names),
+                                    "lin_weights": manual_weights,
+                                    "lin_bias": 0.0,
+                                    "logit_weights": manual_weights,
+                                    "logit_bias": 0.0,
+                                    "train_size": "manual-weights",
+                                    "test_size": len(y_test_ret),
+                                    "split_style": split_style,
+                                }
+                                x_test_raw = feature_builder.transform(eval_rows)
+                            else:
+                                bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
+                                x_test_raw = bundle["x_test_raw"]
                             metrics = evaluate_bundle(
                                 bundle,
-                                bundle["x_test_raw"],
-                                bundle["y_test_ret"],
-                                bundle["y_test_dir"],
+                                x_test_raw,
+                                y_test_ret if use_manual_weights else bundle["y_test_ret"],
+                                y_test_dir if use_manual_weights else bundle["y_test_dir"],
                                 eval_rows=dataset,
                                 split_style=split_style,
                                 buy_threshold=buy_threshold,
@@ -1311,6 +1370,8 @@ def create_app() -> "Flask":
                                 stop_loss=stop_loss_config,
                             )
                             metrics["train_size"] = bundle["train_size"]
+                            if use_manual_weights:
+                                metrics["manual_weights"] = True
                             if train_action == "train" and model_name:
                                 save_model_bundle(mode_key, model_name, bundle)
                                 model_configs = load_model_configs(mode_key)
@@ -1584,6 +1645,8 @@ def create_app() -> "Flask":
                                 "fixed_stop_pct": fixed_stop_pct_raw,
                                 "data_provider": data_provider,
                                 "dqn_episodes": dqn_episodes_raw,
+                                "use_manual_weights": use_manual_weights_raw,
+                                "manual_feature_weights": manual_weights_json,
                             },
                             "result_html": result_html,
                         }
@@ -1706,6 +1769,27 @@ def create_app() -> "Flask":
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 0.5rem;
+              }}
+              .manual-weights-grid {{
+                display: grid;
+                gap: 0.5rem;
+                max-height: 250px;
+                overflow-y: auto;
+                padding-right: 0.35rem;
+              }}
+              .manual-weight-item {{
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 120px;
+                gap: 0.5rem;
+                align-items: center;
+              }}
+              .manual-weight-item code {{
+                color: var(--text);
+                font-size: 0.82rem;
+                word-break: break-all;
+              }}
+              .manual-weight-item input {{
+                margin-top: 0;
               }}
               .secondary {{
                 background: {theme_secondary_bg};
@@ -1976,6 +2060,17 @@ def create_app() -> "Flask":
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
               </label>
+              <label>Use Manual Feature Weights:
+                <select name="use_manual_weights" id="manualWeightsToggle">
+                  <option value="no" {"selected" if use_manual_weights_raw != "yes" else ""}>No (train logistic/linear models)</option>
+                  <option value="yes" {"selected" if use_manual_weights_raw == "yes" else ""}>Yes (user-defined weights)</option>
+                </select>
+              </label>
+              <label id="manualWeightsWrap">Feature Weights (sum must be 1.0):
+                <div id="manualWeightsContainer" class="manual-weights-grid"></div>
+                <input type="hidden" name="manual_feature_weights" id="manualFeatureWeightsInput" value='{manual_weights_json}' />
+                <p class="muted">Weights map to the selected feature set and must be between 0 and 1.</p>
+              </label>
               <label id="dqnEpisodesWrap">DQN Episodes:
                 <input type="number" min="1" step="1" name="dqn_episodes" value="{dqn_episodes_raw}" />
               </label>
@@ -2218,6 +2313,7 @@ def create_app() -> "Flask":
                   if (mode === "train" && (action === "train" || action === "evaluate")) {{
                     const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
                     const featureSet = form.querySelector('select[name="feature_set"]')?.value || "feature2";
+                    const manualMode = (form.querySelector('select[name="use_manual_weights"]')?.value || "no") === "yes";
                     const dqnEpisodes = Number(form.querySelector('input[name="dqn_episodes"]')?.value || "120");
                     const isDqn = featureSet === "dqn";
                     const seconds = isDqn
@@ -2226,7 +2322,7 @@ def create_app() -> "Flask":
                         ? Math.min(95, Math.max(12, Math.round(rows / 7)))
                         : Math.min(70, Math.max(8, Math.round(rows / 10))));
                     const title = action === "train"
-                      ? "Downloading data and training model..."
+                      ? (manualMode ? "Downloading data, saving manual-weight model, and evaluating..." : "Downloading data and training model...")
                       : "Downloading data and evaluating model...";
                     showLoading(title, seconds);
                   }} else if (mode === "present_all") {{
@@ -2238,11 +2334,16 @@ def create_app() -> "Flask":
               }});
 
               const featureSetEl = document.querySelector('select[name="feature_set"]');
+              const manualWeightsToggleEl = document.getElementById("manualWeightsToggle");
+              const manualWeightsWrapEl = document.getElementById("manualWeightsWrap");
+              const manualWeightsContainerEl = document.getElementById("manualWeightsContainer");
+              const manualFeatureWeightsInputEl = document.getElementById("manualFeatureWeightsInput");
               const dqnEpisodesWrapEl = document.getElementById("dqnEpisodesWrap");
               const stopLossStrategyEl = document.getElementById("stopLossStrategy");
               const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
               const runAllTable = document.getElementById("runAllTable");
               const sortDirections = {{}};
+              const featureNameMap = {json.dumps(feature_name_map)};
 
               function parseSortValue(rawValue, sortType) {{
                 const textValue = (rawValue || "").trim();
@@ -2332,6 +2433,83 @@ def create_app() -> "Flask":
                 featureSetEl.addEventListener("change", toggleDqnEpisodesField);
                 toggleDqnEpisodesField();
               }}
+
+              function loadManualWeightsFromState(featureNames) {{
+                if (!manualFeatureWeightsInputEl) return null;
+                try {{
+                  const parsed = JSON.parse(manualFeatureWeightsInputEl.value || "[]");
+                  if (!Array.isArray(parsed) || parsed.length !== featureNames.length) return null;
+                  return parsed.map((value) => Number(value));
+                }} catch (_err) {{
+                  return null;
+                }}
+              }}
+
+              function renderManualWeightInputs() {{
+                if (!featureSetEl || !manualWeightsContainerEl) return;
+                const featureNames = featureNameMap[featureSetEl.value] || [];
+                const existingWeights = loadManualWeightsFromState(featureNames);
+                const defaultWeight = featureNames.length ? (1 / featureNames.length) : 0;
+                manualWeightsContainerEl.innerHTML = featureNames.map((name, idx) => {{
+                  const value = existingWeights ? existingWeights[idx] : defaultWeight;
+                  return `
+                    <div class="manual-weight-item">
+                      <code>${{name}}</code>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.0001"
+                        value="${{Number.isFinite(value) ? value.toFixed(4) : "0.0000"}}"
+                        data-weight-index="${{idx}}"
+                      />
+                    </div>
+                  `;
+                }}).join("");
+              }}
+
+              function syncManualWeightsJson() {{
+                if (!manualFeatureWeightsInputEl || !manualWeightsContainerEl) return;
+                const values = Array.from(manualWeightsContainerEl.querySelectorAll("input[data-weight-index]"))
+                  .map((inputEl) => Number(inputEl.value || "0"));
+                manualFeatureWeightsInputEl.value = JSON.stringify(values);
+              }}
+
+              function toggleManualWeightsField() {{
+                if (!manualWeightsToggleEl || !manualWeightsWrapEl || !featureSetEl) return;
+                const manualInputs = manualWeightsWrapEl.querySelectorAll("input[data-weight-index]");
+                const isManual = manualWeightsToggleEl.value === "yes";
+                const isDqn = featureSetEl.value === "dqn";
+                const shouldShow = isManual && !isDqn;
+                manualWeightsWrapEl.style.display = shouldShow ? "block" : "none";
+                manualInputs.forEach((inputEl) => {{
+                  inputEl.disabled = !shouldShow;
+                  if (!shouldShow) {{
+                    inputEl.setCustomValidity("");
+                  }}
+                }});
+                if (isManual && isDqn) {{
+                  manualWeightsToggleEl.setCustomValidity("Manual feature weights are unavailable for DQN.");
+                }} else {{
+                  manualWeightsToggleEl.setCustomValidity("");
+                }}
+                syncManualWeightsJson();
+              }}
+
+              if (manualWeightsContainerEl) {{
+                manualWeightsContainerEl.addEventListener("input", syncManualWeightsJson);
+              }}
+              if (featureSetEl) {{
+                featureSetEl.addEventListener("change", () => {{
+                  renderManualWeightInputs();
+                  toggleManualWeightsField();
+                }});
+              }}
+              if (manualWeightsToggleEl) {{
+                manualWeightsToggleEl.addEventListener("change", toggleManualWeightsField);
+              }}
+              renderManualWeightInputs();
+              toggleManualWeightsField();
               const presentStopLossStrategyEl = document.getElementById("presentStopLossStrategy");
               const presentFixedStopLossWrapEl = document.getElementById("presentFixedStopLossWrap");
               function togglePresentFixedStopField() {{
