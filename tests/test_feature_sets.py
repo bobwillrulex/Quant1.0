@@ -93,3 +93,62 @@ def test_dqn_feature_set_is_supported() -> None:
     dqn_builder = get_strategy_feature_builder("dqn")
     base_builder = get_strategy_feature_builder("feature2")
     assert dqn_builder.names() == base_builder.names()
+
+
+def test_ema_feature_set_is_supported() -> None:
+    assert normalize_feature_set("many-ema") == "ema"
+    builder = get_strategy_feature_builder("ema")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema_stack_bullish",
+        "ema_stack_bearish",
+        "ema3_slope",
+        "ema9_slope",
+        "ema21_slope",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_bollinger_bands_feature_set_is_supported() -> None:
+    assert normalize_feature_set("bollinger") == "bollinger_bands"
+    builder = get_strategy_feature_builder("bollinger_bands")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "bb_upper",
+        "bb_middle",
+        "bb_lower",
+        "bb_width",
+        "bb_percent_b",
+        "price_to_bb_mid",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_vwap_anchor_feature_set_is_supported() -> None:
+    assert normalize_feature_set("anchored-vwap") == "vwap_anchor"
+    builder = get_strategy_feature_builder("vwap_anchor")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "vwap_anchor_high",
+        "vwap_anchor_low",
+        "vwap_anchor_spread",
+        "price_vs_vwap_high",
+        "price_vs_vwap_low",
+        "vwap_anchor_mid_bias",
+    }
+    assert expected.issubset(set(names))
