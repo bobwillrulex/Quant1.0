@@ -1337,6 +1337,7 @@ def create_app() -> "Flask":
                             model_msg += f"<p><strong>Saved model:</strong> {metrics['saved_model']}</p>"
                         if "loaded_model" in metrics:
                             model_msg += f"<p><strong>Loaded model:</strong> {metrics['loaded_model']}</p>"
+                        is_dqn_eval = str(metrics.get("model_type", "")).lower() == "dqn"
                         linear_weight_rows = "".join(
                             f"<tr><td>{name}</td><td>{weight:+.6f}</td></tr>" for name, weight in metrics["lin_weights"]
                         )
@@ -1397,6 +1398,109 @@ def create_app() -> "Flask":
                             stroke=theme_border,
                             accent=theme_table_head,
                         )
+                        model_cards_html = ""
+                        if is_dqn_eval:
+                            action_counts = metrics["dqn_policy"]["action_counts"]
+                            avg_q_values = metrics["dqn_policy"]["avg_q_values"]
+                            action_returns = metrics["dqn_action_returns"]
+                            recent_episode_rewards = metrics["dqn_episode_rewards"]
+                            episode_rewards_text = ", ".join(f"{float(reward):+.4f}" for reward in recent_episode_rewards) if recent_episode_rewards else "n/a"
+                            model_cards_html = (
+                                "<article class='card'>"
+                                "<h3>DQN Policy Model</h3>"
+                                f"<p><span class='muted'>Final epsilon</span> <strong>{metrics['dqn_last_epsilon']:.4f}</strong></p>"
+                                f"<p><span class='muted'>Avg Q-values (HOLD / BUY / SELL)</span><br>{avg_q_values['hold']:+.6f} / {avg_q_values['buy']:+.6f} / {avg_q_values['sell']:+.6f}</p>"
+                                f"<p><span class='muted'>Action counts (test)</span><br>HOLD={int(action_counts['hold'])} BUY={int(action_counts['buy'])} SELL={int(action_counts['sell'])}</p>"
+                                f"<p><span class='muted'>Estimated action return (HOLD / BUY / SELL)</span><br>{float(action_returns[0]):+.6f} / {float(action_returns[1]):+.6f} / {float(action_returns[2]):+.6f}</p>"
+                                "</article>"
+                                "<article class='card'>"
+                                "<h3>DQN Test Error</h3>"
+                                f"<p><span class='muted'>Expected-return MSE</span> <strong>{metrics['mse']:.8f}</strong></p>"
+                                f"<p><span class='muted'>Expected-return MAE</span> <strong>{metrics['mae']:.8f}</strong></p>"
+                                "<p class='muted'>Supervised linear/logistic metrics are hidden for DQN runs.</p>"
+                                f"<p><span class='muted'>Recent episode rewards</span><br>{episode_rewards_text}</p>"
+                                "</article>"
+                            )
+                        else:
+                            model_cards_html = (
+                                "<article class='card'>"
+                                "<h3>Linear Model</h3>"
+                                f"<p><span class='muted'>Test MSE</span> <strong>{metrics['mse']:.8f}</strong></p>"
+                                f"<p><span class='muted'>Test MAE</span> <strong>{metrics['mae']:.8f}</strong></p>"
+                                f"<p><span class='muted'>Zero baseline (MSE/MAE)</span><br>{metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>"
+                                f"<p><span class='muted'>Edge vs baseline (MSE/MAE)</span><br>{metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>"
+                                "</article>"
+                                "<article class='card'>"
+                                "<h3>Logistic Model</h3>"
+                                f"<p><span class='muted'>Accuracy</span> <strong>{metrics['accuracy']:.4f}</strong></p>"
+                                f"<p><span class='muted'>Always-UP baseline</span> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>"
+                                f"<p><span class='muted'>Precision / Recall / F1</span><br>{metrics['precision']:.4f} / {metrics['recall']:.4f} / {metrics['f1']:.4f}</p>"
+                                f"<p><span class='muted'>Confusion Matrix</span><br>TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}</p>"
+                                "</article>"
+                            )
+                        diagnostics_html = ""
+                        if not is_dqn_eval:
+                            diagnostics_html = f"""
+                      <div class="table-grid">
+                        <article class="card table-card">
+                          <h3>Calibration Buckets</h3>
+                          <table>
+                            <tr><th>Bucket</th><th>Count</th><th>Pred Mean</th><th>Actual Win</th></tr>
+                            {calibration_rows}
+                          </table>
+                        </article>
+                        <article class="card table-card">
+                          <h3>Confidence Edge</h3>
+                          <table>
+                            <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
+                            <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
+                            <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
+                          </table>
+                        </article>
+                      </div>
+
+                      <details>
+                        <summary>Walk-forward & Feature Ablation</summary>
+                        <div class="table-grid">
+                          <article class="card table-card">
+                            <h3>Walk-forward Validation</h3>
+                            <table>
+                              <tr><th>Window</th><th>Train</th><th>Test</th><th>Accuracy</th><th>MSE</th></tr>
+                              {walk_forward_rows}
+                            </table>
+                          </article>
+                          <article class="card table-card">
+                            <h3>Feature Ablation</h3>
+                            <table>
+                              <tr><th>Removed Feature</th><th>Δ Accuracy</th><th>Δ MSE</th></tr>
+                              {ablation_rows}
+                            </table>
+                          </article>
+                        </div>
+                      </details>
+
+                      <details>
+                        <summary>Error Analysis</summary>
+                        <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
+                      </details>
+
+                      <div class="table-grid">
+                        <article class="card table-card">
+                          <h3>Linear Weights (Bias {metrics['lin_bias']:+.6f})</h3>
+                          <table>
+                            <tr><th>Feature</th><th>Weight</th></tr>
+                            {linear_weight_rows}
+                          </table>
+                        </article>
+                        <article class="card table-card">
+                          <h3>Logistic Weights (Bias {metrics['logit_bias']:+.6f})</h3>
+                          <table>
+                            <tr><th>Feature</th><th>Weight</th></tr>
+                            {logistic_weight_rows}
+                          </table>
+                        </article>
+                      </div>
+                            """
                         result_html = f"""
                     <section class="results">
                       <div class="section-heading">
@@ -1409,20 +1513,7 @@ def create_app() -> "Flask":
                         {model_msg}
                       </div>
                       <div class="card-grid">
-                        <article class="card">
-                          <h3>Linear Model</h3>
-                          <p><span class="muted">Test MSE</span> <strong>{metrics['mse']:.8f}</strong></p>
-                          <p><span class="muted">Test MAE</span> <strong>{metrics['mae']:.8f}</strong></p>
-                          <p><span class="muted">Zero baseline (MSE/MAE)</span><br>{metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}</p>
-                          <p><span class="muted">Edge vs baseline (MSE/MAE)</span><br>{metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}</p>
-                        </article>
-                        <article class="card">
-                          <h3>Logistic Model</h3>
-                          <p><span class="muted">Accuracy</span> <strong>{metrics['accuracy']:.4f}</strong></p>
-                          <p><span class="muted">Always-UP baseline</span> {metrics['baseline_always_up_accuracy']:.4f} (edge {metrics['accuracy_vs_baseline']:+.4f})</p>
-                          <p><span class="muted">Precision / Recall / F1</span><br>{metrics['precision']:.4f} / {metrics['recall']:.4f} / {metrics['f1']:.4f}</p>
-                          <p><span class="muted">Confusion Matrix</span><br>TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}</p>
-                        </article>
+                        {model_cards_html}
                         <article class="card">
                           <h3>Decision Strategy</h3>
                           <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Stop {metrics['strategy']['stop_loss_strategy']} · Cost 0.05%</p>
@@ -1450,24 +1541,7 @@ def create_app() -> "Flask":
                           {feature_items}
                         </ul>
                       </article>
-    
-                      <div class="table-grid">
-                        <article class="card table-card">
-                          <h3>Calibration Buckets</h3>
-                          <table>
-                            <tr><th>Bucket</th><th>Count</th><th>Pred Mean</th><th>Actual Win</th></tr>
-                            {calibration_rows}
-                          </table>
-                        </article>
-                        <article class="card table-card">
-                          <h3>Confidence Edge</h3>
-                          <table>
-                            <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
-                            <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
-                            <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
-                          </table>
-                        </article>
-                      </div>
+                      {diagnostics_html}
     
                       <div class="table-grid">
                         <article class="card table-card">
@@ -1485,49 +1559,6 @@ def create_app() -> "Flask":
                           </table>
                         </article>
                       </div>
-    
-                      <details>
-                        <summary>Walk-forward & Feature Ablation</summary>
-                        <div class="table-grid">
-                          <article class="card table-card">
-                            <h3>Walk-forward Validation</h3>
-                            <table>
-                              <tr><th>Window</th><th>Train</th><th>Test</th><th>Accuracy</th><th>MSE</th></tr>
-                              {walk_forward_rows}
-                            </table>
-                          </article>
-                          <article class="card table-card">
-                            <h3>Feature Ablation</h3>
-                            <table>
-                              <tr><th>Removed Feature</th><th>Δ Accuracy</th><th>Δ MSE</th></tr>
-                              {ablation_rows}
-                            </table>
-                          </article>
-                        </div>
-                      </details>
-    
-                      <details>
-                        <summary>Error Analysis</summary>
-                        <pre>{json.dumps(metrics['error_analysis'], indent=2)}</pre>
-                      </details>
-    
-                      <div class="table-grid">
-                        <article class="card table-card">
-                          <h3>Linear Weights (Bias {metrics['lin_bias']:+.6f})</h3>
-                          <table>
-                            <tr><th>Feature</th><th>Weight</th></tr>
-                            {linear_weight_rows}
-                          </table>
-                        </article>
-                        <article class="card table-card">
-                          <h3>Logistic Weights (Bias {metrics['logit_bias']:+.6f})</h3>
-                          <table>
-                            <tr><th>Feature</th><th>Weight</th></tr>
-                            {logistic_weight_rows}
-                          </table>
-                        </article>
-                      </div>
-    
                       <article class="card table-card">
                         <h3>Example Predictions</h3>
                         <table>

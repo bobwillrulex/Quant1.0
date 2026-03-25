@@ -658,19 +658,36 @@ def evaluate_bundle(
         raise ValueError("Saved model feature size does not match current strategy feature set.")
     x_test = standardize_apply(x_test_raw, bundle["means"], bundle["stds"])
     is_dqn = str(bundle.get("model_type", "")).lower() == "dqn"
+    dqn_policy = {"action_counts": {"hold": 0, "buy": 0, "sell": 0}, "avg_q_values": {"hold": 0.0, "buy": 0.0, "sell": 0.0}}
     if is_dqn and "dqn_state_dict" in bundle:
         action_returns = bundle.get("dqn_action_returns", [0.0, 0.0, 0.0])
+        q_value_sums = [0.0, 0.0, 0.0]
         ret_pred = []
         up_prob = []
         for row in x_test:
             state_vector = [*row, 0.0, 1.0]
             q_values = dqn_q_values(bundle, state_vector)
+            chosen_action = max(range(len(q_values)), key=lambda idx: q_values[idx]) if q_values else 0
+            if chosen_action == 0:
+                dqn_policy["action_counts"]["hold"] += 1
+            elif chosen_action == 1:
+                dqn_policy["action_counts"]["buy"] += 1
+            else:
+                dqn_policy["action_counts"]["sell"] += 1
+            for idx in range(min(3, len(q_values))):
+                q_value_sums[idx] += float(q_values[idx])
             action_prob = _softmax(q_values)
             p_buy = action_prob[1] if len(action_prob) > 1 else 0.0
             p_sell = action_prob[2] if len(action_prob) > 2 else 0.0
             up_prob.append(max(0.0, min(1.0, p_buy + (0.5 * (1.0 - p_buy - p_sell)))))
             expected = sum(action_prob[idx] * float(action_returns[idx]) for idx in range(min(3, len(action_prob))))
             ret_pred.append(expected)
+        test_count = max(1, len(x_test))
+        dqn_policy["avg_q_values"] = {
+            "hold": q_value_sums[0] / test_count,
+            "buy": q_value_sums[1] / test_count,
+            "sell": q_value_sums[2] / test_count,
+        }
     else:
         ret_pred = [sum(w * v for w, v in zip(bundle["lin_weights"], row)) + bundle["lin_bias"] for row in x_test]
         up_prob = [sigmoid(sum(w * v for w, v in zip(bundle["logit_weights"], row)) + bundle["logit_bias"]) for row in x_test]
@@ -690,6 +707,7 @@ def evaluate_bundle(
     )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     return {
+        "model_type": "dqn" if is_dqn else "linear_logistic",
         "features": bundle["feature_names"],
         "feature_set": feature_set,
         "mse": mse(y_test_ret, ret_pred),
@@ -716,6 +734,10 @@ def evaluate_bundle(
         "walk_forward": walk_forward_validation_rows(rows=eval_rows, max_windows=4, feature_set=feature_set) if eval_rows else [],
         "feature_ablation": feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style, feature_set=feature_set) if eval_rows else [],
         "error_analysis": error_analysis(y_test_ret, up_prob, ret_pred, top_n=5),
+        "dqn_policy": dqn_policy,
+        "dqn_episode_rewards": list(bundle.get("dqn_episode_rewards", [])),
+        "dqn_last_epsilon": float(bundle.get("dqn_last_epsilon", 0.0)),
+        "dqn_action_returns": list(bundle.get("dqn_action_returns", [0.0, 0.0, 0.0])),
     }
 
 
@@ -731,14 +753,31 @@ def run_model(rows: Sequence[Row], feature_set: FeatureSet | str = "feature2") -
     )
     print("=== Strategy Feature Set ===")
     print(", ".join(metrics["features"]))
-    print("\n=== Linear Regression (predict next return) ===")
-    print(f"Test MSE: {metrics['mse']:.8f}")
-    print(f"Test MAE: {metrics['mae']:.8f}")
-    print("\n=== Logistic Regression (predict P(up)) ===")
-    print(f"Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
-    print(f"Always-UP baseline accuracy: {metrics['baseline_always_up_accuracy']:.4f} (edge: {metrics['accuracy_vs_baseline']:+.4f})")
-    print(f"Zero-return baseline MSE/MAE: {metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}")
-    print(f"Model improvement vs zero baseline (MSE/MAE): {metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}")
+    is_dqn = str(metrics.get("model_type", "")).lower() == "dqn"
+    if is_dqn:
+        print("\n=== DQN Policy Evaluation ===")
+        print(f"Expected-return MSE: {metrics['mse']:.8f}")
+        print(f"Expected-return MAE: {metrics['mae']:.8f}")
+        action_counts = metrics["dqn_policy"]["action_counts"]
+        avg_q_values = metrics["dqn_policy"]["avg_q_values"]
+        print(
+            "Action counts (test): "
+            f"HOLD={int(action_counts['hold'])}, BUY={int(action_counts['buy'])}, SELL={int(action_counts['sell'])}"
+        )
+        print(
+            "Average Q-values: "
+            f"HOLD={avg_q_values['hold']:+.6f}, BUY={avg_q_values['buy']:+.6f}, SELL={avg_q_values['sell']:+.6f}"
+        )
+        print(f"Final epsilon: {metrics['dqn_last_epsilon']:.4f}")
+    else:
+        print("\n=== Linear Regression (predict next return) ===")
+        print(f"Test MSE: {metrics['mse']:.8f}")
+        print(f"Test MAE: {metrics['mae']:.8f}")
+        print("\n=== Logistic Regression (predict P(up)) ===")
+        print(f"Accuracy: {metrics['accuracy']:.4f}, Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
+        print(f"Always-UP baseline accuracy: {metrics['baseline_always_up_accuracy']:.4f} (edge: {metrics['accuracy_vs_baseline']:+.4f})")
+        print(f"Zero-return baseline MSE/MAE: {metrics['baseline_zero_mse']:.8f} / {metrics['baseline_zero_mae']:.8f}")
+        print(f"Model improvement vs zero baseline (MSE/MAE): {metrics['mse_vs_zero_baseline']:+.8f} / {metrics['mae_vs_zero_baseline']:+.8f}")
     strat = metrics["strategy"]
     print("\n=== Decision Strategy (long > 0.60, short < 0.40) ===")
     print(
