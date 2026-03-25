@@ -265,9 +265,13 @@ def calibration_buckets(y_true: Sequence[int], y_prob: Sequence[float], bucket_s
 
 def confidence_edge_analysis(y_true: Sequence[int], y_prob: Sequence[float]) -> Dict[str, Dict[str, float]]:
     out: Dict[str, Dict[str, float]] = {}
-    for threshold in [0.6, 0.7]:
+    for threshold in [0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]:
         preds = [(a, p) for a, p in zip(y_true, y_prob) if p > threshold]
-        out[f"p_gt_{threshold:.1f}"] = {"count": float(len(preds)), "accuracy": (sum(1 for a, _ in preds if a == 1) / len(preds)) if preds else 0.0}
+        out[f"p_gt_{threshold:.2f}"] = {
+            "threshold": float(threshold),
+            "count": float(len(preds)),
+            "accuracy": (sum(1 for a, _ in preds if a == 1) / len(preds)) if preds else 0.0,
+        }
     return out
 
 
