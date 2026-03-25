@@ -24,6 +24,15 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(price or 0.0, 103.0, places=6)
 
+    def test_stop_loss_price_trailing_stop_matches_fixed_distance(self):
+        price = stop_loss_price(
+            strategy=StopLossStrategy.TRAILING_STOP,
+            action="BUY",
+            reference_price=100.0,
+            fixed_pct=2.0,
+        )
+        self.assertAlmostEqual(price or 0.0, 98.0, places=6)
+
     def test_fixed_percentage_generates_stop_exits(self):
         returns = [-0.01, -0.015, -0.01, 0.005, 0.004]
         probs = [0.8] * len(returns)
@@ -37,6 +46,22 @@ class StopLossStrategyTests(unittest.TestCase):
             allow_short=False,
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
+        )
+        self.assertGreaterEqual(metrics["stop_loss_exits"], 1.0)
+
+    def test_trailing_stop_generates_stop_exits(self):
+        returns = [0.01, 0.01, -0.04, 0.002]
+        probs = [0.8] * len(returns)
+        expected = [0.04] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.TRAILING_STOP, fixed_pct=2.0),
         )
         self.assertGreaterEqual(metrics["stop_loss_exits"], 1.0)
 

@@ -317,6 +317,7 @@ def strategy_metrics(
     synthetic_price = 1.0
     entry_price = 1.0
     entry_idx = -1
+    trailing_anchor = 1.0
     stop_price = 0.0
     stop_loss_exits = 0
     time_decay_exits = 0
@@ -340,9 +341,12 @@ def strategy_metrics(
                 bars_in_position = 1
                 entry_price = synthetic_price
                 entry_idx = idx
+                trailing_anchor = entry_price
                 if stop_cfg.strategy == StopLossStrategy.ATR:
                     stop_price = entry_price - (stop_cfg.atr_multiplier * atr_value * entry_price)
                 elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    stop_price = entry_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
+                elif stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
                     stop_price = entry_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
                 else:
                     stop_price = 0.0
@@ -351,15 +355,21 @@ def strategy_metrics(
                 bars_in_position = 1
                 entry_price = synthetic_price
                 entry_idx = idx
+                trailing_anchor = entry_price
                 if stop_cfg.strategy == StopLossStrategy.ATR:
                     stop_price = entry_price + (stop_cfg.atr_multiplier * atr_value * entry_price)
                 elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
                     stop_price = entry_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
+                elif stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
+                    stop_price = entry_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
                 else:
                     stop_price = 0.0
         elif current_pos == 1:
+            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
+                trailing_anchor = max(trailing_anchor, synthetic_price)
+                stop_price = trailing_anchor * (1.0 - (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
-            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE) and synthetic_price <= stop_price
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and synthetic_price <= stop_price
             model_invalidation_hit = False
             if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
@@ -384,8 +394,11 @@ def strategy_metrics(
             else:
                 bars_in_position += 1
         elif current_pos == -1:
+            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
+                trailing_anchor = min(trailing_anchor, synthetic_price)
+                stop_price = trailing_anchor * (1.0 + (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
-            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE) and synthetic_price >= stop_price
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and synthetic_price >= stop_price
             model_invalidation_hit = False
             if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)

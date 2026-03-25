@@ -10,6 +10,7 @@ class StopLossStrategy(str, Enum):
     MODEL_INVALIDATION = "model_invalidation"
     TIME_DECAY = "time_decay"
     FIXED_PERCENTAGE = "fixed_percentage"
+    TRAILING_STOP = "trailing_stop"
 
 
 MODEL_MAE_DEFAULT = 0.0547
@@ -59,7 +60,7 @@ def stop_loss_price(
         return None
 
     is_long = normalized_action == "BUY"
-    if strategy == StopLossStrategy.FIXED_PERCENTAGE:
+    if strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
         distance = abs(fixed_pct) / 100.0
     elif strategy == StopLossStrategy.ATR:
         distance = abs(atr_multiplier * atr_fraction)
