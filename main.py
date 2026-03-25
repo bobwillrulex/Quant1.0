@@ -1414,6 +1414,14 @@ def create_app() -> "Flask":
                             "</tr>"
                             for item in metrics["calibration"]
                         )
+                        confidence_edge_rows = "".join(
+                            "<tr>"
+                            f"<td>P &gt; {item.get('threshold', 0.0):.2f}</td>"
+                            f"<td>{int(item['count'])}</td>"
+                            f"<td>{item['accuracy']:.4f}</td>"
+                            "</tr>"
+                            for item in sorted(metrics.get("confidence_edge", {}).values(), key=lambda value: float(value.get("threshold", 0.0)))
+                        )
                         pnl_signal_rows = "".join(
                             "<tr>"
                             f"<td>{item['bucket']}</td>"
@@ -1514,8 +1522,7 @@ def create_app() -> "Flask":
                           <h3>Confidence Edge</h3>
                           <table>
                             <tr><th>Rule</th><th>Count</th><th>Accuracy</th></tr>
-                            <tr><td>P &gt; 0.6</td><td>{int(metrics['confidence_edge']['p_gt_0.6']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.6']['accuracy']:.4f}</td></tr>
-                            <tr><td>P &gt; 0.7</td><td>{int(metrics['confidence_edge']['p_gt_0.7']['count'])}</td><td>{metrics['confidence_edge']['p_gt_0.7']['accuracy']:.4f}</td></tr>
+                            {confidence_edge_rows}
                           </table>
                         </article>
                       </div>
