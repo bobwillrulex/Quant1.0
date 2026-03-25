@@ -30,7 +30,7 @@ class StrategyFeatureBuilder:
         return matrix
 
 
-FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "fvg3", "derivative", "derivative2", "dqn"]
+FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "fvg3", "derivative", "derivative2", "dqn", "ema", "bollinger_bands", "vwap_anchor"]
 
 
 def normalize_feature_set(feature_set: str) -> FeatureSet:
@@ -43,6 +43,12 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "derivative"
     if value in ("dqn", "deep-q", "deep_q"):
         return "dqn"
+    if value in ("ema", "ema-set", "ema_set", "many-ema", "many_ema"):
+        return "ema"
+    if value in ("bollinger_bands", "bollinger-bands", "bollinger", "bbands", "bb"):
+        return "bollinger_bands"
+    if value in ("vwap_anchor", "vwap-anchor", "anchored-vwap", "anchored_vwap", "vwap"):
+        return "vwap_anchor"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
@@ -203,6 +209,62 @@ def build_derivative2_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_ema_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema_stack_bullish", lambda r: 1.0 if (g(r, "ema3") > g(r, "ema9") > g(r, "ema21")) else 0.0)
+    builder.add("ema_stack_bearish", lambda r: 1.0 if (g(r, "ema3") < g(r, "ema9") < g(r, "ema21")) else 0.0)
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema21_slope", lambda r: g(r, "ema21_derivative_1"))
+    return builder
+
+
+def build_bollinger_bands_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("bb_upper", lambda r: g(r, "bb_upper"))
+    builder.add("bb_middle", lambda r: g(r, "bb_middle"))
+    builder.add("bb_lower", lambda r: g(r, "bb_lower"))
+    builder.add("bb_width", lambda r: g(r, "bb_upper") - g(r, "bb_lower"))
+    builder.add("bb_percent_b", lambda r: g(r, "bb_percent_b"))
+    builder.add("price_to_bb_mid", lambda r: g(r, "close") - g(r, "bb_middle"))
+    return builder
+
+
+def build_vwap_anchor_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("vwap_anchor_high", lambda r: g(r, "vwap_anchor_high"))
+    builder.add("vwap_anchor_low", lambda r: g(r, "vwap_anchor_low"))
+    builder.add("vwap_anchor_spread", lambda r: g(r, "vwap_anchor_high") - g(r, "vwap_anchor_low"))
+    builder.add("price_vs_vwap_high", lambda r: g(r, "close") - g(r, "vwap_anchor_high"))
+    builder.add("price_vs_vwap_low", lambda r: g(r, "close") - g(r, "vwap_anchor_low"))
+    builder.add("vwap_anchor_mid_bias", lambda r: g(r, "close") - ((g(r, "vwap_anchor_high") + g(r, "vwap_anchor_low")) / 2.0))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
@@ -213,6 +275,12 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_fvg3_strategy_features()
     if normalized == "derivative2":
         return build_derivative2_strategy_features()
+    if normalized == "ema":
+        return build_ema_strategy_features()
+    if normalized == "bollinger_bands":
+        return build_bollinger_bands_strategy_features()
+    if normalized == "vwap_anchor":
+        return build_vwap_anchor_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -235,6 +303,12 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "fvg3"
     if isinstance(names, list) and "ema_derivative_3_diff" in names:
         return "derivative2"
+    if isinstance(names, list) and "bb_upper" in names and "bb_lower" in names:
+        return "bollinger_bands"
+    if isinstance(names, list) and "vwap_anchor_high" in names and "vwap_anchor_low" in names:
+        return "vwap_anchor"
+    if isinstance(names, list) and "ema3_9_spread" in names and "bb_upper" not in names and "vwap_anchor_high" not in names:
+        return "ema"
     if isinstance(names, list) and "ema9_derivative_3" in names:
         return "derivative"
     if isinstance(names, list) and "macd_delta" in names and "oversold_reversal" not in names:

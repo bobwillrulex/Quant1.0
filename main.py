@@ -1024,7 +1024,19 @@ def create_app() -> "Flask":
         current_evaluation_payload: Dict[str, object] | None = None
         feature_name_map = {
             key: get_strategy_feature_builder(key).names()
-            for key in ("feature2", "dqn", "fvg2", "fvg3", "derivative", "derivative2", "new", "legacy")
+            for key in (
+                "feature2",
+                "dqn",
+                "fvg2",
+                "fvg3",
+                "derivative",
+                "derivative2",
+                "ema",
+                "bollinger_bands",
+                "vwap_anchor",
+                "new",
+                "legacy",
+            )
         }
 
         if request.method == "POST":
@@ -2064,6 +2076,9 @@ def create_app() -> "Flask":
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
                   <option value="derivative" {"selected" if feature_set == "derivative" else ""}>Derivative set</option>
                   <option value="derivative2" {"selected" if feature_set == "derivative2" else ""}>Derivatives 2 set</option>
+                  <option value="ema" {"selected" if feature_set == "ema" else ""}>EMA set</option>
+                  <option value="bollinger_bands" {"selected" if feature_set == "bollinger_bands" else ""}>Bollinger Bands set</option>
+                  <option value="vwap_anchor" {"selected" if feature_set == "vwap_anchor" else ""}>VWAP Anchor set</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
@@ -2630,7 +2645,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feature-set",
-        choices=["feature2", "dqn", "fvg2", "fvg3", "derivative", "derivative2", "new", "legacy"],
+        choices=["feature2", "dqn", "fvg2", "fvg3", "derivative", "derivative2", "ema", "bollinger_bands", "vwap_anchor", "new", "legacy"],
         default="feature2",
         help="Feature pipeline to use for CLI training/evaluation. Default: feature2.",
     )
