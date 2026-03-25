@@ -134,6 +134,13 @@ class TradingEnv:
         reward += math.log(safe_new / safe_old)
         return self._get_state(), reward, self.done
 
+    def current_profit(self) -> float:
+        if not self.rows:
+            return 0.0
+        price = float(self.rows[min(self.t, len(self.rows) - 1)].get("close", 0.0))
+        portfolio_value = self.balance + (self.holding_num * price)
+        return portfolio_value - self.start_balance
+
 
 def serialize_state_dict(state_dict: Dict[str, object]) -> Dict[str, object]:
     serialized: Dict[str, object] = {}
@@ -182,6 +189,7 @@ def train_dqn_policy(
 ) -> Tuple[Dict[str, object], List[float], List[float], List[float]]:
     torch, nn, optim = _torch()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[DQN] Training on device: {device}")
     env = TradingEnv(train_rows, features=features, means=means, stds=stds)
     state_size = len(env.reset())
     action_size = 3
@@ -195,7 +203,7 @@ def train_dqn_policy(
     action_returns = [0.0, 0.0, 0.0]
     action_counts = [0.0, 0.0, 0.0]
 
-    for _ in range(episodes):
+    for episode in range(episodes):
         state = env.reset()
         total_reward = 0.0
         while not env.done:
@@ -211,7 +219,7 @@ def train_dqn_policy(
             memory.push(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
-            if len(memory) > batch_size:
+            if len(memory) >= batch_size:
                 transitions = memory.sample(batch_size)
                 b_states = torch.tensor([t[0] for t in transitions], dtype=torch.float32, device=device)
                 b_actions = torch.tensor([t[1] for t in transitions], dtype=torch.long, device=device)
@@ -227,6 +235,10 @@ def train_dqn_policy(
                 loss.backward()
                 optimizer.step()
         episode_rewards.append(total_reward)
+        episode_profit = env.current_profit()
+        print(
+            f"[DQN] Episode {episode + 1}/{episodes} | reward={total_reward:.6f} | profit={episode_profit:.6f}"
+        )
         if epsilon > epsilon_min:
             epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
