@@ -93,9 +93,9 @@ def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[
         value = float(weight)
         weights.append(value)
     total = sum(weights)
-    if abs(total - 1.0) > 1e-6:
-        raise ValueError(f"Manual feature weights must add up to 1.0 (current total: {total:.6f}).")
-    return weights
+    if abs(total) <= 1e-12:
+        raise ValueError("Manual feature weights total cannot be zero.")
+    return [weight / total for weight in weights]
 
 
 def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only: bool) -> list[dict[str, object]]:
@@ -446,7 +446,7 @@ def create_app() -> "Flask":
                     stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
                     fixed_stop_raw = request.form.get("fixed_stop_pct", "2.0").strip()
                     fixed_stop_pct = 2.0
-                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
                     include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
                     rows = int(rows_raw)
@@ -498,7 +498,7 @@ def create_app() -> "Flask":
                     if stop_loss_strategy_raw:
                         stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
                         updates["stop_loss_strategy"] = stop_loss_strategy.value
-                        if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                        if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                             updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
                     if fixed_stop_raw and not stop_loss_strategy_raw:
                         updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw))
@@ -713,6 +713,7 @@ def create_app() -> "Flask":
                         <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
                         <option value="time_decay">Time-Decay (Temporal Exit)</option>
                         <option value="fixed_percentage">Fixed Percentage</option>
+                        <option value="trailing_stop">Trailing Stop Loss</option>
                       </select>
                     </label>
                     <label id="cfgFixedStopWrap">Fixed Stop Loss %
@@ -780,6 +781,7 @@ def create_app() -> "Flask":
                         <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
                         <option value="time_decay">Time-Decay (Temporal Exit)</option>
                         <option value="fixed_percentage">Fixed Percentage</option>
+                        <option value="trailing_stop">Trailing Stop Loss</option>
                       </select>
                     </label>
                     <label id="allFixedStopWrap">Fixed Stop Loss %
@@ -840,7 +842,7 @@ def create_app() -> "Flask":
                 const strategy = document.getElementById("cfgStopLossStrategy").value;
                 const wrap = document.getElementById("cfgFixedStopWrap");
                 const fixedStopInput = document.getElementById("cfgFixedStopPct");
-                const isFixed = strategy === "fixed_percentage";
+                const isFixed = strategy === "fixed_percentage" || strategy === "trailing_stop";
                 wrap.style.display = isFixed ? "block" : "none";
                 if (fixedStopInput) {{
                   fixedStopInput.disabled = !isFixed;
@@ -872,7 +874,7 @@ def create_app() -> "Flask":
                 const strategy = document.getElementById("allStopLossStrategy").value;
                 const wrap = document.getElementById("allFixedStopWrap");
                 const fixedStopInput = document.getElementById("allFixedStopPct");
-                const isFixed = strategy === "fixed_percentage";
+                const isFixed = strategy === "fixed_percentage" || strategy === "trailing_stop";
                 wrap.style.display = isFixed ? "block" : "none";
                 if (fixedStopInput) {{
                   fixedStopInput.disabled = !isFixed;
@@ -1134,7 +1136,7 @@ def create_app() -> "Flask":
                     present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
                     present_stop_loss_strategy = parse_stop_loss_strategy(present_stop_loss_strategy_raw)
                     present_fixed_stop_pct = 2.0
-                    if present_stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    if present_stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         present_fixed_stop_pct = validate_fixed_stop_pct(float(present_fixed_stop_pct_raw or "2.0"))
                     dataset, provider_notice = fetch_market_rows(
                         ticker=present_ticker,
@@ -1198,7 +1200,7 @@ def create_app() -> "Flask":
                     buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
                     stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
                     fixed_stop_pct = 2.0
-                    if stop_loss_strategy == StopLossStrategy.FIXED_PERCENTAGE:
+                    if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_pct_raw or "2.0"))
                     stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
                     if split_style not in ("shuffled", "chronological"):
@@ -2065,10 +2067,10 @@ def create_app() -> "Flask":
                   <option value="yes" {"selected" if use_manual_weights_raw == "yes" else ""}>Yes (user-defined weights)</option>
                 </select>
               </label>
-              <label id="manualWeightsWrap">Feature Weights (sum must be 1.0):
+              <label id="manualWeightsWrap">Feature Weights:
                 <div id="manualWeightsContainer" class="manual-weights-grid"></div>
                 <input type="hidden" name="manual_feature_weights" id="manualFeatureWeightsInput" value='{manual_weights_json}' />
-                <p class="muted">Weights map to the selected feature set and must add up to 1.0.</p>
+                <p class="muted">Weights map to the selected feature set and are auto-normalized to add up to 1.0.</p>
               </label>
               <label id="dqnEpisodesWrap">DQN Episodes:
                 <input type="number" min="1" step="1" name="dqn_episodes" value="{dqn_episodes_raw}" />
@@ -2095,6 +2097,7 @@ def create_app() -> "Flask":
                   <option value="model_invalidation" {"selected" if stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation (MAE-Linked)</option>
                   <option value="time_decay" {"selected" if stop_loss_strategy_raw == "time_decay" else ""}>Time-Decay (Temporal Exit)</option>
                   <option value="fixed_percentage" {"selected" if stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option>
+                  <option value="trailing_stop" {"selected" if stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop Loss</option>
                 </select>
               </label>
               <label id="fixedStopLossWrap">Fixed Stop Loss %:
@@ -2147,6 +2150,7 @@ def create_app() -> "Flask":
                   <option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation (MAE-Linked)</option>
                   <option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time-Decay (Temporal Exit)</option>
                   <option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option>
+                  <option value="trailing_stop" {"selected" if present_stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop Loss</option>
                 </select>
               </label>
               <label id="presentFixedStopLossWrap">Present Fixed Stop Loss %:
@@ -2402,7 +2406,7 @@ def create_app() -> "Flask":
               function toggleFixedStopField() {{
                 if (!stopLossStrategyEl || !fixedStopLossWrapEl) return;
                 const fixedStopInput = fixedStopLossWrapEl.querySelector('input[name="fixed_stop_pct"]');
-                const isFixed = stopLossStrategyEl.value === "fixed_percentage";
+                const isFixed = stopLossStrategyEl.value === "fixed_percentage" || stopLossStrategyEl.value === "trailing_stop";
                 fixedStopLossWrapEl.style.display = isFixed ? "block" : "none";
                 if (fixedStopInput) {{
                   fixedStopInput.disabled = !isFixed;
@@ -2512,7 +2516,7 @@ def create_app() -> "Flask":
               function togglePresentFixedStopField() {{
                 if (!presentStopLossStrategyEl || !presentFixedStopLossWrapEl) return;
                 const fixedStopInput = presentFixedStopLossWrapEl.querySelector('input[name="present_fixed_stop_pct"]');
-                const isFixed = presentStopLossStrategyEl.value === "fixed_percentage";
+                const isFixed = presentStopLossStrategyEl.value === "fixed_percentage" || presentStopLossStrategyEl.value === "trailing_stop";
                 presentFixedStopLossWrapEl.style.display = isFixed ? "block" : "none";
                 if (fixedStopInput) {{
                   fixedStopInput.disabled = !isFixed;

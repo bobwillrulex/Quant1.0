@@ -26,6 +26,7 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn('option value="model_invalidation"', html)
         self.assertIn('option value="time_decay"', html)
         self.assertIn('option value="fixed_percentage"', html)
+        self.assertIn('option value="trailing_stop"', html)
         self.assertIn('id="fixedStopLossWrap"', html)
         self.assertIn("toggleFixedStopField", html)
         self.assertIn('step="any" name="fixed_stop_pct"', html)
