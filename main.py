@@ -1600,6 +1600,8 @@ def create_app() -> "Flask":
                           <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                           <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                           <p><span class="muted">Alpha (vs Buy &amp; Hold)</span> <strong>{float(metrics['strategy'].get('alpha', metrics['strategy']['total_return'] - metrics['strategy'].get('buy_hold_total_return', 0.0))):+.2%}</strong></p>
+                          <p><span class="muted">CAPM Alpha (vs S&amp;P 500 Buy &amp; Hold)</span> <strong>{float(metrics['strategy'].get('alpha_capm_sp500_buy_hold', 0.0)):+.2%}</strong></p>
+                          <p class="muted">(β={float(metrics['strategy'].get('beta_vs_sp500', 0.0)):.3f}, Rf={float(metrics['strategy'].get('risk_free_rate', 0.0)):.2%})</p>
                           <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                           <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
                           <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
