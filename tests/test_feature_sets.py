@@ -275,3 +275,43 @@ def test_hybrid_sharpe_regime_feature_set_is_supported() -> None:
         "ema_slope_alignment",
     }
     assert expected.issubset(set(names))
+
+
+def test_hybrid_sharpe_volume_flow_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-volume-flow") == "hybrid_sharpe_volume_flow"
+    builder = get_strategy_feature_builder("hybrid_sharpe_volume_flow")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "macd_hist",
+        "macd_hist_delta",
+        "volume",
+        "volume_ma20",
+        "volume_spike_ratio",
+        "signed_volume_pressure",
+        "volume_volatility_coupling",
+        "volume_trend_coupling",
+    }
+    assert expected.issubset(set(names))
+    assert "ema_stack_bullish" not in names
+    assert "ema_stack_bearish" not in names
+
+
+def test_hybrid_sharpe_volume_regime_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-volume-regime") == "hybrid_sharpe_volume_regime"
+    builder = get_strategy_feature_builder("hybrid_sharpe_volume_regime")
+    names = builder.names()
+    expected = {
+        "volume",
+        "volume_ma20",
+        "volume_spike_ratio",
+        "high_volume_regime",
+        "low_volume_regime",
+        "trend_in_high_volume",
+        "pullback_in_low_volume",
+    }
+    assert expected.issubset(set(names))

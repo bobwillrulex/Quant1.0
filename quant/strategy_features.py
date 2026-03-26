@@ -47,6 +47,8 @@ FeatureSet = Literal[
     "hybrid_sharpe_momentum",
     "hybrid_sharpe_selective",
     "hybrid_sharpe_regime",
+    "hybrid_sharpe_volume_flow",
+    "hybrid_sharpe_volume_regime",
 ]
 
 
@@ -83,6 +85,22 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "hybrid_sharpe_selective"
     if value in ("hybrid_sharpe_regime", "hybrid-regime", "hybrid_regime", "sharpe_regime", "regime_hybrid"):
         return "hybrid_sharpe_regime"
+    if value in (
+        "hybrid_sharpe_volume_flow",
+        "hybrid-volume-flow",
+        "hybrid_volume_flow",
+        "sharpe_volume_flow",
+        "volume_flow",
+    ):
+        return "hybrid_sharpe_volume_flow"
+    if value in (
+        "hybrid_sharpe_volume_regime",
+        "hybrid-volume-regime",
+        "hybrid_volume_regime",
+        "sharpe_volume_regime",
+        "volume_regime",
+    ):
+        return "hybrid_sharpe_volume_regime"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
@@ -394,6 +412,37 @@ def build_hybrid_sharpe_regime_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_hybrid_sharpe_volume_flow_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = build_hybrid_sharpe_core_no_stack_strategy_features()
+    # Volume-pressure overlays for the no-stack Sharpe core.
+    builder.add("volume", lambda r: g(r, "volume"))
+    builder.add("volume_ma20", lambda r: g(r, "volume_ma20"))
+    builder.add(
+        "volume_spike_ratio",
+        lambda r: g(r, "volume") / max(1e-9, g(r, "volume_ma20", g(r, "volume", 1.0))),
+    )
+    builder.add("signed_volume_pressure", lambda r: g(r, "ret_1") * g(r, "volume"))
+    builder.add("volume_volatility_coupling", lambda r: g(r, "vol_20") * g(r, "volume"))
+    builder.add("volume_trend_coupling", lambda r: g(r, "trend_20") * g(r, "volume"))
+    return builder
+
+
+def build_hybrid_sharpe_volume_regime_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = build_hybrid_sharpe_volume_flow_strategy_features()
+    # Compact gating-style features for high/low participation regimes.
+    builder.add("high_volume_regime", lambda r: 1.0 if g(r, "volume") > g(r, "volume_ma20", g(r, "volume")) else 0.0)
+    builder.add("low_volume_regime", lambda r: 1.0 if g(r, "volume") <= g(r, "volume_ma20", g(r, "volume")) else 0.0)
+    builder.add("trend_in_high_volume", lambda r: g(r, "trend_20") * (1.0 if g(r, "volume") > g(r, "volume_ma20", g(r, "volume")) else 0.0))
+    builder.add("pullback_in_low_volume", lambda r: g(r, "ret_3") * (1.0 if g(r, "volume") <= g(r, "volume_ma20", g(r, "volume")) else 0.0))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
@@ -420,6 +469,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_hybrid_sharpe_selective_strategy_features()
     if normalized == "hybrid_sharpe_regime":
         return build_hybrid_sharpe_regime_strategy_features()
+    if normalized == "hybrid_sharpe_volume_flow":
+        return build_hybrid_sharpe_volume_flow_strategy_features()
+    if normalized == "hybrid_sharpe_volume_regime":
+        return build_hybrid_sharpe_volume_regime_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -450,6 +503,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "hybrid_sharpe_momentum"
     if isinstance(names, list) and "trend_20" in names and "vol_20" in names and "stoch_rsi_norm" in names:
         return "hybrid_sharpe_regime"
+    if isinstance(names, list) and "volume_spike_ratio" in names and "high_volume_regime" in names:
+        return "hybrid_sharpe_volume_regime"
+    if isinstance(names, list) and "volume_spike_ratio" in names:
+        return "hybrid_sharpe_volume_flow"
     if isinstance(names, list) and "ema3_slope" in names and "ema9_slope" in names and "ema21_slope" not in names and "macd_hist_delta" not in names:
         return "hybrid_sharpe_selective"
     if isinstance(names, list) and "ema3_9_spread" in names and "macd_green_increasing" in names and "ema_stack_bullish" not in names and "ema_slope_alignment" not in names:
