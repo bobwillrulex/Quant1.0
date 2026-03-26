@@ -45,6 +45,8 @@ FeatureSet = Literal[
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
+    "hybrid_sharpe_selective",
+    "hybrid_sharpe_regime",
 ]
 
 
@@ -77,6 +79,10 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "hybrid_sharpe_core_no_stack"
     if value in ("hybrid_sharpe_momentum", "hybrid-momentum", "hybrid_momentum", "sharpe_momentum", "momentum_hybrid"):
         return "hybrid_sharpe_momentum"
+    if value in ("hybrid_sharpe_selective", "hybrid-selective", "hybrid_selective", "sharpe_selective", "selective_hybrid"):
+        return "hybrid_sharpe_selective"
+    if value in ("hybrid_sharpe_regime", "hybrid-regime", "hybrid_regime", "sharpe_regime", "regime_hybrid"):
+        return "hybrid_sharpe_regime"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
@@ -350,6 +356,44 @@ def build_hybrid_sharpe_momentum_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_hybrid_sharpe_selective_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    # Compact subset leaning on the stronger/less noisy contributors from prior ablations.
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_green_increasing", lambda r: g(r, "macd_green_increasing"))
+    builder.add("macd_red_recovering", lambda r: g(r, "macd_red_recovering"))
+    builder.add("ema_derivative_1_diff", lambda r: g(r, "ema_derivative_1_diff"))
+    builder.add("ema_derivative_1_cross_positive", lambda r: g(r, "ema_derivative_1_cross_positive"))
+    builder.add("ema_derivative_1_cross_negative", lambda r: g(r, "ema_derivative_1_cross_negative"))
+    return builder
+
+
+def build_hybrid_sharpe_regime_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = build_hybrid_sharpe_core_no_stack_strategy_features()
+    # Add context features to better handle sideways/high-volatility drag.
+    builder.add("trend_20", lambda r: g(r, "trend_20"))
+    builder.add("vol_20", lambda r: g(r, "vol_20"))
+    builder.add("ret_1", lambda r: g(r, "ret_1"))
+    builder.add("ret_3", lambda r: g(r, "ret_3"))
+    builder.add("stoch_rsi_norm", lambda r: g(r, "stoch_rsi") / 100.0)
+    builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
@@ -372,6 +416,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_hybrid_sharpe_core_no_stack_strategy_features()
     if normalized == "hybrid_sharpe_momentum":
         return build_hybrid_sharpe_momentum_strategy_features()
+    if normalized == "hybrid_sharpe_selective":
+        return build_hybrid_sharpe_selective_strategy_features()
+    if normalized == "hybrid_sharpe_regime":
+        return build_hybrid_sharpe_regime_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -400,6 +448,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_anchor"
     if isinstance(names, list) and "ema_slope_alignment" in names and "ema_spread_balance" in names:
         return "hybrid_sharpe_momentum"
+    if isinstance(names, list) and "trend_20" in names and "vol_20" in names and "stoch_rsi_norm" in names:
+        return "hybrid_sharpe_regime"
+    if isinstance(names, list) and "ema3_slope" in names and "ema9_slope" in names and "ema21_slope" not in names and "macd_hist_delta" not in names:
+        return "hybrid_sharpe_selective"
     if isinstance(names, list) and "ema3_9_spread" in names and "macd_green_increasing" in names and "ema_stack_bullish" not in names and "ema_slope_alignment" not in names:
         return "hybrid_sharpe_core_no_stack"
     if isinstance(names, list) and "ema_stack_bullish" in names and "macd_green_increasing" in names and "ema_slope_alignment" not in names:

@@ -512,6 +512,8 @@ def strategy_metrics(
     sd = stddev(pnl)
     sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
+    total_return = equity - 1.0
+    buy_hold_total_return = compounded_return(buy_hold_source)
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
@@ -529,8 +531,9 @@ def strategy_metrics(
         "fixed_stop_pct": float(stop_cfg.fixed_pct),
         "model_mae": float(stop_cfg.model_mae),
         "atr_multiplier": float(stop_cfg.atr_multiplier),
-        "total_return": equity - 1.0,
-        "buy_hold_total_return": compounded_return(buy_hold_source),
+        "total_return": total_return,
+        "buy_hold_total_return": buy_hold_total_return,
+        "alpha": total_return - buy_hold_total_return,
         "sharpe": sharpe,
         "max_drawdown": max_drawdown,
         "avg_drawdown": avg_drawdown,
@@ -839,6 +842,7 @@ def run_model(rows: Sequence[Row], feature_set: FeatureSet | str = "feature2") -
         f"Avg Gain/Trade: {strat['avg_gain_per_trade']:+.4%}, Max Loss/Trade: {strat['max_loss_per_trade']:+.4%}"
     )
     print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
+    print(f"Alpha vs Buy & Hold: {strat['alpha']:+.2%}")
 
 
 def run_model_metrics(rows: Sequence[Row], feature_set: FeatureSet | str = "feature2") -> Dict[str, object]:
