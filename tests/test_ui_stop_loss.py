@@ -115,6 +115,94 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Model Evaluation Summary", response.get_data(as_text=True))
 
+    @patch("main.list_saved_models")
+    @patch("main.save_model_configs")
+    @patch("main.load_model_configs")
+    @patch("main.save_model_bundle")
+    @patch("main.fetch_market_rows")
+    @patch("main.evaluate_bundle")
+    @patch("main.train_strategy_models")
+    def test_blank_model_name_defaults_to_ticker_rows_feature_set(
+        self,
+        train_mock,
+        eval_mock,
+        fetch_market_rows_mock,
+        save_bundle_mock,
+        load_configs_mock,
+        save_configs_mock,
+        list_models_mock,
+    ):
+        fetch_market_rows_mock.return_value = (
+            [
+                {"return_next": 0.01},
+                {"return_next": -0.01},
+                {"return_next": 0.02},
+                {"return_next": 0.01},
+            ],
+            None,
+        )
+        train_mock.return_value = {
+            "x_test_raw": [[0.1], [0.2]],
+            "y_test_ret": [0.01, -0.01],
+            "y_test_dir": [1, 0],
+            "train_size": 2,
+            "test_size": 2,
+            "split_style": "shuffled",
+        }
+        eval_mock.return_value = {
+            "accuracy": 0.5,
+            "mse": 0.01,
+            "strategy": {
+                "total_return": 0.01,
+                "trade_count": 1,
+                "win_rate": 1.0,
+                "max_drawdown": 0.0,
+                "sharpe_like": 1.0,
+                "profit_factor": 1.0,
+                "avg_return_per_trade": 0.01,
+                "stop_exit_count": 0,
+                "model_exit_count": 0,
+                "sell_exit_count": 0,
+                "hold_streak_stats": {"count": 0, "min": 0, "q1": 0, "median": 0, "q3": 0, "max": 0},
+                "equity_curve": [1.0, 1.01],
+            },
+            "preview": [],
+            "lin_weights": [],
+            "logit_weights": [],
+            "calibration": [],
+            "pnl_by_signal_strength": [],
+            "pnl_by_regime": [],
+            "confidence_edge": {"p_gt_0.6": {"count": 0, "accuracy": 0.0}, "p_gt_0.7": {"count": 0, "accuracy": 0.0}},
+            "return_vs_pred_corr": 0.0,
+        }
+        load_configs_mock.return_value = {}
+        list_models_mock.return_value = []
+
+        response = self.app.post(
+            "/",
+            data={
+                "mode": "train",
+                "train_action": "train",
+                "ticker": "AAPL",
+                "interval": "1d",
+                "rows": "4000",
+                "split_style": "shuffled",
+                "feature_set": "fvg2",
+                "buy_threshold": "0.6",
+                "sell_threshold": "0.4",
+                "selected_model": "__new__",
+                "model_name": "",
+                "stop_loss_strategy": "none",
+                "fixed_stop_pct": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        save_bundle_mock.assert_called_once()
+        self.assertEqual(save_bundle_mock.call_args[0][1], "aapl_4000_fvg2")
+        saved_payload = save_configs_mock.call_args[0][1]
+        self.assertIn("aapl_4000_fvg2", saved_payload)
+
     @patch("main.save_model_configs")
     @patch("main.list_saved_models")
     @patch("main.load_model_configs")
