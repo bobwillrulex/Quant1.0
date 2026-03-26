@@ -178,6 +178,22 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.021, places=6)
 
+    def test_fixed_stop_caps_reported_max_drawdown_to_trade_stop_bound(self):
+        returns = [0.10, 0.10, -0.06, 0.0]
+        probs = [0.9] * len(returns)
+        expected = [0.02] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
+        )
+        self.assertLessEqual(float(metrics["max_drawdown"]), 0.021)
+
 
 if __name__ == "__main__":
     unittest.main()

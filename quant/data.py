@@ -95,7 +95,9 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         lo = min(window)
         hi = max(window)
         stoch_rsi.append(50.0 if hi - lo < 1e-12 else 100.0 * ((rsi[i] - lo) / (hi - lo)))
+    ema_3 = ema(closes, 3)
     ema_9 = ema(closes, 9)
+    ema_21 = ema(closes, 21)
     ema_12 = ema(closes, 12)
     ema_26 = ema(closes, 26)
     macd = [a - b for a, b in zip(ema_12, ema_26)]
@@ -105,6 +107,8 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     ema9_derivative_1 = [0.0] + [ema_9[i] - ema_9[i - 1] for i in range(1, len(ema_9))]
     ema9_derivative_2 = [0.0] + [ema9_derivative_1[i] - ema9_derivative_1[i - 1] for i in range(1, len(ema9_derivative_1))]
     ema9_derivative_3 = [0.0] + [ema9_derivative_2[i] - ema9_derivative_2[i - 1] for i in range(1, len(ema9_derivative_2))]
+    ema3_derivative_1 = [0.0] + [ema_3[i] - ema_3[i - 1] for i in range(1, len(ema_3))]
+    ema21_derivative_1 = [0.0] + [ema_21[i] - ema_21[i - 1] for i in range(1, len(ema_21))]
     ema26_derivative_1 = [0.0] + [ema_26[i] - ema_26[i - 1] for i in range(1, len(ema_26))]
     ema26_derivative_2 = [0.0] + [ema26_derivative_1[i] - ema26_derivative_1[i - 1] for i in range(1, len(ema26_derivative_1))]
     ema26_derivative_3 = [0.0] + [ema26_derivative_2[i] - ema26_derivative_2[i - 1] for i in range(1, len(ema26_derivative_2))]
@@ -112,6 +116,20 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     ema_derivative_2_diff = [a - b for a, b in zip(ema9_derivative_2, ema26_derivative_2)]
     ema_derivative_3_diff = [a - b for a, b in zip(ema9_derivative_3, ema26_derivative_3)]
     close_returns = [0.0] + [((closes[i] - closes[i - 1]) / closes[i - 1]) if closes[i - 1] != 0 else 0.0 for i in range(1, n)]
+    rolling_window = 20
+    bb_middle: List[float] = []
+    bb_std: List[float] = []
+    for i in range(n):
+        start = max(0, i - rolling_window + 1)
+        window = closes[start : i + 1]
+        mean = sum(window) / len(window)
+        variance = sum((v - mean) ** 2 for v in window) / len(window)
+        bb_middle.append(mean)
+        bb_std.append(variance ** 0.5)
+    bb_upper = [mid + (2.0 * sd) for mid, sd in zip(bb_middle, bb_std)]
+    bb_lower = [mid - (2.0 * sd) for mid, sd in zip(bb_middle, bb_std)]
+    hlc3 = [(highs[i] + lows[i] + closes[i]) / 3.0 for i in range(n)]
+    range_weight = [max(1e-9, highs[i] - lows[i]) for i in range(n)]
     atr_frac: List[float] = []
     atr_window = 14
     abs_ret_window: List[float] = []
@@ -120,6 +138,21 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         if len(abs_ret_window) > atr_window:
             abs_ret_window.pop(0)
         atr_frac.append(sum(abs_ret_window) / len(abs_ret_window))
+    vwap_lookback = 60
+    vwap_anchor_high: List[float] = []
+    vwap_anchor_low: List[float] = []
+    for i in range(n):
+        start = max(0, i - vwap_lookback + 1)
+        high_anchor_idx = max(range(start, i + 1), key=lambda idx: highs[idx])
+        low_anchor_idx = min(range(start, i + 1), key=lambda idx: lows[idx])
+        high_weights = range_weight[high_anchor_idx : i + 1]
+        high_prices = hlc3[high_anchor_idx : i + 1]
+        low_weights = range_weight[low_anchor_idx : i + 1]
+        low_prices = hlc3[low_anchor_idx : i + 1]
+        high_denom = sum(high_weights)
+        low_denom = sum(low_weights)
+        vwap_anchor_high.append(sum(p * w for p, w in zip(high_prices, high_weights)) / (high_denom if high_denom != 0 else 1.0))
+        vwap_anchor_low.append(sum(p * w for p, w in zip(low_prices, low_weights)) / (low_denom if low_denom != 0 else 1.0))
     rows: List[Row] = []
     last_bull_gap_low = 0.0
     last_bull_gap_high = 0.0
@@ -182,8 +215,12 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "macd_green_fading": macd_green_fading,
                 "macd_red_deepening": macd_red_deepening,
                 "ema9": ema_9[i],
+                "ema3": ema_3[i],
+                "ema21": ema_21[i],
                 "ema26": ema_26[i],
+                "ema3_derivative_1": ema3_derivative_1[i],
                 "ema9_derivative_1": ema9_derivative_1[i],
+                "ema21_derivative_1": ema21_derivative_1[i],
                 "ema9_derivative_2": ema9_derivative_2[i],
                 "ema9_derivative_3": ema9_derivative_3[i],
                 "ema26_derivative_1": ema26_derivative_1[i],
@@ -224,6 +261,12 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "first_red_fvg_touch": 1.0 if (prev_bearish_gap > 0 and highs[i] >= lows[i - 3]) else 0.0,
                 "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
                 "close": closes[i],
+                "bb_upper": bb_upper[i],
+                "bb_middle": bb_middle[i],
+                "bb_lower": bb_lower[i],
+                "bb_percent_b": ((closes[i] - bb_lower[i]) / (bb_upper[i] - bb_lower[i])) if abs(bb_upper[i] - bb_lower[i]) > 1e-12 else 0.5,
+                "vwap_anchor_high": vwap_anchor_high[i],
+                "vwap_anchor_low": vwap_anchor_low[i],
                 "atr_frac": atr_frac[i],
             }
         )
