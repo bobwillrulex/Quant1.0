@@ -35,6 +35,7 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn("togglePresentFixedStopField", html)
         self.assertIn("Stop Strategy", html)
         self.assertIn("Stop Price", html)
+        self.assertIn("split(/[,\\\\n]/)", html)
 
     def test_manage_models_disables_fixed_stop_input_when_not_fixed_strategy(self):
         response = self.app.get("/manage-models")
