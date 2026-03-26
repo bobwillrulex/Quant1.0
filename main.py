@@ -1330,7 +1330,7 @@ def create_app() -> "Flask":
                                     f"<td colspan='2'>Error: {error_message}</td>"
                                     "</tr>"
                                 )
-                        if train_action == "train" and model_names:
+                        if train_action == "train":
                             save_model_configs(mode_key, model_configs)
                             saved_models = list_saved_models(mode_key)
                         result_html = (

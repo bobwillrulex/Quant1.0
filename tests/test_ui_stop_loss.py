@@ -257,6 +257,95 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(saved_payload["model_a"]["stop_loss_strategy"], "atr")
         self.assertEqual(saved_payload["model_b"]["stop_loss_strategy"], "atr")
 
+    @patch("main.list_saved_models")
+    @patch("main.save_model_configs")
+    @patch("main.load_model_configs")
+    @patch("main.save_model_bundle")
+    @patch("main.fetch_market_rows")
+    @patch("main.evaluate_bundle")
+    @patch("main.train_strategy_models")
+    def test_multi_ticker_training_saves_model_configs_without_explicit_model_names(
+        self,
+        train_mock,
+        eval_mock,
+        fetch_market_rows_mock,
+        save_bundle_mock,
+        load_configs_mock,
+        save_configs_mock,
+        list_models_mock,
+    ):
+        fetch_market_rows_mock.return_value = (
+            [
+                {"return_next": 0.01},
+                {"return_next": -0.01},
+                {"return_next": 0.02},
+                {"return_next": 0.01},
+            ],
+            None,
+        )
+        train_mock.return_value = {
+            "x_test_raw": [[0.1], [0.2]],
+            "y_test_ret": [0.01, -0.01],
+            "y_test_dir": [1, 0],
+            "train_size": 2,
+            "test_size": 2,
+            "split_style": "shuffled",
+        }
+        eval_mock.return_value = {
+            "accuracy": 0.5,
+            "mse": 0.01,
+            "strategy": {
+                "total_return": 0.01,
+                "trade_count": 1,
+                "win_rate": 1.0,
+                "max_drawdown": 0.0,
+                "sharpe_like": 1.0,
+                "profit_factor": 1.0,
+                "avg_return_per_trade": 0.01,
+                "stop_exit_count": 0,
+                "model_exit_count": 0,
+                "sell_exit_count": 0,
+                "hold_streak_stats": {"count": 0, "min": 0, "q1": 0, "median": 0, "q3": 0, "max": 0},
+                "equity_curve": [1.0, 1.01],
+            },
+            "preview": [],
+            "lin_weights": [],
+            "logit_weights": [],
+            "calibration": [],
+            "pnl_by_signal_strength": [],
+            "pnl_by_regime": [],
+            "confidence_edge": {"p_gt_0.6": {"count": 0, "accuracy": 0.0}, "p_gt_0.7": {"count": 0, "accuracy": 0.0}},
+            "return_vs_pred_corr": 0.0,
+        }
+        load_configs_mock.return_value = {}
+        list_models_mock.return_value = []
+
+        response = self.app.post(
+            "/",
+            data={
+                "mode": "train",
+                "train_action": "train",
+                "ticker": "NVDA,AMD",
+                "interval": "1d",
+                "rows": "4000",
+                "split_style": "shuffled",
+                "feature_set": "hybrid_sharpe_core_no_stack",
+                "buy_threshold": "0.6",
+                "sell_threshold": "0.4",
+                "selected_model": "__new__",
+                "model_name": "",
+                "stop_loss_strategy": "none",
+                "fixed_stop_pct": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(save_bundle_mock.call_count, 2)
+        self.assertTrue(save_configs_mock.called)
+        saved_payload = save_configs_mock.call_args[0][1]
+        self.assertEqual(saved_payload["nvda_4000_hybrid_sharpe_core_no_stack"]["ticker"], "NVDA")
+        self.assertEqual(saved_payload["amd_4000_hybrid_sharpe_core_no_stack"]["ticker"], "AMD")
+
 
 if __name__ == "__main__":
     unittest.main()
