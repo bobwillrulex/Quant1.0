@@ -297,6 +297,7 @@ def strategy_metrics(
     short_threshold: float = 0.4,
     trade_cost: float = 0.0005,
     buy_hold_returns: Sequence[float] | None = None,
+    buy_hold_total_return_override: float | None = None,
     allow_short: bool = True,
     min_hold_bars: int = 0,
     prob_smoothing_window: int = 3,
@@ -513,7 +514,11 @@ def strategy_metrics(
     sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
     total_return = equity - 1.0
-    buy_hold_total_return = compounded_return(buy_hold_source)
+    buy_hold_total_return = (
+        float(buy_hold_total_return_override)
+        if buy_hold_total_return_override is not None
+        else compounded_return(buy_hold_source)
+    )
     risk_free_rate = 0.0
     if pnl and len(pnl) == len(buy_hold_source):
         strat_mean = sum(pnl) / len(pnl)
@@ -756,6 +761,13 @@ def evaluate_bundle(
     cls = classification_metrics(y_test_dir, up_prob)
     baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
     baseline_zero = [0.0] * len(y_test_ret)
+    buy_hold_total_return_override: float | None = None
+    if eval_rows and split_style == "chronological":
+        test_rows = list(eval_rows)[-len(y_test_ret) :] if y_test_ret else []
+        closes = [float(row["close"]) for row in test_rows if "close" in row]
+        if len(closes) >= 2 and closes[0] != 0.0:
+            buy_hold_total_return_override = (closes[-1] / closes[0]) - 1.0
+
     strategy = strategy_metrics(
         y_test_ret,
         up_prob,
@@ -764,6 +776,7 @@ def evaluate_bundle(
         short_threshold=sell_threshold,
         trade_cost=0.0005,
         buy_hold_returns=y_test_ret,
+        buy_hold_total_return_override=buy_hold_total_return_override,
         allow_short=allow_short,
         stop_loss=stop_loss,
     )
