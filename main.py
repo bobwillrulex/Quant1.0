@@ -2128,6 +2128,8 @@ def create_app() -> "Flask":
                   <option value="hybrid_sharpe_momentum" {"selected" if feature_set == "hybrid_sharpe_momentum" else ""}>Hybrid Sharpe Momentum (expanded)</option>
                   <option value="hybrid_sharpe_selective" {"selected" if feature_set == "hybrid_sharpe_selective" else ""}>Hybrid Sharpe Selective (compact blend)</option>
                   <option value="hybrid_sharpe_regime" {"selected" if feature_set == "hybrid_sharpe_regime" else ""}>Hybrid Sharpe Regime (context aware)</option>
+                  <option value="hybrid_sharpe_volume_flow" {"selected" if feature_set == "hybrid_sharpe_volume_flow" else ""}>Hybrid Sharpe Volume Flow (no-stack + participation)</option>
+                  <option value="hybrid_sharpe_volume_regime" {"selected" if feature_set == "hybrid_sharpe_volume_regime" else ""}>Hybrid Sharpe Volume Regime (flow + gating)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
@@ -2735,6 +2737,8 @@ def parse_args() -> argparse.Namespace:
             "hybrid_sharpe_momentum",
             "hybrid_sharpe_selective",
             "hybrid_sharpe_regime",
+            "hybrid_sharpe_volume_flow",
+            "hybrid_sharpe_volume_regime",
             "dqn",
             "fvg2",
             "fvg3",
