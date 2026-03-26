@@ -144,6 +144,24 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(metrics["total_return"]), -0.01099475, places=6)
 
+
+    def test_auto_threshold_fallback_activates_when_no_signals(self):
+        returns = [0.01, -0.005, 0.004, -0.002]
+        probs = [0.525] * len(returns)
+        expected = [0.002] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.4,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
+        )
+        self.assertEqual(metrics["threshold_mode"], "auto_fallback_0_5")
+        self.assertGreaterEqual(metrics["trade_count"], 1.0)
+
     def test_fixed_stop_caps_max_trade_loss_near_stop_plus_costs(self):
         returns = [-0.08, -0.03, 0.0]
         probs = [0.9, 0.9, 0.2]
