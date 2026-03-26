@@ -123,3 +123,30 @@ def test_derivative_crossovers_use_only_current_and_previous_bar() -> None:
     ]
     for key in keys:
         assert rows_a[row_index][key] == rows_b[row_index][key]
+
+
+def test_ema_bollinger_and_vwap_columns_are_present_and_dynamic() -> None:
+    highs, lows, closes = _build_ohlc(120)
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+    sample = rows[-1]
+    required_keys = [
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_derivative_1",
+        "ema9_derivative_1",
+        "ema21_derivative_1",
+        "bb_upper",
+        "bb_middle",
+        "bb_lower",
+        "bb_percent_b",
+        "vwap_anchor_high",
+        "vwap_anchor_low",
+    ]
+    for key in required_keys:
+        assert key in sample
+
+    vwap_high_values = [row["vwap_anchor_high"] for row in rows]
+    vwap_low_values = [row["vwap_anchor_low"] for row in rows]
+    assert max(vwap_high_values) - min(vwap_high_values) > 0.0
+    assert max(vwap_low_values) - min(vwap_low_values) > 0.0

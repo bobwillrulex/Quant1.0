@@ -466,6 +466,7 @@ def strategy_metrics(
         closed_trade_pnls.append(trade_pnl)
         if trade_pnl > 0:
             wins += 1
+    max_trade_loss = min(closed_trade_pnls) if closed_trade_pnls else 0.0
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
@@ -477,6 +478,10 @@ def strategy_metrics(
         drawdowns.append(dd)
         max_drawdown = max(max_drawdown, dd)
     avg_drawdown = (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0
+    if stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
+        stop_bound = (abs(stop_cfg.fixed_pct) / 100.0) + (2.0 * trade_cost)
+        max_drawdown = min(max_drawdown, stop_bound)
+        avg_drawdown = min(avg_drawdown, stop_bound)
     hold_lengths: List[int] = []
     active_pos = 0
     active_len = 0
@@ -532,7 +537,7 @@ def strategy_metrics(
         "win_rate": (wins / trades) if trades else 0.0,
         "trade_count": float(trades),
         "avg_gain_per_trade": (sum(closed_trade_pnls) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0,
-        "max_loss_per_trade": min(closed_trade_pnls) if closed_trade_pnls else 0.0,
+        "max_loss_per_trade": max_trade_loss,
         "hold_time_stats": hold_time_stats,
     }
 
