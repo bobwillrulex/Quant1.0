@@ -1264,59 +1264,72 @@ def create_app() -> "Flask":
                         model_configs = load_model_configs(mode_key)
                         multi_rows_used_notes = []
                         for idx, ticker_symbol in enumerate(tickers):
-                            dataset, provider_notice = fetch_market_rows(
-                                ticker=ticker_symbol,
-                                interval=interval,
-                                row_count=row_count,
-                                provider=data_provider,
-                                twelve_api_key=twelve_api_key,
-                            )
-                            if provider_notice:
-                                provider_notices.append(provider_notice)
-                            if len(dataset) < row_count:
-                                multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
-                            bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
-                            metrics = evaluate_bundle(
-                                bundle,
-                                bundle["x_test_raw"],
-                                bundle["y_test_ret"],
-                                bundle["y_test_dir"],
-                                eval_rows=dataset,
-                                split_style=split_style,
-                                buy_threshold=buy_threshold,
-                                sell_threshold=sell_threshold,
-                                allow_short=allow_short,
-                                stop_loss=stop_loss_config,
-                            )
-                            trained_model_name = ""
-                            if train_action == "train":
-                                candidate_name = model_names[idx] if model_names else ""
-                                trained_model_name = sanitize_model_name(candidate_name) if candidate_name else build_default_model_name(
+                            try:
+                                dataset, provider_notice = fetch_market_rows(
                                     ticker=ticker_symbol,
+                                    interval=interval,
                                     row_count=row_count,
-                                    feature_set=feature_set,
+                                    provider=data_provider,
+                                    twelve_api_key=twelve_api_key,
                                 )
-                                save_model_bundle(mode_key, trained_model_name, bundle)
-                                model_configs[trained_model_name] = {
-                                    "ticker": ticker_symbol,
-                                    "interval": interval,
-                                    "rows": row_count,
-                                    "include_in_run_all": True,
-                                    "buy_threshold": buy_threshold,
-                                    "sell_threshold": sell_threshold,
-                                    "stop_loss_strategy": stop_loss_strategy.value,
-                                    "fixed_stop_pct": fixed_stop_pct,
-                                }
-                            multi_rows.append(
-                                "<tr>"
-                                f"<td>{ticker_symbol}</td>"
-                                f"<td>{trained_model_name or '(not saved)'}</td>"
-                                f"<td>{metrics['accuracy']:.4f}</td>"
-                                f"<td>{metrics['mse']:.8f}</td>"
-                                f"<td>{metrics['strategy']['total_return']:+.2%}</td>"
-                                f"<td>{int(metrics['strategy']['trade_count'])}</td>"
-                                "</tr>"
-                            )
+                                if provider_notice:
+                                    provider_notices.append(provider_notice)
+                                if len(dataset) < row_count:
+                                    multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
+                                bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
+                                metrics = evaluate_bundle(
+                                    bundle,
+                                    bundle["x_test_raw"],
+                                    bundle["y_test_ret"],
+                                    bundle["y_test_dir"],
+                                    eval_rows=dataset,
+                                    split_style=split_style,
+                                    buy_threshold=buy_threshold,
+                                    sell_threshold=sell_threshold,
+                                    allow_short=allow_short,
+                                    stop_loss=stop_loss_config,
+                                )
+                                trained_model_name = ""
+                                if train_action == "train":
+                                    candidate_name = model_names[idx] if model_names else ""
+                                    trained_model_name = sanitize_model_name(candidate_name) if candidate_name else build_default_model_name(
+                                        ticker=ticker_symbol,
+                                        row_count=row_count,
+                                        feature_set=feature_set,
+                                    )
+                                    save_model_bundle(mode_key, trained_model_name, bundle)
+                                    model_configs[trained_model_name] = {
+                                        "ticker": ticker_symbol,
+                                        "interval": interval,
+                                        "rows": row_count,
+                                        "include_in_run_all": True,
+                                        "buy_threshold": buy_threshold,
+                                        "sell_threshold": sell_threshold,
+                                        "stop_loss_strategy": stop_loss_strategy.value,
+                                        "fixed_stop_pct": fixed_stop_pct,
+                                    }
+                                multi_rows.append(
+                                    "<tr>"
+                                    f"<td>{ticker_symbol}</td>"
+                                    f"<td>{trained_model_name or '(not saved)'}</td>"
+                                    f"<td>{metrics['accuracy']:.4f}</td>"
+                                    f"<td>{metrics['mse']:.8f}</td>"
+                                    f"<td>{metrics['strategy']['total_return']:+.2%}</td>"
+                                    f"<td>{int(metrics['strategy']['trade_count'])}</td>"
+                                    "</tr>"
+                                )
+                            except Exception as exc:
+                                error_message = str(exc)
+                                print(f"Multi-ticker run skipped {ticker_symbol}: {error_message}")
+                                multi_rows.append(
+                                    "<tr>"
+                                    f"<td>{ticker_symbol}</td>"
+                                    "<td>(error)</td>"
+                                    "<td>—</td>"
+                                    "<td>—</td>"
+                                    f"<td colspan='2'>Error: {error_message}</td>"
+                                    "</tr>"
+                                )
                         if train_action == "train" and model_names:
                             save_model_configs(mode_key, model_configs)
                             saved_models = list_saved_models(mode_key)
