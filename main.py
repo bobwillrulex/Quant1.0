@@ -78,6 +78,10 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
     return values
 
 
+def build_default_model_name(*, ticker: str, row_count: int, feature_set: str) -> str:
+    return sanitize_model_name(f"{ticker.lower()}_{row_count}_{feature_set}")
+
+
 def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[float]:
     if expected_feature_count <= 0:
         raise ValueError("Feature set must include at least one feature for manual weighting.")
@@ -1287,19 +1291,22 @@ def create_app() -> "Flask":
                             trained_model_name = ""
                             if train_action == "train":
                                 candidate_name = model_names[idx] if model_names else ""
-                                if candidate_name:
-                                    trained_model_name = sanitize_model_name(candidate_name)
-                                    save_model_bundle(mode_key, trained_model_name, bundle)
-                                    model_configs[trained_model_name] = {
-                                        "ticker": ticker_symbol,
-                                        "interval": interval,
-                                        "rows": row_count,
-                                        "include_in_run_all": True,
-                                        "buy_threshold": buy_threshold,
-                                        "sell_threshold": sell_threshold,
-                                        "stop_loss_strategy": stop_loss_strategy.value,
-                                        "fixed_stop_pct": fixed_stop_pct,
-                                    }
+                                trained_model_name = sanitize_model_name(candidate_name) if candidate_name else build_default_model_name(
+                                    ticker=ticker_symbol,
+                                    row_count=row_count,
+                                    feature_set=feature_set,
+                                )
+                                save_model_bundle(mode_key, trained_model_name, bundle)
+                                model_configs[trained_model_name] = {
+                                    "ticker": ticker_symbol,
+                                    "interval": interval,
+                                    "rows": row_count,
+                                    "include_in_run_all": True,
+                                    "buy_threshold": buy_threshold,
+                                    "sell_threshold": sell_threshold,
+                                    "stop_loss_strategy": stop_loss_strategy.value,
+                                    "fixed_stop_pct": fixed_stop_pct,
+                                }
                             multi_rows.append(
                                 "<tr>"
                                 f"<td>{ticker_symbol}</td>"
@@ -1408,10 +1415,15 @@ def create_app() -> "Flask":
                             metrics["train_size"] = bundle["train_size"]
                             if use_manual_weights:
                                 metrics["manual_weights"] = True
-                            if train_action == "train" and model_name:
-                                save_model_bundle(mode_key, model_name, bundle)
+                            if train_action == "train":
+                                model_name_to_save = sanitize_model_name(model_name) if model_name else build_default_model_name(
+                                    ticker=ticker,
+                                    row_count=row_count,
+                                    feature_set=feature_set,
+                                )
+                                save_model_bundle(mode_key, model_name_to_save, bundle)
                                 model_configs = load_model_configs(mode_key)
-                                model_configs[sanitize_model_name(model_name)] = {
+                                model_configs[model_name_to_save] = {
                                     "ticker": ticker,
                                     "interval": interval,
                                     "rows": row_count,
@@ -1422,7 +1434,7 @@ def create_app() -> "Flask":
                                     "fixed_stop_pct": fixed_stop_pct,
                                 }
                                 save_model_configs(mode_key, model_configs)
-                                metrics["saved_model"] = model_name
+                                metrics["saved_model"] = model_name_to_save
                                 saved_models = list_saved_models(mode_key)
     
                         preview_rows = "".join(
