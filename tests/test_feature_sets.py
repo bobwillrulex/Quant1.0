@@ -152,3 +152,53 @@ def test_vwap_anchor_feature_set_is_supported() -> None:
         "vwap_anchor_mid_bias",
     }
     assert expected.issubset(set(names))
+
+
+def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-core") == "hybrid_sharpe_core"
+    builder = get_strategy_feature_builder("hybrid_sharpe_core")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema_stack_bullish",
+        "ema_stack_bearish",
+        "ema3_slope",
+        "ema9_slope",
+        "ema21_slope",
+        "macd_hist",
+        "macd_hist_delta",
+        "macd_green_increasing",
+        "macd_red_recovering",
+        "macd_green_fading",
+        "macd_red_deepening",
+        "ema_derivative_1_diff",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_hybrid_sharpe_momentum_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid_momentum") == "hybrid_sharpe_momentum"
+    builder = get_strategy_feature_builder("hybrid_sharpe_momentum")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "macd_hist",
+        "macd_hist_delta",
+        "ema_derivative_2_diff",
+        "ema_derivative_3_diff",
+        "ema_derivative_2_cross_positive",
+        "ema_derivative_2_cross_negative",
+        "ema_derivative_3_cross_positive",
+        "ema_derivative_3_cross_negative",
+        "ema_slope_alignment",
+        "ema_spread_balance",
+    }
+    assert expected.issubset(set(names))

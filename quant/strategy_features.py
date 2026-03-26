@@ -30,7 +30,21 @@ class StrategyFeatureBuilder:
         return matrix
 
 
-FeatureSet = Literal["feature2", "new", "legacy", "fvg2", "fvg3", "derivative", "derivative2", "dqn", "ema", "bollinger_bands", "vwap_anchor"]
+FeatureSet = Literal[
+    "feature2",
+    "new",
+    "legacy",
+    "fvg2",
+    "fvg3",
+    "derivative",
+    "derivative2",
+    "dqn",
+    "ema",
+    "bollinger_bands",
+    "vwap_anchor",
+    "hybrid_sharpe_core",
+    "hybrid_sharpe_momentum",
+]
 
 
 def normalize_feature_set(feature_set: str) -> FeatureSet:
@@ -49,6 +63,10 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "bollinger_bands"
     if value in ("vwap_anchor", "vwap-anchor", "anchored-vwap", "anchored_vwap", "vwap"):
         return "vwap_anchor"
+    if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
+        return "hybrid_sharpe_core"
+    if value in ("hybrid_sharpe_momentum", "hybrid-momentum", "hybrid_momentum", "sharpe_momentum", "momentum_hybrid"):
+        return "hybrid_sharpe_momentum"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
@@ -265,6 +283,56 @@ def build_vwap_anchor_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_hybrid_sharpe_core_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    # EMA structure + slope (from the EMA-focused run).
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema_stack_bullish", lambda r: 1.0 if (g(r, "ema3") > g(r, "ema9") > g(r, "ema21")) else 0.0)
+    builder.add("ema_stack_bearish", lambda r: 1.0 if (g(r, "ema3") < g(r, "ema9") < g(r, "ema21")) else 0.0)
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema21_slope", lambda r: g(r, "ema21_derivative_1"))
+    # Directional momentum state (from the derivative2 run).
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("macd_green_increasing", lambda r: g(r, "macd_green_increasing"))
+    builder.add("macd_red_recovering", lambda r: g(r, "macd_red_recovering"))
+    builder.add("macd_green_fading", lambda r: g(r, "macd_green_fading"))
+    builder.add("macd_red_deepening", lambda r: g(r, "macd_red_deepening"))
+    builder.add("ema_derivative_1_diff", lambda r: g(r, "ema_derivative_1_diff"))
+    builder.add("ema_derivative_1_cross_positive", lambda r: g(r, "ema_derivative_1_cross_positive"))
+    builder.add("ema_derivative_1_cross_negative", lambda r: g(r, "ema_derivative_1_cross_negative"))
+    return builder
+
+
+def build_hybrid_sharpe_momentum_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = build_hybrid_sharpe_core_strategy_features()
+    # Extra curvature and agreement features to target risk-adjusted quality (Sharpe).
+    builder.add("ema9_derivative_2", lambda r: g(r, "ema9_derivative_2"))
+    builder.add("ema21_derivative_2", lambda r: g(r, "ema21_derivative_2"))
+    builder.add("ema9_derivative_3", lambda r: g(r, "ema9_derivative_3"))
+    builder.add("ema21_derivative_3", lambda r: g(r, "ema21_derivative_3"))
+    builder.add("ema_derivative_2_diff", lambda r: g(r, "ema_derivative_2_diff"))
+    builder.add("ema_derivative_3_diff", lambda r: g(r, "ema_derivative_3_diff"))
+    builder.add("ema_derivative_2_cross_positive", lambda r: g(r, "ema_derivative_2_cross_positive"))
+    builder.add("ema_derivative_2_cross_negative", lambda r: g(r, "ema_derivative_2_cross_negative"))
+    builder.add("ema_derivative_3_cross_positive", lambda r: g(r, "ema_derivative_3_cross_positive"))
+    builder.add("ema_derivative_3_cross_negative", lambda r: g(r, "ema_derivative_3_cross_negative"))
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    builder.add("ema_spread_balance", lambda r: (g(r, "ema3") - g(r, "ema9")) - (g(r, "ema9") - g(r, "ema21")))
+    return builder
+
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
@@ -281,6 +349,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_bollinger_bands_strategy_features()
     if normalized == "vwap_anchor":
         return build_vwap_anchor_strategy_features()
+    if normalized == "hybrid_sharpe_core":
+        return build_hybrid_sharpe_core_strategy_features()
+    if normalized == "hybrid_sharpe_momentum":
+        return build_hybrid_sharpe_momentum_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -307,6 +379,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "bollinger_bands"
     if isinstance(names, list) and "vwap_anchor_high" in names and "vwap_anchor_low" in names:
         return "vwap_anchor"
+    if isinstance(names, list) and "ema_slope_alignment" in names and "ema_spread_balance" in names:
+        return "hybrid_sharpe_momentum"
+    if isinstance(names, list) and "ema_stack_bullish" in names and "macd_green_increasing" in names and "ema_slope_alignment" not in names:
+        return "hybrid_sharpe_core"
     if isinstance(names, list) and "ema3_9_spread" in names and "bb_upper" not in names and "vwap_anchor_high" not in names:
         return "ema"
     if isinstance(names, list) and "ema9_derivative_3" in names:
