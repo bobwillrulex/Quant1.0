@@ -43,6 +43,7 @@ FeatureSet = Literal[
     "bollinger_bands",
     "vwap_anchor",
     "hybrid_sharpe_core",
+    "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
 ]
 
@@ -65,6 +66,15 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "vwap_anchor"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
+    if value in (
+        "hybrid_sharpe_core_no_stack",
+        "hybrid-core-no-stack",
+        "hybrid_core_no_stack",
+        "sharpe_core_no_stack",
+        "core_hybrid_no_stack",
+        "no_stack",
+    ):
+        return "hybrid_sharpe_core_no_stack"
     if value in ("hybrid_sharpe_momentum", "hybrid-momentum", "hybrid_momentum", "sharpe_momentum", "momentum_hybrid"):
         return "hybrid_sharpe_momentum"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
@@ -312,6 +322,13 @@ def build_hybrid_sharpe_core_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_hybrid_sharpe_core_no_stack_strategy_features() -> StrategyFeatureBuilder:
+    builder = build_hybrid_sharpe_core_strategy_features()
+    filtered = [feature for feature in builder._features if feature.name not in {"ema_stack_bullish", "ema_stack_bearish"}]
+    builder._features = filtered
+    return builder
+
+
 def build_hybrid_sharpe_momentum_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -351,6 +368,8 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_anchor_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
+    if normalized == "hybrid_sharpe_core_no_stack":
+        return build_hybrid_sharpe_core_no_stack_strategy_features()
     if normalized == "hybrid_sharpe_momentum":
         return build_hybrid_sharpe_momentum_strategy_features()
     if normalized == "derivative":
@@ -381,6 +400,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_anchor"
     if isinstance(names, list) and "ema_slope_alignment" in names and "ema_spread_balance" in names:
         return "hybrid_sharpe_momentum"
+    if isinstance(names, list) and "ema3_9_spread" in names and "macd_green_increasing" in names and "ema_stack_bullish" not in names and "ema_slope_alignment" not in names:
+        return "hybrid_sharpe_core_no_stack"
     if isinstance(names, list) and "ema_stack_bullish" in names and "macd_green_increasing" in names and "ema_slope_alignment" not in names:
         return "hybrid_sharpe_core"
     if isinstance(names, list) and "ema3_9_spread" in names and "bb_upper" not in names and "vwap_anchor_high" not in names:
