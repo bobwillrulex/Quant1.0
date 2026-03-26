@@ -514,6 +514,17 @@ def strategy_metrics(
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
     total_return = equity - 1.0
     buy_hold_total_return = compounded_return(buy_hold_source)
+    risk_free_rate = 0.0
+    if pnl and len(pnl) == len(buy_hold_source):
+        strat_mean = sum(pnl) / len(pnl)
+        market_mean = sum(buy_hold_source) / len(buy_hold_source)
+        market_var = sum((m - market_mean) ** 2 for m in buy_hold_source) / len(buy_hold_source)
+        covar = sum((s - strat_mean) * (m - market_mean) for s, m in zip(pnl, buy_hold_source)) / len(pnl)
+        beta_vs_sp500 = covar / market_var if market_var > 1e-12 else 0.0
+    else:
+        beta_vs_sp500 = 0.0
+    capm_expected_return = risk_free_rate + beta_vs_sp500 * (buy_hold_total_return - risk_free_rate)
+    alpha_capm_sp500_buy_hold = total_return - capm_expected_return
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
@@ -534,6 +545,9 @@ def strategy_metrics(
         "total_return": total_return,
         "buy_hold_total_return": buy_hold_total_return,
         "alpha": total_return - buy_hold_total_return,
+        "risk_free_rate": risk_free_rate,
+        "beta_vs_sp500": beta_vs_sp500,
+        "alpha_capm_sp500_buy_hold": alpha_capm_sp500_buy_hold,
         "sharpe": sharpe,
         "max_drawdown": max_drawdown,
         "avg_drawdown": avg_drawdown,
@@ -843,6 +857,11 @@ def run_model(rows: Sequence[Row], feature_set: FeatureSet | str = "feature2") -
     )
     print(f"Buy & Hold Return (test rows): {strat['buy_hold_total_return']:+.2%}")
     print(f"Alpha vs Buy & Hold: {strat['alpha']:+.2%}")
+    print(
+        "CAPM Alpha vs S&P 500 Buy & Hold: "
+        f"{strat['alpha_capm_sp500_buy_hold']:+.2%} "
+        f"(beta={strat['beta_vs_sp500']:.3f}, rf={strat['risk_free_rate']:.2%})"
+    )
 
 
 def run_model_metrics(rows: Sequence[Row], feature_set: FeatureSet | str = "feature2") -> Dict[str, object]:
