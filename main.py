@@ -2373,6 +2373,41 @@ def create_app() -> "Flask":
                 loadingTimer = window.setInterval(update, 220);
               }}
 
+              function parseTickerCount(rawTickerValue) {{
+                const parts = String(rawTickerValue || "")
+                  .split(/[,
+]/)
+                  .map((token) => token.trim())
+                  .filter(Boolean);
+                return Math.max(1, parts.length);
+              }}
+
+              function estimateTrainOrEvalSeconds(form, action) {{
+                const rows = Math.max(50, Number(form.querySelector('input[name="rows"]')?.value || "250"));
+                const featureSet = form.querySelector('select[name="feature_set"]')?.value || "feature2";
+                const selectedModel = form.querySelector('select[name="selected_model"]')?.value || "__new__";
+                const dqnEpisodes = Math.max(1, Number(form.querySelector('input[name="dqn_episodes"]')?.value || "120"));
+                const tickerCount = parseTickerCount(form.querySelector('input[name="ticker"]')?.value || "");
+                const isDqn = featureSet === "dqn";
+                const usesSavedModel = selectedModel !== "__new__";
+                const isMultiTicker = tickerCount > 1;
+
+                const perTickerDownloadSeconds = Math.max(3, rows / 35);
+                const perTickerFeatureSeconds = Math.max(2, rows / 55);
+                const perTickerTrainSeconds = isDqn
+                  ? Math.max(22, (rows / 12) + (dqnEpisodes * 3.8))
+                  : Math.max(5, rows / 18);
+                const perTickerEvalSeconds = Math.max(3, rows / 28);
+                const saveOverheadSeconds = action === "train" ? 3 : 0;
+
+                const perTickerTotal = usesSavedModel && !isMultiTicker && action === "evaluate"
+                  ? perTickerDownloadSeconds + perTickerFeatureSeconds + perTickerEvalSeconds
+                  : perTickerDownloadSeconds + perTickerFeatureSeconds + perTickerTrainSeconds + perTickerEvalSeconds + saveOverheadSeconds;
+
+                const seconds = 2 + (tickerCount * perTickerTotal);
+                return Math.round(Math.min(7200, Math.max(10, seconds)));
+              }}
+
               document.querySelectorAll("form").forEach((form) => {{
                 form.addEventListener("submit", (evt) => {{
                   const mode = form.querySelector('input[name="mode"]')?.value || "";
@@ -2380,16 +2415,8 @@ def create_app() -> "Flask":
                   const action = submitter?.value || "";
 
                   if (mode === "train" && (action === "train" || action === "evaluate")) {{
-                    const rows = Number(form.querySelector('input[name="rows"]')?.value || "250");
-                    const featureSet = form.querySelector('select[name="feature_set"]')?.value || "feature2";
                     const manualMode = (form.querySelector('select[name="use_manual_weights"]')?.value || "no") === "yes";
-                    const dqnEpisodes = Number(form.querySelector('input[name="dqn_episodes"]')?.value || "120");
-                    const isDqn = featureSet === "dqn";
-                    const seconds = isDqn
-                      ? Math.min(3600, Math.max(45, Math.round((rows / 8) + (dqnEpisodes * 4.5))))
-                      : (action === "train"
-                        ? Math.min(95, Math.max(12, Math.round(rows / 7)))
-                        : Math.min(70, Math.max(8, Math.round(rows / 10))));
+                    const seconds = estimateTrainOrEvalSeconds(form, action);
                     const title = action === "train"
                       ? (manualMode ? "Downloading data, saving manual-weight model, and evaluating..." : "Downloading data and training model...")
                       : "Downloading data and evaluating model...";
