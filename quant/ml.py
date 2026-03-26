@@ -314,7 +314,17 @@ def strategy_metrics(
         p_window = probs[start : i + 1]
         smoothed_probs.append(sum(p_window) / len(p_window))
 
+    requested_long_threshold = long_threshold
+    requested_short_threshold = short_threshold
     sell_threshold = short_threshold
+    has_long_signal = any(p > long_threshold for p in smoothed_probs)
+    has_short_signal = allow_short and any(p < short_threshold for p in smoothed_probs)
+    threshold_mode = "configured"
+    if not has_long_signal and not has_short_signal:
+        long_threshold = 0.5
+        sell_threshold = 0.5
+        short_threshold = 0.5
+        threshold_mode = "auto_fallback_0_5"
     positions: List[int] = []
     current_pos = 0
     bars_in_position = 0
@@ -500,6 +510,9 @@ def strategy_metrics(
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
+        "requested_long_threshold": requested_long_threshold,
+        "requested_short_threshold": requested_short_threshold,
+        "threshold_mode": threshold_mode,
         "allow_short": 1.0 if allow_short else 0.0,
         "trade_cost": trade_cost,
         "min_hold_bars": float(min_hold_bars),
@@ -539,16 +552,26 @@ def pnl_signal_strength_breakdown(returns: Sequence[float], probs: Sequence[floa
     return out
 
 
-def pnl_market_regime_breakdown(returns: Sequence[float], probs: Sequence[float], trade_cost: float = 0.0005, allow_short: bool = True) -> List[Dict[str, float]]:
+def pnl_market_regime_breakdown(
+    returns: Sequence[float],
+    probs: Sequence[float],
+    trade_cost: float = 0.0005,
+    allow_short: bool = True,
+    long_threshold: float = 0.6,
+    short_threshold: float = 0.4,
+) -> List[Dict[str, float]]:
     out = {"trending": [], "sideways": [], "high_volatility": []}
     window = 20
+    if not any(p > long_threshold for p in probs) and not (allow_short and any(p < short_threshold for p in probs)):
+        long_threshold = 0.5
+        short_threshold = 0.5
     for i in range(len(returns)):
         start = max(0, i - window + 1)
         r_win = returns[start : i + 1]
         trend = abs(sum(r_win) / max(1, len(r_win)))
         vol = stddev(r_win)
         p = probs[i]
-        pos = 1 if p > 0.6 else (-1 if (p < 0.4 and allow_short) else 0)
+        pos = 1 if p > long_threshold else (-1 if (p < short_threshold and allow_short) else 0)
         pnl = pos * returns[i] - (trade_cost if pos != 0 else 0.0)
         if vol > 0.02:
             out["high_volatility"].append(pnl)
@@ -747,7 +770,14 @@ def evaluate_bundle(
         "confidence_edge": confidence_edge_analysis(y_test_dir, up_prob),
         "strategy": strategy,
         "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
-        "pnl_by_regime": pnl_market_regime_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
+        "pnl_by_regime": pnl_market_regime_breakdown(
+            y_test_ret,
+            up_prob,
+            trade_cost=0.0005,
+            allow_short=allow_short,
+            long_threshold=float(strategy["long_threshold"]),
+            short_threshold=float(strategy["short_threshold"]),
+        ),
         "walk_forward": walk_forward_validation_rows(rows=eval_rows, max_windows=4, feature_set=feature_set) if eval_rows else [],
         "feature_ablation": feature_ablation_analysis(eval_rows, bundle["feature_names"], split_style=split_style, feature_set=feature_set) if eval_rows else [],
         "error_analysis": error_analysis(y_test_ret, up_prob, ret_pred, top_n=5),
