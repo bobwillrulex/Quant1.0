@@ -537,6 +537,19 @@ def create_app() -> "Flask":
                         model_configs.pop(model_name)
                         save_model_configs(mode_key, model_configs)
                     return redirect(manage_href)
+                elif action == "delete_all_models":
+                    deleted_count = 0
+                    for saved_model_name in saved_models:
+                        path = os.path.join(mode_model_dir(mode_key), f"{saved_model_name}.json")
+                        if os.path.exists(path):
+                            os.remove(path)
+                            deleted_count += 1
+                    if saved_models:
+                        save_model_configs(mode_key, {})
+                    message_html = (
+                        "<p style='color:#7bd88f;'><strong>Deleted all models:</strong> "
+                        f"{deleted_count} model(s) removed.</p>"
+                    )
             except Exception as exc:
                 error_html = f"<p style='color:#ff7b7b;'><strong>Error:</strong> {exc}</p>"
             saved_models = list_saved_models(mode_key)
@@ -649,6 +662,7 @@ def create_app() -> "Flask":
                   <label for="modelSearch" class="muted">Search models by name</label>
                   <div class="toolbar-right">
                     <button type="button" class="small-btn" onclick="openAllSettings()">Edit all model presets</button>
+                    <button type="button" class="small-btn" onclick="deleteAllModels()">Delete all models</button>
                     <input type="text" id="modelSearch" placeholder="Type model name (e.g. ab)" />
                   </div>
                 </div>
@@ -808,6 +822,10 @@ def create_app() -> "Flask":
               <input type="hidden" name="model_name" id="deleteModelName" />
             </form>
 
+            <form id="deleteAllForm" method="post" style="display:none;">
+              <input type="hidden" name="action" value="delete_all_models" />
+            </form>
+
             <script>
               const settingsModal = document.getElementById("settingsModal");
               const renameModal = document.getElementById("renameModal");
@@ -886,6 +904,12 @@ def create_app() -> "Flask":
                 if (confirm(`Delete model "${{menuModelName}}"?`)) {{
                   document.getElementById("deleteModelName").value = menuModelName;
                   document.getElementById("deleteForm").submit();
+                }}
+              }}
+
+              function deleteAllModels() {{
+                if (confirm("Delete ALL saved models in this mode? This cannot be undone.")) {{
+                  document.getElementById("deleteAllForm").submit();
                 }}
               }}
 
