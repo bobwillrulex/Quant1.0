@@ -1599,6 +1599,7 @@ def create_app() -> "Flask":
                           <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Stop {metrics['strategy']['stop_loss_strategy']} · Cost 0.05%</p>
                           <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                           <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
+                          <p><span class="muted">Alpha (vs Buy &amp; Hold)</span> <strong>{float(metrics['strategy'].get('alpha', metrics['strategy']['total_return'] - metrics['strategy'].get('buy_hold_total_return', 0.0))):+.2%}</strong></p>
                           <p><span class="muted">Sharpe</span> <strong>{metrics['strategy']['sharpe']:.3f}</strong></p>
                           <p><span class="muted">Max Drawdown</span> {metrics['strategy']['max_drawdown']:.2%}</p>
                           <p><span class="muted">Average Drawdown</span> {metrics['strategy']['avg_drawdown']:.2%}</p>
@@ -2074,6 +2075,8 @@ def create_app() -> "Flask":
                   <option value="hybrid_sharpe_core" {"selected" if feature_set == "hybrid_sharpe_core" else ""}>Hybrid Sharpe Core (EMA + Derivative)</option>
                   <option value="hybrid_sharpe_core_no_stack" {"selected" if feature_set == "hybrid_sharpe_core_no_stack" else ""}>Hybrid Sharpe Core (No EMA Stack Flags)</option>
                   <option value="hybrid_sharpe_momentum" {"selected" if feature_set == "hybrid_sharpe_momentum" else ""}>Hybrid Sharpe Momentum (expanded)</option>
+                  <option value="hybrid_sharpe_selective" {"selected" if feature_set == "hybrid_sharpe_selective" else ""}>Hybrid Sharpe Selective (compact blend)</option>
+                  <option value="hybrid_sharpe_regime" {"selected" if feature_set == "hybrid_sharpe_regime" else ""}>Hybrid Sharpe Regime (context aware)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
@@ -2653,6 +2656,8 @@ def parse_args() -> argparse.Namespace:
             "hybrid_sharpe_core",
             "hybrid_sharpe_core_no_stack",
             "hybrid_sharpe_momentum",
+            "hybrid_sharpe_selective",
+            "hybrid_sharpe_regime",
             "dqn",
             "fvg2",
             "fvg3",

@@ -230,3 +230,48 @@ def test_hybrid_sharpe_momentum_feature_set_is_supported() -> None:
         "ema_spread_balance",
     }
     assert expected.issubset(set(names))
+
+
+def test_hybrid_sharpe_selective_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-selective") == "hybrid_sharpe_selective"
+    builder = get_strategy_feature_builder("hybrid_sharpe_selective")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema3_slope",
+        "ema9_slope",
+        "macd_hist",
+        "macd_green_increasing",
+        "macd_red_recovering",
+        "ema_derivative_1_diff",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+    }
+    assert expected.issubset(set(names))
+    assert "ema21_slope" not in names
+    assert "macd_hist_delta" not in names
+
+
+def test_hybrid_sharpe_regime_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-regime") == "hybrid_sharpe_regime"
+    builder = get_strategy_feature_builder("hybrid_sharpe_regime")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "trend_20",
+        "vol_20",
+        "ret_1",
+        "ret_3",
+        "stoch_rsi_norm",
+        "stoch_velocity",
+        "ema_slope_alignment",
+    }
+    assert expected.issubset(set(names))
