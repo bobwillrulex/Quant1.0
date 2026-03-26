@@ -2072,6 +2072,7 @@ def create_app() -> "Flask":
                 <select name="feature_set">
                   <option value="feature2" {"selected" if feature_set == "feature2" else ""}>Feature 2 (default)</option>
                   <option value="hybrid_sharpe_core" {"selected" if feature_set == "hybrid_sharpe_core" else ""}>Hybrid Sharpe Core (EMA + Derivative)</option>
+                  <option value="hybrid_sharpe_core_no_stack" {"selected" if feature_set == "hybrid_sharpe_core_no_stack" else ""}>Hybrid Sharpe Core (No EMA Stack Flags)</option>
                   <option value="hybrid_sharpe_momentum" {"selected" if feature_set == "hybrid_sharpe_momentum" else ""}>Hybrid Sharpe Momentum (expanded)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
@@ -2650,6 +2651,7 @@ def parse_args() -> argparse.Namespace:
         choices=[
             "feature2",
             "hybrid_sharpe_core",
+            "hybrid_sharpe_core_no_stack",
             "hybrid_sharpe_momentum",
             "dqn",
             "fvg2",

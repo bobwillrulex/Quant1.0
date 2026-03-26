@@ -182,6 +182,34 @@ def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_hybrid_sharpe_core_no_stack_feature_set_is_supported() -> None:
+    assert normalize_feature_set("hybrid-core-no-stack") == "hybrid_sharpe_core_no_stack"
+    builder = get_strategy_feature_builder("hybrid_sharpe_core_no_stack")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema3_slope",
+        "ema9_slope",
+        "ema21_slope",
+        "macd_hist",
+        "macd_hist_delta",
+        "macd_green_increasing",
+        "macd_red_recovering",
+        "macd_green_fading",
+        "macd_red_deepening",
+        "ema_derivative_1_diff",
+        "ema_derivative_1_cross_positive",
+        "ema_derivative_1_cross_negative",
+    }
+    assert expected.issubset(set(names))
+    assert "ema_stack_bullish" not in names
+    assert "ema_stack_bearish" not in names
+
+
 def test_hybrid_sharpe_momentum_feature_set_is_supported() -> None:
     assert normalize_feature_set("hybrid_momentum") == "hybrid_sharpe_momentum"
     builder = get_strategy_feature_builder("hybrid_sharpe_momentum")
