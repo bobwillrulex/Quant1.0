@@ -2388,8 +2388,7 @@ def create_app() -> "Flask":
 
               function parseTickerCount(rawTickerValue) {{
                 const parts = String(rawTickerValue || "")
-                  .split(/[,
-]/)
+                  .split(/[,\\n]/)
                   .map((token) => token.trim())
                   .filter(Boolean);
                 return Math.max(1, parts.length);
