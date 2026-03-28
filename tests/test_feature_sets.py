@@ -154,6 +154,51 @@ def test_vwap_anchor_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_vwap_intraday_reversion_feature_set_is_supported() -> None:
+    assert normalize_feature_set("intraday-vwap-reversion") == "vwap_intraday_reversion"
+    builder = get_strategy_feature_builder("vwap_intraday_reversion")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "vwap_anchor_high",
+        "vwap_anchor_low",
+        "vwap_anchor_spread",
+        "price_vs_vwap_mid",
+        "distance_to_vwap_low",
+        "distance_to_vwap_high",
+        "zscore_vwap_mid",
+        "mean_revert_long_bias",
+        "mean_revert_short_bias",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_vwap_intraday_momentum_feature_set_is_supported() -> None:
+    assert normalize_feature_set("intraday-vwap-momentum") == "vwap_intraday_momentum"
+    builder = get_strategy_feature_builder("vwap_intraday_momentum")
+    names = builder.names()
+    expected = {
+        "ema3",
+        "ema9",
+        "ema21",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema3_slope",
+        "ema9_slope",
+        "macd_hist",
+        "macd_hist_delta",
+        "vwap_anchor_high",
+        "vwap_anchor_low",
+        "price_vs_vwap_mid",
+        "vwap_breakout_strength",
+        "vwap_breakdown_strength",
+        "session_trend_pressure",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
     assert normalize_feature_set("hybrid-core") == "hybrid_sharpe_core"
     builder = get_strategy_feature_builder("hybrid_sharpe_core")
