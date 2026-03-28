@@ -405,8 +405,17 @@ def build_vwap_intraday_5m_session_strategy_features() -> StrategyFeatureBuilder
         return float(row.get(key, default))
 
     builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema21_slope", lambda r: g(r, "ema21_derivative_1"))
     builder.add("session_vwap_5m", lambda r: g(r, "session_vwap_5m"))
     builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("session_vwap_delta_to_mean_5m", lambda r: g(r, "session_vwap_delta_to_mean_5m"))
     builder.add("price_vs_session_vwap_5m", lambda r: g(r, "close") - g(r, "session_vwap_5m"))
     builder.add(
         "price_vs_session_vwap_pct_5m",
@@ -414,6 +423,18 @@ def build_vwap_intraday_5m_session_strategy_features() -> StrategyFeatureBuilder
     )
     builder.add("abs_price_vs_session_vwap_5m", lambda r: abs(g(r, "close") - g(r, "session_vwap_5m")))
     builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_5m") - g(r, "close"))
+    builder.add("session_vwap_std_1_5m", lambda r: g(r, "session_vwap_std_1_5m"))
+    builder.add("session_vwap_std_2_5m", lambda r: g(r, "session_vwap_std_2_5m"))
+    builder.add("session_vwap_std_1_upper_5m", lambda r: g(r, "session_vwap_std_1_upper_5m"))
+    builder.add("session_vwap_std_1_lower_5m", lambda r: g(r, "session_vwap_std_1_lower_5m"))
+    builder.add("session_vwap_std_2_upper_5m", lambda r: g(r, "session_vwap_std_2_upper_5m"))
+    builder.add("session_vwap_std_2_lower_5m", lambda r: g(r, "session_vwap_std_2_lower_5m"))
+    builder.add("price_to_session_vwap_std_1_upper_5m", lambda r: g(r, "price_to_session_vwap_std_1_upper_5m"))
+    builder.add("price_to_session_vwap_std_1_lower_5m", lambda r: g(r, "price_to_session_vwap_std_1_lower_5m"))
+    builder.add("session_vwap_std_1_range_5m", lambda r: g(r, "session_vwap_std_1_range_5m"))
+    builder.add("price_to_session_vwap_std_2_upper_5m", lambda r: g(r, "price_to_session_vwap_std_2_upper_5m"))
+    builder.add("price_to_session_vwap_std_2_lower_5m", lambda r: g(r, "price_to_session_vwap_std_2_lower_5m"))
+    builder.add("session_vwap_std_2_range_5m", lambda r: g(r, "session_vwap_std_2_range_5m"))
     return builder
 
 

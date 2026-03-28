@@ -156,12 +156,31 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     bars_per_regular_session_5m = 78
     session_vwap_5m: List[float] = []
     session_vwap_delta_5m: List[float] = []
+    session_vwap_std_1_5m: List[float] = []
+    session_vwap_std_2_5m: List[float] = []
+    session_vwap_std_1_upper_5m: List[float] = []
+    session_vwap_std_1_lower_5m: List[float] = []
+    session_vwap_std_2_upper_5m: List[float] = []
+    session_vwap_std_2_lower_5m: List[float] = []
+    price_to_session_vwap_std_1_upper_5m: List[float] = []
+    price_to_session_vwap_std_1_lower_5m: List[float] = []
+    session_vwap_std_1_range_5m: List[float] = []
+    price_to_session_vwap_std_2_upper_5m: List[float] = []
+    price_to_session_vwap_std_2_lower_5m: List[float] = []
+    session_vwap_std_2_range_5m: List[float] = []
+    session_vwap_delta_to_mean_5m: List[float] = []
     cumulative_weight = 0.0
     cumulative_weighted_price = 0.0
+    session_count = 0
+    session_mean_price = 0.0
+    session_m2 = 0.0
     for i in range(n):
         if i % bars_per_regular_session_5m == 0:
             cumulative_weight = 0.0
             cumulative_weighted_price = 0.0
+            session_count = 0
+            session_mean_price = 0.0
+            session_m2 = 0.0
         weight = range_weight[i]
         cumulative_weight += weight
         cumulative_weighted_price += hlc3[i] * weight
@@ -171,6 +190,32 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
             session_vwap_delta_5m.append(0.0)
         else:
             session_vwap_delta_5m.append(vwap_now - session_vwap_5m[i - 1])
+        session_count += 1
+        delta = hlc3[i] - session_mean_price
+        session_mean_price += delta / session_count
+        delta2 = hlc3[i] - session_mean_price
+        session_m2 += delta * delta2
+        session_variance = (session_m2 / session_count) if session_count > 0 else 0.0
+        session_std = session_variance ** 0.5
+        std_1 = session_std
+        std_2 = 2.0 * session_std
+        std_1_upper = vwap_now + std_1
+        std_1_lower = vwap_now - std_1
+        std_2_upper = vwap_now + std_2
+        std_2_lower = vwap_now - std_2
+        session_vwap_std_1_5m.append(std_1)
+        session_vwap_std_2_5m.append(std_2)
+        session_vwap_std_1_upper_5m.append(std_1_upper)
+        session_vwap_std_1_lower_5m.append(std_1_lower)
+        session_vwap_std_2_upper_5m.append(std_2_upper)
+        session_vwap_std_2_lower_5m.append(std_2_lower)
+        price_to_session_vwap_std_1_upper_5m.append(closes[i] - std_1_upper)
+        price_to_session_vwap_std_1_lower_5m.append(closes[i] - std_1_lower)
+        session_vwap_std_1_range_5m.append(std_1_upper - std_1_lower)
+        price_to_session_vwap_std_2_upper_5m.append(closes[i] - std_2_upper)
+        price_to_session_vwap_std_2_lower_5m.append(closes[i] - std_2_lower)
+        session_vwap_std_2_range_5m.append(std_2_upper - std_2_lower)
+        session_vwap_delta_to_mean_5m.append(closes[i] - vwap_now)
     rows: List[Row] = []
     last_bull_gap_low = 0.0
     last_bull_gap_high = 0.0
@@ -287,6 +332,19 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "vwap_anchor_low": vwap_anchor_low[i],
                 "session_vwap_5m": session_vwap_5m[i],
                 "session_vwap_delta_5m": session_vwap_delta_5m[i],
+                "session_vwap_delta_to_mean_5m": session_vwap_delta_to_mean_5m[i],
+                "session_vwap_std_1_5m": session_vwap_std_1_5m[i],
+                "session_vwap_std_2_5m": session_vwap_std_2_5m[i],
+                "session_vwap_std_1_upper_5m": session_vwap_std_1_upper_5m[i],
+                "session_vwap_std_1_lower_5m": session_vwap_std_1_lower_5m[i],
+                "session_vwap_std_2_upper_5m": session_vwap_std_2_upper_5m[i],
+                "session_vwap_std_2_lower_5m": session_vwap_std_2_lower_5m[i],
+                "price_to_session_vwap_std_1_upper_5m": price_to_session_vwap_std_1_upper_5m[i],
+                "price_to_session_vwap_std_1_lower_5m": price_to_session_vwap_std_1_lower_5m[i],
+                "session_vwap_std_1_range_5m": session_vwap_std_1_range_5m[i],
+                "price_to_session_vwap_std_2_upper_5m": price_to_session_vwap_std_2_upper_5m[i],
+                "price_to_session_vwap_std_2_lower_5m": price_to_session_vwap_std_2_lower_5m[i],
+                "session_vwap_std_2_range_5m": session_vwap_std_2_range_5m[i],
                 "atr_frac": atr_frac[i],
             }
         )
