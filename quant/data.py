@@ -153,6 +153,24 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
         low_denom = sum(low_weights)
         vwap_anchor_high.append(sum(p * w for p, w in zip(high_prices, high_weights)) / (high_denom if high_denom != 0 else 1.0))
         vwap_anchor_low.append(sum(p * w for p, w in zip(low_prices, low_weights)) / (low_denom if low_denom != 0 else 1.0))
+    bars_per_regular_session_5m = 78
+    session_vwap_5m: List[float] = []
+    session_vwap_delta_5m: List[float] = []
+    cumulative_weight = 0.0
+    cumulative_weighted_price = 0.0
+    for i in range(n):
+        if i % bars_per_regular_session_5m == 0:
+            cumulative_weight = 0.0
+            cumulative_weighted_price = 0.0
+        weight = range_weight[i]
+        cumulative_weight += weight
+        cumulative_weighted_price += hlc3[i] * weight
+        vwap_now = cumulative_weighted_price / (cumulative_weight if cumulative_weight != 0 else 1.0)
+        session_vwap_5m.append(vwap_now)
+        if i % bars_per_regular_session_5m == 0:
+            session_vwap_delta_5m.append(0.0)
+        else:
+            session_vwap_delta_5m.append(vwap_now - session_vwap_5m[i - 1])
     rows: List[Row] = []
     last_bull_gap_low = 0.0
     last_bull_gap_high = 0.0
@@ -267,6 +285,8 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "bb_percent_b": ((closes[i] - bb_lower[i]) / (bb_upper[i] - bb_lower[i])) if abs(bb_upper[i] - bb_lower[i]) > 1e-12 else 0.5,
                 "vwap_anchor_high": vwap_anchor_high[i],
                 "vwap_anchor_low": vwap_anchor_low[i],
+                "session_vwap_5m": session_vwap_5m[i],
+                "session_vwap_delta_5m": session_vwap_delta_5m[i],
                 "atr_frac": atr_frac[i],
             }
         )

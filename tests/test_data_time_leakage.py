@@ -142,11 +142,15 @@ def test_ema_bollinger_and_vwap_columns_are_present_and_dynamic() -> None:
         "bb_percent_b",
         "vwap_anchor_high",
         "vwap_anchor_low",
+        "session_vwap_5m",
+        "session_vwap_delta_5m",
     ]
     for key in required_keys:
         assert key in sample
 
     vwap_high_values = [row["vwap_anchor_high"] for row in rows]
     vwap_low_values = [row["vwap_anchor_low"] for row in rows]
+    session_vwap_values = [row["session_vwap_5m"] for row in rows]
     assert max(vwap_high_values) - min(vwap_high_values) > 0.0
     assert max(vwap_low_values) - min(vwap_low_values) > 0.0
+    assert max(session_vwap_values) - min(session_vwap_values) > 0.0

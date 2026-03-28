@@ -1064,6 +1064,7 @@ def create_app() -> "Flask":
                 "vwap_anchor",
                 "vwap_intraday_reversion",
                 "vwap_intraday_momentum",
+                "vwap_intraday_5m_session",
                 "vwap_breakout_reversion_regime",
                 "new",
                 "legacy",
@@ -2143,6 +2144,7 @@ def create_app() -> "Flask":
                   <option value="vwap_anchor" {"selected" if feature_set == "vwap_anchor" else ""}>VWAP Anchor set</option>
                   <option value="vwap_intraday_reversion" {"selected" if feature_set == "vwap_intraday_reversion" else ""}>VWAP Intraday Reversion</option>
                   <option value="vwap_intraday_momentum" {"selected" if feature_set == "vwap_intraday_momentum" else ""}>VWAP Intraday Momentum</option>
+                  <option value="vwap_intraday_5m_session" {"selected" if feature_set == "vwap_intraday_5m_session" else ""}>VWAP Intraday 5m Session (daily reset)</option>
                   <option value="vwap_breakout_reversion_regime" {"selected" if feature_set == "vwap_breakout_reversion_regime" else ""}>VWAP Breakout vs Reversion Regime</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
@@ -2755,6 +2757,7 @@ def parse_args() -> argparse.Namespace:
             "vwap_anchor",
             "vwap_intraday_reversion",
             "vwap_intraday_momentum",
+            "vwap_intraday_5m_session",
             "vwap_breakout_reversion_regime",
             "new",
             "legacy",

@@ -199,6 +199,21 @@ def test_vwap_intraday_momentum_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_vwap_intraday_5m_session_feature_set_is_supported() -> None:
+    assert normalize_feature_set("session_vwap_5m") == "vwap_intraday_5m_session"
+    builder = get_strategy_feature_builder("vwap_intraday_5m_session")
+    names = builder.names()
+    expected = {
+        "session_vwap_5m",
+        "session_vwap_delta_5m",
+        "price_vs_session_vwap_5m",
+        "price_vs_session_vwap_pct_5m",
+        "abs_price_vs_session_vwap_5m",
+        "session_vwap_reversion_signal_5m",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_vwap_breakout_reversion_regime_feature_set_is_supported() -> None:
     assert normalize_feature_set("vwap-breakout-vs-reversion") == "vwap_breakout_reversion_regime"
     builder = get_strategy_feature_builder("vwap_breakout_reversion_regime")

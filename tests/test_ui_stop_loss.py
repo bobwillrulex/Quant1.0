@@ -29,6 +29,7 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn('option value="trailing_stop"', html)
         self.assertIn('option value="vwap_intraday_reversion"', html)
         self.assertIn('option value="vwap_intraday_momentum"', html)
+        self.assertIn('option value="vwap_intraday_5m_session"', html)
         self.assertIn('option value="vwap_breakout_reversion_regime"', html)
         self.assertIn('id="fixedStopLossWrap"', html)
         self.assertIn("toggleFixedStopField", html)

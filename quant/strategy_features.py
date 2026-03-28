@@ -44,6 +44,7 @@ FeatureSet = Literal[
     "vwap_anchor",
     "vwap_intraday_reversion",
     "vwap_intraday_momentum",
+    "vwap_intraday_5m_session",
     "vwap_breakout_reversion_regime",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
@@ -87,6 +88,14 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "intraday_momentum",
     ):
         return "vwap_intraday_momentum"
+    if value in (
+        "vwap_intraday_5m_session",
+        "vwap-intraday-5m-session",
+        "intraday-vwap-5m-session",
+        "vwap_5m_session",
+        "session_vwap_5m",
+    ):
+        return "vwap_intraday_5m_session"
     if value in (
         "vwap_breakout_reversion_regime",
         "vwap-breakout-reversion-regime",
@@ -391,6 +400,23 @@ def build_vwap_intraday_momentum_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_vwap_intraday_5m_session_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("session_vwap_5m", lambda r: g(r, "session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "close") - g(r, "session_vwap_5m"))
+    builder.add(
+        "price_vs_session_vwap_pct_5m",
+        lambda r: ((g(r, "close") - g(r, "session_vwap_5m")) / g(r, "session_vwap_5m")) if abs(g(r, "session_vwap_5m")) > 1e-12 else 0.0,
+    )
+    builder.add("abs_price_vs_session_vwap_5m", lambda r: abs(g(r, "close") - g(r, "session_vwap_5m")))
+    builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_5m") - g(r, "close"))
+    return builder
+
+
 def build_vwap_breakout_reversion_regime_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -592,6 +618,8 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_intraday_reversion_strategy_features()
     if normalized == "vwap_intraday_momentum":
         return build_vwap_intraday_momentum_strategy_features()
+    if normalized == "vwap_intraday_5m_session":
+        return build_vwap_intraday_5m_session_strategy_features()
     if normalized == "vwap_breakout_reversion_regime":
         return build_vwap_breakout_reversion_regime_strategy_features()
     if normalized == "hybrid_sharpe_core":
@@ -640,6 +668,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_intraday_reversion"
     if isinstance(names, list) and "vwap_breakout_strength" in names and "vwap_breakdown_strength" in names:
         return "vwap_intraday_momentum"
+    if isinstance(names, list) and "session_vwap_5m" in names and "price_vs_session_vwap_5m" in names:
+        return "vwap_intraday_5m_session"
     if isinstance(names, list) and "ema_slope_alignment" in names and "ema_spread_balance" in names:
         return "hybrid_sharpe_momentum"
     if isinstance(names, list) and "trend_20" in names and "vol_20" in names and "stoch_rsi_norm" in names:
