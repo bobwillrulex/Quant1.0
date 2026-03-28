@@ -42,6 +42,8 @@ FeatureSet = Literal[
     "ema",
     "bollinger_bands",
     "vwap_anchor",
+    "vwap_intraday_reversion",
+    "vwap_intraday_momentum",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
@@ -68,6 +70,22 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "bollinger_bands"
     if value in ("vwap_anchor", "vwap-anchor", "anchored-vwap", "anchored_vwap", "vwap"):
         return "vwap_anchor"
+    if value in (
+        "vwap_intraday_reversion",
+        "vwap-intraday-reversion",
+        "intraday-vwap-reversion",
+        "vwap_reversion",
+        "intraday_reversion",
+    ):
+        return "vwap_intraday_reversion"
+    if value in (
+        "vwap_intraday_momentum",
+        "vwap-intraday-momentum",
+        "intraday-vwap-momentum",
+        "vwap_momentum",
+        "intraday_momentum",
+    ):
+        return "vwap_intraday_momentum"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
     if value in (
@@ -317,6 +335,53 @@ def build_vwap_anchor_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_vwap_intraday_reversion_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("vwap_anchor_high", lambda r: g(r, "vwap_anchor_high"))
+    builder.add("vwap_anchor_low", lambda r: g(r, "vwap_anchor_low"))
+    builder.add("vwap_anchor_spread", lambda r: g(r, "vwap_anchor_high") - g(r, "vwap_anchor_low"))
+    builder.add("price_vs_vwap_mid", lambda r: g(r, "close") - ((g(r, "vwap_anchor_high") + g(r, "vwap_anchor_low")) / 2.0))
+    builder.add("distance_to_vwap_low", lambda r: g(r, "close") - g(r, "vwap_anchor_low"))
+    builder.add("distance_to_vwap_high", lambda r: g(r, "vwap_anchor_high") - g(r, "close"))
+    builder.add("zscore_vwap_mid", lambda r: (g(r, "close") - ((g(r, "vwap_anchor_high") + g(r, "vwap_anchor_low")) / 2.0)) / max(1e-9, g(r, "atr_frac", 1.0)))
+    builder.add("stoch_rsi_norm", lambda r: g(r, "stoch_rsi") / 100.0)
+    builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    builder.add("mean_revert_long_bias", lambda r: max(0.0, g(r, "vwap_anchor_low") - g(r, "close")))
+    builder.add("mean_revert_short_bias", lambda r: max(0.0, g(r, "close") - g(r, "vwap_anchor_high")))
+    return builder
+
+
+def build_vwap_intraday_momentum_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("vwap_anchor_high", lambda r: g(r, "vwap_anchor_high"))
+    builder.add("vwap_anchor_low", lambda r: g(r, "vwap_anchor_low"))
+    builder.add("price_vs_vwap_mid", lambda r: g(r, "close") - ((g(r, "vwap_anchor_high") + g(r, "vwap_anchor_low")) / 2.0))
+    builder.add("vwap_breakout_strength", lambda r: (g(r, "close") - g(r, "vwap_anchor_high")) / max(1e-9, g(r, "atr_frac", 1.0)))
+    builder.add("vwap_breakdown_strength", lambda r: (g(r, "vwap_anchor_low") - g(r, "close")) / max(1e-9, g(r, "atr_frac", 1.0)))
+    builder.add("session_trend_pressure", lambda r: g(r, "ret_1") + g(r, "ret_3"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
 def build_hybrid_sharpe_core_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -459,6 +524,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_bollinger_bands_strategy_features()
     if normalized == "vwap_anchor":
         return build_vwap_anchor_strategy_features()
+    if normalized == "vwap_intraday_reversion":
+        return build_vwap_intraday_reversion_strategy_features()
+    if normalized == "vwap_intraday_momentum":
+        return build_vwap_intraday_momentum_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
     if normalized == "hybrid_sharpe_core_no_stack":
@@ -499,6 +568,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "bollinger_bands"
     if isinstance(names, list) and "vwap_anchor_high" in names and "vwap_anchor_low" in names:
         return "vwap_anchor"
+    if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:
+        return "vwap_intraday_reversion"
+    if isinstance(names, list) and "vwap_breakout_strength" in names and "vwap_breakdown_strength" in names:
+        return "vwap_intraday_momentum"
     if isinstance(names, list) and "ema_slope_alignment" in names and "ema_spread_balance" in names:
         return "hybrid_sharpe_momentum"
     if isinstance(names, list) and "trend_20" in names and "vol_20" in names and "stoch_rsi_norm" in names:
