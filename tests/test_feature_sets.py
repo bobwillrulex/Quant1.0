@@ -199,6 +199,27 @@ def test_vwap_intraday_momentum_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_vwap_breakout_reversion_regime_feature_set_is_supported() -> None:
+    assert normalize_feature_set("vwap-breakout-vs-reversion") == "vwap_breakout_reversion_regime"
+    builder = get_strategy_feature_builder("vwap_breakout_reversion_regime")
+    names = builder.names()
+    expected = {
+        "vwap_anchor_high",
+        "vwap_anchor_low",
+        "price_vs_vwap_mid",
+        "mean_revert_long_bias",
+        "mean_revert_short_bias",
+        "vwap_breakout_strength",
+        "vwap_breakdown_strength",
+        "breakout_pressure",
+        "mean_reversion_pressure",
+        "vwap_regime_signal",
+        "is_breakout_regime",
+        "is_reversion_regime",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
     assert normalize_feature_set("hybrid-core") == "hybrid_sharpe_core"
     builder = get_strategy_feature_builder("hybrid_sharpe_core")
