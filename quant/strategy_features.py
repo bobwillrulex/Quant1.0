@@ -44,6 +44,7 @@ FeatureSet = Literal[
     "vwap_anchor",
     "vwap_intraday_reversion",
     "vwap_intraday_momentum",
+    "vwap_breakout_reversion_regime",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
@@ -86,6 +87,14 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "intraday_momentum",
     ):
         return "vwap_intraday_momentum"
+    if value in (
+        "vwap_breakout_reversion_regime",
+        "vwap-breakout-reversion-regime",
+        "vwap_regime",
+        "vwap-breakout-vs-reversion",
+        "breakout_reversion_vwap",
+    ):
+        return "vwap_breakout_reversion_regime"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
     if value in (
@@ -382,6 +391,61 @@ def build_vwap_intraday_momentum_strategy_features() -> StrategyFeatureBuilder:
     return builder
 
 
+def build_vwap_breakout_reversion_regime_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def vwap_mid(row: Row) -> float:
+        return (g(row, "vwap_anchor_high") + g(row, "vwap_anchor_low")) / 2.0
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    def breakout_strength(row: Row) -> float:
+        return max(0.0, (g(row, "close") - g(row, "vwap_anchor_high")) / atr_guard(row))
+
+    def breakdown_strength(row: Row) -> float:
+        return max(0.0, (g(row, "vwap_anchor_low") - g(row, "close")) / atr_guard(row))
+
+    def mean_revert_long_bias(row: Row) -> float:
+        return max(0.0, g(row, "vwap_anchor_low") - g(row, "close"))
+
+    def mean_revert_short_bias(row: Row) -> float:
+        return max(0.0, g(row, "close") - g(row, "vwap_anchor_high"))
+
+    def breakout_pressure(row: Row) -> float:
+        return max(breakout_strength(row), breakdown_strength(row))
+
+    def mean_reversion_pressure(row: Row) -> float:
+        return max(mean_revert_long_bias(row), mean_revert_short_bias(row)) / atr_guard(row)
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ema3", lambda r: g(r, "ema3"))
+    builder.add("ema9", lambda r: g(r, "ema9"))
+    builder.add("ema21", lambda r: g(r, "ema21"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("vwap_anchor_high", lambda r: g(r, "vwap_anchor_high"))
+    builder.add("vwap_anchor_low", lambda r: g(r, "vwap_anchor_low"))
+    builder.add("vwap_anchor_spread", lambda r: g(r, "vwap_anchor_high") - g(r, "vwap_anchor_low"))
+    builder.add("price_vs_vwap_mid", lambda r: g(r, "close") - vwap_mid(r))
+    builder.add("zscore_vwap_mid", lambda r: (g(r, "close") - vwap_mid(r)) / atr_guard(r))
+    builder.add("mean_revert_long_bias", lambda r: mean_revert_long_bias(r))
+    builder.add("mean_revert_short_bias", lambda r: mean_revert_short_bias(r))
+    builder.add("vwap_breakout_strength", lambda r: breakout_strength(r))
+    builder.add("vwap_breakdown_strength", lambda r: breakdown_strength(r))
+    builder.add("breakout_pressure", lambda r: breakout_pressure(r))
+    builder.add("mean_reversion_pressure", lambda r: mean_reversion_pressure(r))
+    builder.add("vwap_regime_signal", lambda r: breakout_pressure(r) - mean_reversion_pressure(r))
+    builder.add("is_breakout_regime", lambda r: 1.0 if breakout_pressure(r) > mean_reversion_pressure(r) else 0.0)
+    builder.add("is_reversion_regime", lambda r: 1.0 if breakout_pressure(r) <= mean_reversion_pressure(r) else 0.0)
+    builder.add("session_trend_pressure", lambda r: g(r, "ret_1") + g(r, "ret_3"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
 def build_hybrid_sharpe_core_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -528,6 +592,8 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_intraday_reversion_strategy_features()
     if normalized == "vwap_intraday_momentum":
         return build_vwap_intraday_momentum_strategy_features()
+    if normalized == "vwap_breakout_reversion_regime":
+        return build_vwap_breakout_reversion_regime_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
     if normalized == "hybrid_sharpe_core_no_stack":
@@ -568,6 +634,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "bollinger_bands"
     if isinstance(names, list) and "vwap_anchor_high" in names and "vwap_anchor_low" in names:
         return "vwap_anchor"
+    if isinstance(names, list) and "vwap_regime_signal" in names and "breakout_pressure" in names:
+        return "vwap_breakout_reversion_regime"
     if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:
         return "vwap_intraday_reversion"
     if isinstance(names, list) and "vwap_breakout_strength" in names and "vwap_breakdown_strength" in names:
