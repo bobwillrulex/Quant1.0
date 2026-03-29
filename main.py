@@ -2149,6 +2149,7 @@ def create_app() -> "Flask":
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
+                <p class="muted" id="featurePipelineHint"></p>
               </label>
               <label>Use Manual Feature Weights:
                 <select name="use_manual_weights" id="manualWeightsToggle">
@@ -2457,11 +2458,15 @@ def create_app() -> "Flask":
               const manualWeightsContainerEl = document.getElementById("manualWeightsContainer");
               const manualFeatureWeightsInputEl = document.getElementById("manualFeatureWeightsInput");
               const dqnEpisodesWrapEl = document.getElementById("dqnEpisodesWrap");
+              const featurePipelineHintEl = document.getElementById("featurePipelineHint");
               const stopLossStrategyEl = document.getElementById("stopLossStrategy");
               const fixedStopLossWrapEl = document.getElementById("fixedStopLossWrap");
               const runAllTable = document.getElementById("runAllTable");
               const sortDirections = {{}};
               const featureNameMap = {json.dumps(feature_name_map)};
+              const featurePipelineDescriptions = {{
+                vwap_intraday_5m_session: "5m session reset VWAP with EMA 3/9/21 context, VWAP delta-to-mean, ±1/±2 standard-deviation envelopes, price-to-band distances, and envelope ranges.",
+              }};
 
               function parseSortValue(rawValue, sortType) {{
                 const textValue = (rawValue || "").trim();
@@ -2584,6 +2589,11 @@ def create_app() -> "Flask":
                 }}).join("");
               }}
 
+              function updateFeaturePipelineHint() {{
+                if (!featureSetEl || !featurePipelineHintEl) return;
+                featurePipelineHintEl.textContent = featurePipelineDescriptions[featureSetEl.value] || "";
+              }}
+
               function syncManualWeightsJson() {{
                 if (!manualFeatureWeightsInputEl || !manualWeightsContainerEl) return;
                 const values = Array.from(manualWeightsContainerEl.querySelectorAll("input[data-weight-index]"))
@@ -2619,6 +2629,7 @@ def create_app() -> "Flask":
                 featureSetEl.addEventListener("change", () => {{
                   renderManualWeightInputs();
                   toggleManualWeightsField();
+                  updateFeaturePipelineHint();
                 }});
               }}
               if (manualWeightsToggleEl) {{
@@ -2626,6 +2637,7 @@ def create_app() -> "Flask":
               }}
               renderManualWeightInputs();
               toggleManualWeightsField();
+              updateFeaturePipelineHint();
               const presentStopLossStrategyEl = document.getElementById("presentStopLossStrategy");
               const presentFixedStopLossWrapEl = document.getElementById("presentFixedStopLossWrap");
               function togglePresentFixedStopField() {{
