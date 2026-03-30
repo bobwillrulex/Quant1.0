@@ -396,3 +396,15 @@ def test_hybrid_sharpe_volume_regime_feature_set_is_supported() -> None:
         "pullback_in_low_volume",
     }
     assert expected.issubset(set(names))
+
+
+def test_rsi_thresholds_feature_set_is_supported() -> None:
+    assert normalize_feature_set("rsi_thresholds") == "rsi_thresholds"
+    builder = get_strategy_feature_builder("rsi_thresholds")
+    assert builder.names() == ["rsi_over_70", "rsi_below_30"]
+
+
+def test_stoch_rsi_thresholds_feature_set_is_supported() -> None:
+    assert normalize_feature_set("stoch_rsi_thresholds") == "stoch_rsi_thresholds"
+    builder = get_strategy_feature_builder("stoch_rsi_thresholds")
+    assert builder.names() == ["stoch_rsi_over_80", "stoch_rsi_under_20"]

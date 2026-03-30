@@ -74,10 +74,17 @@ def ema(values: Sequence[float], span: int) -> List[float]:
     return result
 
 
-def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float]) -> List[Row]:
+def compute_strategy_rows_from_prices(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    prediction_horizon: int = 5,
+) -> List[Row]:
     n = len(closes)
-    if n < 40:
-        raise ValueError("Not enough rows to compute indicators. Need at least 40 rows.")
+    if prediction_horizon < 1:
+        raise ValueError("Prediction horizon must be at least 1.")
+    if n < (40 + prediction_horizon):
+        raise ValueError("Not enough rows to compute indicators. Need at least 40 + prediction horizon rows.")
     deltas = [0.0] + [closes[i] - closes[i - 1] for i in range(1, n)]
     gains = [max(d, 0.0) for d in deltas]
     losses = [max(-d, 0.0) for d in deltas]
@@ -224,7 +231,7 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     # Build each row at index i using only information available by candle close i.
     # We intentionally lag FVG features one bar so "first touch/dip" is observable at i
     # without peeking into i+1.
-    for i in range(3, n - 1):
+    for i in range(3, n - prediction_horizon):
         stoch_now = stoch_rsi[i] / 100.0
         stoch_prev = stoch_rsi[i - 1] / 100.0 if i > 0 else stoch_now
         gap_up = lows[i] > highs[i - 1]
@@ -322,7 +329,8 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
                 "fvg_red_above_green": 1.0 if prev_bearish_gap > 0 else 0.0,
                 "first_green_fvg_dip": 1.0 if (prev_bullish_gap > 0 and lows[i] <= highs[i - 3]) else 0.0,
                 "first_red_fvg_touch": 1.0 if (prev_bearish_gap > 0 and highs[i] >= lows[i - 3]) else 0.0,
-                "return_next": (closes[i + 1] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
+                "rsi": rsi[i],
+                "return_next": (closes[i + prediction_horizon] - closes[i]) / closes[i] if closes[i] != 0 else 0.0,
                 "close": closes[i],
                 "bb_upper": bb_upper[i],
                 "bb_middle": bb_middle[i],
@@ -353,7 +361,7 @@ def compute_strategy_rows_from_prices(highs: Sequence[float], lows: Sequence[flo
     return rows
 
 
-def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
+def fetch_yahoo_rows(ticker: str, interval: str, row_count: int, prediction_horizon: int = 5) -> List[Row]:
     import yfinance as yf
 
     interval_periods = {"1d": ["1y", "5y", "10y", "max"], "1h": ["730d"], "15m": ["60d"], "5m": ["60d"]}
@@ -371,7 +379,7 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int) -> List[Row]:
         highs = [float(v) for v in history["High"].tolist()]
         lows = [float(v) for v in history["Low"].tolist()]
         closes = [float(v) for v in history["Close"].tolist()]
-        rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+        rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=prediction_horizon)
         if len(rows) > len(best_rows):
             best_rows = rows
         if len(rows) >= row_count:
@@ -396,7 +404,7 @@ def _ticker_is_unavailable_for_twelve_data(ticker: str) -> bool:
     return upper.endswith(non_us_equity_suffixes)
 
 
-def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: str) -> List[Row]:
+def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: str, prediction_horizon: int = 5) -> List[Row]:
     if row_count < 50:
         raise ValueError("Please request at least 50 rows.")
     query = urlencode(
@@ -424,25 +432,32 @@ def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: 
     highs = [float(item["high"]) for item in values]
     lows = [float(item["low"]) for item in values]
     closes = [float(item["close"]) for item in values]
-    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes)
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=prediction_horizon)
     return rows[-row_count:] if len(rows) >= row_count else rows
 
 
-def fetch_market_rows(ticker: str, interval: str, row_count: int, provider: str, twelve_api_key: str) -> tuple[List[Row], str | None]:
+def fetch_market_rows(
+    ticker: str,
+    interval: str,
+    row_count: int,
+    provider: str,
+    twelve_api_key: str,
+    prediction_horizon: int = 5,
+) -> tuple[List[Row], str | None]:
     selected_provider = provider.strip().lower()
     if selected_provider not in ("yfinance", "twelvedata"):
         raise ValueError("Data provider must be either yfinance or twelvedata.")
     if selected_provider == "yfinance":
-        return fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count), None
+        return fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon), None
     if _ticker_is_unavailable_for_twelve_data(ticker):
-        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon)
         return rows, (
             f"Twelve Data does not support this instrument in the current setup ({ticker}). "
             "Fell back to yfinance."
         )
     try:
-        rows = fetch_twelve_data_rows(ticker=ticker, interval=interval, row_count=row_count, api_key=twelve_api_key)
+        rows = fetch_twelve_data_rows(ticker=ticker, interval=interval, row_count=row_count, api_key=twelve_api_key, prediction_horizon=prediction_horizon)
         return rows, None
     except Exception as exc:
-        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count)
+        rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon)
         return rows, f"Twelve Data failed for {ticker} ({exc}). Fell back to yfinance."
