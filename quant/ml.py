@@ -414,7 +414,7 @@ def strategy_metrics(
     sd = stddev(pnl)
     sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
-    total_return = paper_balance - 1.0
+    total_return = equity - 1.0
     buy_hold_total_return = (
         float(buy_hold_total_return_override)
         if buy_hold_total_return_override is not None
