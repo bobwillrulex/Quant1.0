@@ -1712,7 +1712,7 @@ def create_app() -> "Flask":
                         <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
                         {model_msg}
                       </div>
-                      <div class="card-grid">
+                      <div class="card-grid model-overview-grid">
                         {model_cards_html}
                         <article class="card">
                           <h3>Decision Strategy</h3>
@@ -1948,6 +1948,14 @@ def create_app() -> "Flask":
                 display: grid;
                 gap: 1rem;
                 grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+              }}
+              .model-overview-grid {{
+                grid-template-columns: repeat(2, minmax(270px, 1fr));
+              }}
+              @media (max-width: 720px) {{
+                .model-overview-grid {{
+                  grid-template-columns: 1fr;
+                }}
               }}
               .muted {{ color: var(--muted); }}
               table {{
