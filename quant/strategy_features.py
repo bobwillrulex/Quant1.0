@@ -53,6 +53,8 @@ FeatureSet = Literal[
     "hybrid_sharpe_regime",
     "hybrid_sharpe_volume_flow",
     "hybrid_sharpe_volume_regime",
+    "rsi_thresholds",
+    "stoch_rsi_thresholds",
 ]
 
 
@@ -139,6 +141,10 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         return "hybrid_sharpe_volume_regime"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
+    if value in ("rsi_thresholds", "rsi-thresholds", "rsi_threshold", "rsi-threshold", "rsi"):
+        return "rsi_thresholds"
+    if value in ("stoch_rsi_thresholds", "stoch-rsi-thresholds", "stoch_thresholds", "stoch-thresholds", "stoch_rsi"):
+        return "stoch_rsi_thresholds"
     if value in ("fvg3", "fvg-3", "fvg_3", "legacy3", "legacy-fvg3"):
         return "fvg3"
     if value in ("legacy", "old"):
@@ -619,6 +625,27 @@ def build_hybrid_sharpe_volume_regime_strategy_features() -> StrategyFeatureBuil
     return builder
 
 
+
+
+def build_rsi_threshold_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("rsi_over_70", lambda r: 1.0 if g(r, "rsi") > 70.0 else 0.0)
+    builder.add("rsi_below_30", lambda r: 1.0 if g(r, "rsi") < 30.0 else 0.0)
+    return builder
+
+
+def build_stoch_rsi_threshold_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("stoch_rsi_over_80", lambda r: 1.0 if g(r, "stoch_rsi") > 80.0 else 0.0)
+    builder.add("stoch_rsi_under_20", lambda r: 1.0 if g(r, "stoch_rsi") < 20.0 else 0.0)
+    return builder
+
 def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> StrategyFeatureBuilder:
     normalized = normalize_feature_set(feature_set)
     if normalized == "legacy":
@@ -627,6 +654,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_fvg2_strategy_features()
     if normalized == "fvg3":
         return build_fvg3_strategy_features()
+    if normalized == "rsi_thresholds":
+        return build_rsi_threshold_strategy_features()
+    if normalized == "stoch_rsi_thresholds":
+        return build_stoch_rsi_threshold_strategy_features()
     if normalized == "derivative2":
         return build_derivative2_strategy_features()
     if normalized == "ema":
@@ -675,6 +706,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "legacy"
     if isinstance(names, list) and "stoch_extreme_80" in names and "stoch_extreme_20" in names:
         return "fvg2"
+    if isinstance(names, list) and "rsi_over_70" in names and "rsi_below_30" in names:
+        return "rsi_thresholds"
+    if isinstance(names, list) and "stoch_rsi_over_80" in names and "stoch_rsi_under_20" in names:
+        return "stoch_rsi_thresholds"
     if isinstance(names, list) and "stoch_extreme_neg" in names and "macd_hist_delta_absolute" in names:
         return "fvg3"
     if isinstance(names, list) and "ema_derivative_3_diff" in names:

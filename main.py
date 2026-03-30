@@ -60,6 +60,7 @@ def default_model_config() -> Dict[str, object]:
         "sell_threshold": 0.4,
         "stop_loss_strategy": StopLossStrategy.NONE.value,
         "fixed_stop_pct": 2.0,
+        "prediction_horizon": 5,
     }
 
 
@@ -117,6 +118,7 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
                 row_count=int(cfg.get("rows", 250)),
                 provider=data_provider,
                 twelve_api_key=twelve_api_key,
+                prediction_horizon=int(cfg.get("prediction_horizon", 5)),
             )
             latest_row = dataset[-1]
             provider_notice_html = f"<br><span class='muted'>{provider_notice}</span>" if provider_notice else ""
@@ -1016,6 +1018,7 @@ def create_app() -> "Flask":
         ticker = request.form.get("ticker", "AAPL").upper().strip()
         interval = request.form.get("interval", "1d")
         rows = request.form.get("rows", "250")
+        prediction_horizon_raw = request.form.get("prediction_horizon", "5").strip()
         split_style = request.form.get("split_style", "shuffled")
         feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
         dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
@@ -1057,6 +1060,8 @@ def create_app() -> "Flask":
                 "dqn",
                 "fvg2",
                 "fvg3",
+                "rsi_thresholds",
+                "stoch_rsi_thresholds",
                 "derivative",
                 "derivative2",
                 "ema",
@@ -1137,6 +1142,7 @@ def create_app() -> "Flask":
                             fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
                             data_provider = str(form_state.get("data_provider", data_provider)).strip().lower()
                             dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
+                            prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
                             use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
                             manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
                     elif eval_action == "open":
@@ -1162,6 +1168,7 @@ def create_app() -> "Flask":
                         stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                         fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
                         dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
+                        prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
                         use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
                         manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
                         message_html = (
@@ -1188,6 +1195,7 @@ def create_app() -> "Flask":
                         row_count=present_row_count,
                         provider=data_provider,
                         twelve_api_key=twelve_api_key,
+                        prediction_horizon=int(prediction_horizon_raw or "5"),
                     )
                     if provider_notice:
                         provider_notices.append(provider_notice)
@@ -1241,6 +1249,9 @@ def create_app() -> "Flask":
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
                     row_count = int(rows)
+                    prediction_horizon = int(prediction_horizon_raw or "5")
+                    if prediction_horizon < 1:
+                        raise ValueError("Prediction horizon must be at least 1.")
                     buy_threshold, sell_threshold = parse_thresholds(buy_threshold_raw, sell_threshold_raw)
                     stop_loss_strategy = parse_stop_loss_strategy(stop_loss_strategy_raw)
                     fixed_stop_pct = 2.0
@@ -1275,6 +1286,7 @@ def create_app() -> "Flask":
                                     row_count=row_count,
                                     provider=data_provider,
                                     twelve_api_key=twelve_api_key,
+                                    prediction_horizon=prediction_horizon,
                                 )
                                 if provider_notice:
                                     provider_notices.append(provider_notice)
@@ -1311,6 +1323,7 @@ def create_app() -> "Flask":
                                         "sell_threshold": sell_threshold,
                                         "stop_loss_strategy": stop_loss_strategy.value,
                                         "fixed_stop_pct": fixed_stop_pct,
+                                        "prediction_horizon": prediction_horizon,
                                     }
                                 multi_rows.append(
                                     "<tr>"
@@ -1361,6 +1374,7 @@ def create_app() -> "Flask":
                             row_count=row_count,
                             provider=data_provider,
                             twelve_api_key=twelve_api_key,
+                            prediction_horizon=prediction_horizon,
                         )
                         if provider_notice:
                             provider_notices.append(provider_notice)
@@ -1449,6 +1463,7 @@ def create_app() -> "Flask":
                                     "sell_threshold": sell_threshold,
                                     "stop_loss_strategy": stop_loss_strategy.value,
                                     "fixed_stop_pct": fixed_stop_pct,
+                                    "prediction_horizon": prediction_horizon,
                                 }
                                 save_model_configs(mode_key, model_configs)
                                 metrics["saved_model"] = model_name_to_save
@@ -1720,6 +1735,7 @@ def create_app() -> "Flask":
                                 "fixed_stop_pct": fixed_stop_pct_raw,
                                 "data_provider": data_provider,
                                 "dqn_episodes": dqn_episodes_raw,
+                                "prediction_horizon": prediction_horizon_raw,
                                 "use_manual_weights": use_manual_weights_raw,
                                 "manual_feature_weights": manual_weights_json,
                             },
@@ -2118,6 +2134,9 @@ def create_app() -> "Flask":
               <label>Rows:
                 <input type="number" min="50" name="rows" value="{rows}" required />
               </label>
+              <label>Prediction Horizon (candles):
+                <input type="number" min="1" step="1" name="prediction_horizon" value="{prediction_horizon_raw}" required />
+              </label>
               <label>Split Style:
                 <select name="split_style">
                   <option value="shuffled" {"selected" if split_style == "shuffled" else ""}>Legacy (shuffled)</option>
@@ -2137,6 +2156,8 @@ def create_app() -> "Flask":
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
+                  <option value="rsi_thresholds" {"selected" if feature_set == "rsi_thresholds" else ""}>RSI Thresholds (2 features)</option>
+                  <option value="stoch_rsi_thresholds" {"selected" if feature_set == "stoch_rsi_thresholds" else ""}>Stoch RSI Thresholds (2 features)</option>
                   <option value="derivative" {"selected" if feature_set == "derivative" else ""}>Derivative set</option>
                   <option value="derivative2" {"selected" if feature_set == "derivative2" else ""}>Derivatives 2 set</option>
                   <option value="ema" {"selected" if feature_set == "ema" else ""}>EMA set</option>
@@ -2762,6 +2783,8 @@ def parse_args() -> argparse.Namespace:
             "dqn",
             "fvg2",
             "fvg3",
+            "rsi_thresholds",
+            "stoch_rsi_thresholds",
             "derivative",
             "derivative2",
             "ema",

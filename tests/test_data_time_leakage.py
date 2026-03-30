@@ -154,3 +154,19 @@ def test_ema_bollinger_and_vwap_columns_are_present_and_dynamic() -> None:
     assert max(vwap_high_values) - min(vwap_high_values) > 0.0
     assert max(vwap_low_values) - min(vwap_low_values) > 0.0
     assert max(session_vwap_values) - min(session_vwap_values) > 0.0
+
+
+def test_prediction_horizon_adjusts_return_target() -> None:
+    highs, lows, closes = _build_ohlc(80)
+    rows_h1 = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=1)
+    rows_h5 = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=5)
+    assert rows_h1[0]["return_next"] != rows_h5[0]["return_next"]
+
+
+def test_prediction_horizon_must_be_positive() -> None:
+    highs, lows, closes = _build_ohlc(80)
+    try:
+        compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=0)
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "Prediction horizon must be at least 1" in str(exc)
