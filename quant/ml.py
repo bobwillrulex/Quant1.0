@@ -149,6 +149,7 @@ def strategy_metrics(
     prob_smoothing_window: int = 3,
     stop_loss: StopLossConfig | None = None,
     strict_validation: bool = False,
+    row_labels: Sequence[str] | None = None,
 ) -> Dict[str, object]:
     stop_cfg = stop_loss or StopLossConfig()
     if expected_returns is None:
@@ -200,6 +201,7 @@ def strategy_metrics(
     wins = 0
     trades = 0
     closed_trade_pnls: List[float] = []
+    trade_log: List[Dict[str, object]] = []
     def close_position(idx: int, fill_price: float, stop_exit: bool = False, time_decay_exit: bool = False) -> None:
         nonlocal current_pos, entry_price, trailing_anchor, stop_price, bars_in_position, cooldown, wins, trades, pnl, stop_loss_exits, time_decay_exits
         if current_pos == 0 or entry_price is None:
@@ -216,6 +218,25 @@ def strategy_metrics(
             cooldown = cooldown_bars
         if time_decay_exit:
             time_decay_exits += 1
+        entry_bar = int(entry_idx) if entry_idx is not None else int(idx)
+        exit_bar = int(idx)
+        entry_label = row_labels[entry_bar] if row_labels and 0 <= entry_bar < len(row_labels) else str(entry_bar)
+        exit_label = row_labels[exit_bar] if row_labels and 0 <= exit_bar < len(row_labels) else str(exit_bar)
+        trade_log.append(
+            {
+                "side": "LONG" if current_pos > 0 else "SHORT",
+                "entry_index": float(entry_bar),
+                "exit_index": float(exit_bar),
+                "entry_label": entry_label,
+                "exit_label": exit_label,
+                "entry_price": float(entry_price),
+                "exit_price": float(fill_price),
+                "bars_held": float(max(1, (exit_bar - entry_bar) + 1)),
+                "gross_pnl": float(gross),
+                "net_pnl": float(net),
+                "exit_reason": "stop_loss" if stop_exit else ("time_decay" if time_decay_exit else "signal"),
+            }
+        )
         current_pos = 0
         entry_price = None
         trailing_anchor = None
@@ -421,6 +442,7 @@ def strategy_metrics(
         "avg_gain_per_trade": (sum(closed_trade_pnls) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0,
         "max_loss_per_trade": max_trade_loss,
         "trade_returns": closed_trade_pnls,
+        "trade_log": trade_log,
         "flag_unrealistic": 1.0 if flag_unrealistic else 0.0,
         "hold_time_stats": hold_time_stats,
     }
@@ -615,9 +637,19 @@ def evaluate_bundle(
     baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
     baseline_zero = [0.0] * len(y_test_ret)
     buy_hold_total_return_override: float | None = None
+    row_labels: List[str] = [str(i) for i in range(len(y_test_ret))]
     if eval_rows and split_style == "chronological":
         test_rows = list(eval_rows)[-len(y_test_ret) :] if y_test_ret else []
         closes = [float(row["close"]) for row in test_rows if "close" in row]
+        derived_labels: List[str] = []
+        for i, row in enumerate(test_rows):
+            timestamp = row.get("timestamp")
+            if timestamp:
+                derived_labels.append(str(timestamp))
+            else:
+                derived_labels.append(str(i))
+        if len(derived_labels) == len(y_test_ret):
+            row_labels = derived_labels
         if len(closes) >= 2 and closes[0] != 0.0:
             buy_hold_total_return_override = (closes[-1] / closes[0]) - 1.0
 
@@ -632,6 +664,7 @@ def evaluate_bundle(
         buy_hold_total_return_override=buy_hold_total_return_override,
         allow_short=allow_short,
         stop_loss=stop_loss,
+        row_labels=row_labels,
     )
     monte_carlo: Dict[str, Any] | None = None
     if monte_carlo_method in {"bootstrap", "shuffle", "block"}:
