@@ -79,12 +79,15 @@ def compute_strategy_rows_from_prices(
     lows: Sequence[float],
     closes: Sequence[float],
     prediction_horizon: int = 5,
+    timestamps: Sequence[object] | None = None,
 ) -> List[Row]:
     n = len(closes)
     if prediction_horizon < 1:
         raise ValueError("Prediction horizon must be at least 1.")
     if n < (40 + prediction_horizon):
         raise ValueError("Not enough rows to compute indicators. Need at least 40 + prediction horizon rows.")
+    if timestamps is not None and len(timestamps) != n:
+        raise ValueError("timestamps must match closes length when provided.")
     deltas = [0.0] + [closes[i] - closes[i - 1] for i in range(1, n)]
     gains = [max(d, 0.0) for d in deltas]
     losses = [max(-d, 0.0) for d in deltas]
@@ -271,8 +274,7 @@ def compute_strategy_rows_from_prices(
         deriv_3_cross = 1.0 if (deriv_3_diff_now == 0.0 or (deriv_3_diff_now * deriv_3_diff_prev) < 0.0) else 0.0
         deriv_3_cross_positive = 1.0 if (deriv_3_cross > 0.0 and deriv_3_diff_now >= 0.0) else 0.0
         deriv_3_cross_negative = 1.0 if (deriv_3_cross > 0.0 and deriv_3_diff_now <= 0.0) else 0.0
-        rows.append(
-            {
+        row: Row = {
                 "stoch_rsi": stoch_rsi[i],
                 "stoch_velocity": stoch_now - stoch_prev,
                 "stoch_low_zone": max(0.0, 0.2 - stoch_now),
@@ -355,7 +357,9 @@ def compute_strategy_rows_from_prices(
                 "session_vwap_std_2_range_5m": session_vwap_std_2_range_5m[i],
                 "atr_frac": atr_frac[i],
             }
-        )
+        if timestamps is not None:
+            row["timestamp"] = str(timestamps[i])
+        rows.append(row)
     if not rows:
         raise ValueError("Could not build feature rows from downloaded candles.")
     return rows
@@ -379,7 +383,14 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int, prediction_hori
         highs = [float(v) for v in history["High"].tolist()]
         lows = [float(v) for v in history["Low"].tolist()]
         closes = [float(v) for v in history["Close"].tolist()]
-        rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=prediction_horizon)
+        timestamps = [str(v) for v in history.index.tolist()]
+        rows = compute_strategy_rows_from_prices(
+            highs=highs,
+            lows=lows,
+            closes=closes,
+            prediction_horizon=prediction_horizon,
+            timestamps=timestamps,
+        )
         if len(rows) > len(best_rows):
             best_rows = rows
         if len(rows) >= row_count:
@@ -432,7 +443,14 @@ def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: 
     highs = [float(item["high"]) for item in values]
     lows = [float(item["low"]) for item in values]
     closes = [float(item["close"]) for item in values]
-    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, prediction_horizon=prediction_horizon)
+    timestamps = [str(point.get("datetime", "")) for point in values]
+    rows = compute_strategy_rows_from_prices(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        prediction_horizon=prediction_horizon,
+        timestamps=timestamps,
+    )
     return rows[-row_count:] if len(rows) >= row_count else rows
 
 

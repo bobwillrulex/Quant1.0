@@ -170,3 +170,10 @@ def test_prediction_horizon_must_be_positive() -> None:
         assert False, "Expected ValueError"
     except ValueError as exc:
         assert "Prediction horizon must be at least 1" in str(exc)
+
+
+def test_timestamp_column_is_preserved_on_rows() -> None:
+    highs, lows, closes = _build_ohlc(80)
+    timestamps = [f"2026-01-{(i % 28) + 1:02d}" for i in range(80)]
+    rows = compute_strategy_rows_from_prices(highs=highs, lows=lows, closes=closes, timestamps=timestamps)
+    assert rows[0]["timestamp"] == timestamps[3]
