@@ -224,52 +224,71 @@ def run_monte_carlo_backtest(
     if method not in {"bootstrap", "shuffle", "block"}:
         raise ValueError("method must be one of: bootstrap, shuffle, block.")
     rng = random.Random(seed)
+    base_metrics = strategy_metrics(returns, probs, **strategy_kwargs)
+    trade_returns = [float(value) for value in base_metrics.get("trade_returns", [])]
+    if not trade_returns:
+        empty_summary = {
+            "mean_return": 0.0,
+            "median_return": 0.0,
+            "std_return": 0.0,
+            "min_return": 0.0,
+            "max_return": 0.0,
+            "p5_return": 0.0,
+            "p95_return": 0.0,
+            "cvar_5_return": 0.0,
+            "log_mean_return": 0.0,
+            "log_median_return": 0.0,
+            "skewness": 0.0,
+            "kurtosis": 0.0,
+            "mean_sharpe": 0.0,
+            "mean_drawdown": 0.0,
+            "worst_drawdown": 0.0,
+            "probability_of_loss": 0.0,
+            "probability_of_large_loss": 0.0,
+            "probability_of_ruin": 0.0,
+        }
+        return {"raw_results": [], "summary": empty_summary}
+
     raw_results: List[Dict[str, float]] = []
     equity_curves: List[List[float]] = []
-    n = len(returns)
-    log_returns: List[float] = []
-    for ret in returns:
-        if ret <= -1.0:
-            log_returns.append(float("-inf"))
-        else:
-            log_returns.append(math.log1p(ret))
+    n = len(trade_returns)
     log_total_returns: List[float] = []
 
     for _ in range(n_sim):
         if method == "bootstrap":
-            sample_idx = [rng.randrange(n) for _ in range(n)]
-            sim_returns = [returns[idx] for idx in sample_idx]
-            sim_probs = [probs[idx] for idx in sample_idx]
-            sim_log_returns = [log_returns[idx] for idx in sample_idx]
+            sampled_trades = [trade_returns[rng.randrange(n)] for _ in range(n)]
         elif method == "shuffle":
-            sim_returns = list(returns)
-            rng.shuffle(sim_returns)
-            sim_probs = list(probs)
-            sim_log_returns = list(log_returns)
-            rng.shuffle(sim_log_returns)
+            sampled_trades = list(trade_returns)
+            rng.shuffle(sampled_trades)
         else:
-            sim_returns = []
-            sim_probs = []
-            sim_log_returns = []
-            while len(sim_returns) < n:
+            sampled_trades = []
+            while len(sampled_trades) < n:
                 start = rng.randrange(n)
                 end = min(n, start + block_size)
-                sim_returns.extend(returns[start:end])
-                sim_probs.extend(probs[start:end])
-                sim_log_returns.extend(log_returns[start:end])
-            sim_returns = sim_returns[:n]
-            sim_probs = sim_probs[:n]
-            sim_log_returns = sim_log_returns[:n]
+                sampled_trades.extend(trade_returns[start:end])
+            sampled_trades = sampled_trades[:n]
 
-        sim_metrics = strategy_metrics(sim_returns, sim_probs, **strategy_kwargs)
-        total_log_return = sum(sim_log_returns)
+        equity = 1.0
+        peak = 1.0
+        max_drawdown = 0.0
+        for trade_ret in sampled_trades:
+            equity *= 1.0 + trade_ret
+            equity = max(equity, 0.0)
+            peak = max(peak, equity)
+            max_drawdown = max(max_drawdown, ((peak - equity) / peak) if peak > 0 else 0.0)
+        total_return = equity - 1.0
+        mean_ret = (sum(sampled_trades) / len(sampled_trades)) if sampled_trades else 0.0
+        sd_ret = stddev(sampled_trades)
+        sharpe = (mean_ret / sd_ret * math.sqrt(252.0)) if sd_ret > 1e-12 else 0.0
+        win_rate = (sum(1 for value in sampled_trades if value > 0.0) / len(sampled_trades)) if sampled_trades else 0.0
+        total_log_return = sum(math.log1p(value) if value > -1.0 else float("-inf") for value in sampled_trades)
         log_total_return = -1.0 if math.isinf(total_log_return) and total_log_return < 0 else (math.exp(total_log_return) - 1.0)
         log_total_returns.append(log_total_return)
         sim_result = {
-            "total_return": float(sim_metrics.get("total_return", 0.0)),
-            "sharpe": float(sim_metrics.get("sharpe", 0.0)),
-            "max_drawdown": float(sim_metrics.get("max_drawdown", 0.0)),
-            "win_rate": float(sim_metrics.get("win_rate", 0.0)),
+            "total_return": float(total_return),
+            "sharpe": float(sharpe),
+            "max_drawdown": float(max_drawdown),
+            "win_rate": float(win_rate),
             "log_total_return": float(log_total_return),
         }
         raw_results.append(sim_result)
@@ -277,7 +296,7 @@ def run_monte_carlo_backtest(
         if len(equity_curves) < max(0, int(return_equity_curves)):
             curve: List[float] = []
             equity = 1.0
-            for ret in sim_returns:
+            for ret in sampled_trades:
                 equity *= 1.0 + ret
                 curve.append(equity)
             equity_curves.append(curve)
@@ -317,6 +336,12 @@ def run_monte_carlo_backtest(
     out: Dict[str, Any] = {"raw_results": raw_results, "summary": summary}
     if equity_curves:
         out["equity_curves"] = equity_curves
+    if summary["mean_sharpe"] > 3.0:
+        print("WARNING: Monte Carlo mean Sharpe exceeds 3.0; results may be unrealistic.")
+    if summary["median_return"] > 5.0:
+        print("WARNING: Monte Carlo median return exceeds 500%; results may be unrealistic.")
+    if summary["probability_of_loss"] < 0.05:
+        print("WARNING: Monte Carlo probability of loss below 5%; results may be unrealistic.")
     return out
 
 
@@ -333,6 +358,7 @@ def strategy_metrics(
     min_hold_bars: int = 0,
     prob_smoothing_window: int = 3,
     stop_loss: StopLossConfig | None = None,
+    strict_validation: bool = False,
 ) -> Dict[str, object]:
     stop_cfg = stop_loss or StopLossConfig()
     if expected_returns is None:
@@ -360,176 +386,153 @@ def strategy_metrics(
     positions: List[int] = []
     current_pos = 0
     bars_in_position = 0
-    synthetic_price = 1.0
-    entry_price = 1.0
-    entry_idx = -1
-    trailing_anchor = 1.0
-    stop_price = 0.0
+    entry_price: float | None = None
+    entry_idx: int | None = None
+    trailing_anchor: float | None = None
+    stop_price: float | None = None
     stop_loss_exits = 0
     time_decay_exits = 0
     time_decay_limit = max(1, int(stop_cfg.time_decay_bars))
     atr_window = 14
     atr_returns: List[float] = []
-    effective_returns: List[float] = list(returns)
+    slippage = 0.001
+    cooldown_bars = 3
+    cooldown = 0
+    effective_returns: List[float] = [0.0 for _ in returns]
+    synthetic_prices: List[float] = []
+    synthetic_price = 1.0
+    for bar_ret in returns:
+        atr_returns.append(abs(bar_ret))
+        synthetic_price *= 1.0 + bar_ret
+        synthetic_prices.append(synthetic_price)
 
-    for idx, p in enumerate(smoothed_probs):
-        bar_ret = returns[idx] if idx < len(returns) else 0.0
-        prior_synthetic_price = synthetic_price
+    pnl: List[float] = [0.0 for _ in returns]
+    wins = 0
+    trades = 0
+    closed_trade_pnls: List[float] = []
+    def close_position(idx: int, fill_price: float, stop_exit: bool = False, time_decay_exit: bool = False) -> None:
+        nonlocal current_pos, entry_price, trailing_anchor, stop_price, bars_in_position, cooldown, wins, trades, pnl, stop_loss_exits, time_decay_exits
+        if current_pos == 0 or entry_price is None:
+            return
+        gross = ((fill_price / entry_price) - 1.0) if current_pos > 0 else ((entry_price / fill_price) - 1.0)
+        net = gross - (2.0 * (trade_cost + slippage))
+        closed_trade_pnls.append(net)
+        pnl[idx] += net
+        trades += 1
+        if net > 0:
+            wins += 1
+        if stop_exit:
+            stop_loss_exits += 1
+            cooldown = cooldown_bars
+        if time_decay_exit:
+            time_decay_exits += 1
+        current_pos = 0
+        entry_price = None
+        trailing_anchor = None
+        stop_price = None
+        bars_in_position = 0
+
+    for idx in range(len(returns)):
+        if idx == 0:
+            positions.append(current_pos)
+            continue
+        current_price = synthetic_prices[idx]
+        bar_ret = returns[idx]
         atr_returns.append(abs(bar_ret))
         if len(atr_returns) > atr_window:
             atr_returns.pop(0)
         atr_value = sum(atr_returns) / max(1, len(atr_returns))
-        synthetic_price *= 1.0 + bar_ret
+        signal = smoothed_probs[idx - 1]
 
-        if current_pos == 0:
-            if p > long_threshold:
-                current_pos = 1
-                bars_in_position = 1
-                entry_price = synthetic_price
-                entry_idx = idx
-                trailing_anchor = entry_price
-                if stop_cfg.strategy == StopLossStrategy.ATR:
-                    stop_price = entry_price - (stop_cfg.atr_multiplier * atr_value * entry_price)
-                elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
-                    stop_price = entry_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
-                elif stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
-                    stop_price = entry_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
-                else:
-                    stop_price = 0.0
-            elif p < short_threshold and allow_short:
-                current_pos = -1
-                bars_in_position = 1
-                entry_price = synthetic_price
-                entry_idx = idx
-                trailing_anchor = entry_price
-                if stop_cfg.strategy == StopLossStrategy.ATR:
-                    stop_price = entry_price + (stop_cfg.atr_multiplier * atr_value * entry_price)
-                elif stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
-                    stop_price = entry_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
-                elif stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
-                    stop_price = entry_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
-                else:
-                    stop_price = 0.0
-        elif current_pos == 1:
-            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
-                trailing_anchor = max(trailing_anchor, synthetic_price)
+        if current_pos == 1 and entry_price is not None:
+            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP and trailing_anchor is not None:
+                trailing_anchor = max(trailing_anchor, current_price)
                 stop_price = trailing_anchor * (1.0 - (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
-            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and synthetic_price <= stop_price
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and stop_price is not None and current_price <= stop_price
             model_invalidation_hit = False
-            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
+            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
-                cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
+                cumulative_return = (current_price / entry_price) - 1.0 if entry_price != 0 else 0.0
                 model_invalidation_hit = cumulative_return <= threshold
-            if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
-                if (fixed_or_atr_hit or model_invalidation_hit) and prior_synthetic_price > 0 and idx < len(effective_returns):
-                    effective_stop_price = stop_price
-                    if model_invalidation_hit:
-                        threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
-                        effective_stop_price = entry_price * (1.0 + threshold)
-                    effective_returns[idx] = (effective_stop_price / prior_synthetic_price) - 1.0
-                current_pos = 0
-                bars_in_position = 0
-                if time_decay_hit:
-                    time_decay_exits += 1
-                else:
-                    stop_loss_exits += 1
-            elif bars_in_position >= min_hold_bars and p < sell_threshold:
-                current_pos = 0
-                bars_in_position = 0
+            if time_decay_hit:
+                close_position(idx, current_price, time_decay_exit=True)
+            elif fixed_or_atr_hit:
+                gap_price = current_price
+                stop_fill_price = min(stop_price if stop_price is not None else gap_price, gap_price)
+                close_position(idx, stop_fill_price, stop_exit=True)
+            elif model_invalidation_hit and entry_idx is not None:
+                threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                effective_stop_price = entry_price * (1.0 + threshold)
+                close_position(idx, min(effective_stop_price, current_price), stop_exit=True)
+            elif bars_in_position >= min_hold_bars and signal < sell_threshold:
+                close_position(idx, current_price)
             else:
                 bars_in_position += 1
-        elif current_pos == -1:
-            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP:
-                trailing_anchor = min(trailing_anchor, synthetic_price)
+        elif current_pos == -1 and entry_price is not None:
+            if stop_cfg.strategy == StopLossStrategy.TRAILING_STOP and trailing_anchor is not None:
+                trailing_anchor = min(trailing_anchor, current_price)
                 stop_price = trailing_anchor * (1.0 + (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
-            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and synthetic_price >= stop_price
+            fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and stop_price is not None and current_price >= stop_price
             model_invalidation_hit = False
-            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION:
+            if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
-                cumulative_return = (synthetic_price / entry_price) - 1.0 if entry_price != 0 else 0.0
+                cumulative_return = (current_price / entry_price) - 1.0 if entry_price != 0 else 0.0
                 model_invalidation_hit = cumulative_return >= -threshold
-            if time_decay_hit or fixed_or_atr_hit or model_invalidation_hit:
-                if (fixed_or_atr_hit or model_invalidation_hit) and prior_synthetic_price > 0 and idx < len(effective_returns):
-                    effective_stop_price = stop_price
-                    if model_invalidation_hit:
-                        threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
-                        effective_stop_price = entry_price * (1.0 - threshold)
-                    effective_returns[idx] = (effective_stop_price / prior_synthetic_price) - 1.0
-                current_pos = 0
-                bars_in_position = 0
-                if time_decay_hit:
-                    time_decay_exits += 1
-                else:
-                    stop_loss_exits += 1
-            elif bars_in_position >= min_hold_bars and p > long_threshold:
-                current_pos = 0
-                bars_in_position = 0
+            if time_decay_hit:
+                close_position(idx, current_price, time_decay_exit=True)
+            elif fixed_or_atr_hit:
+                gap_price = current_price
+                stop_fill_price = max(stop_price if stop_price is not None else gap_price, gap_price)
+                close_position(idx, stop_fill_price, stop_exit=True)
+            elif model_invalidation_hit and entry_idx is not None:
+                threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
+                effective_stop_price = entry_price * (1.0 - threshold)
+                close_position(idx, max(effective_stop_price, current_price), stop_exit=True)
+            elif bars_in_position >= min_hold_bars and signal > long_threshold:
+                close_position(idx, current_price)
             else:
                 bars_in_position += 1
+
+        if current_pos == 0:
+            if cooldown > 0:
+                cooldown -= 1
+            elif signal > long_threshold:
+                current_pos = 1
+                entry_price = current_price
+                entry_idx = idx
+                bars_in_position = 1
+                trailing_anchor = current_price
+                if stop_cfg.strategy == StopLossStrategy.ATR:
+                    stop_price = current_price - (stop_cfg.atr_multiplier * atr_value * current_price)
+                elif stop_cfg.strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
+                    stop_price = current_price * (1.0 - (stop_cfg.fixed_pct / 100.0))
+                else:
+                    stop_price = None
+            elif signal < short_threshold and allow_short:
+                current_pos = -1
+                entry_price = current_price
+                entry_idx = idx
+                bars_in_position = 1
+                trailing_anchor = current_price
+                if stop_cfg.strategy == StopLossStrategy.ATR:
+                    stop_price = current_price + (stop_cfg.atr_multiplier * atr_value * current_price)
+                elif stop_cfg.strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
+                    stop_price = current_price * (1.0 + (stop_cfg.fixed_pct / 100.0))
+                else:
+                    stop_price = None
         positions.append(current_pos)
-    pnl: List[float] = []
-    prev_pos = 0
-    for pos, ret in zip(positions, effective_returns):
-        turnover = abs(pos - prev_pos)
-        day_pnl = prev_pos * ret - turnover * trade_cost
-        pnl.append(day_pnl)
-        prev_pos = pos
 
-    synthetic_prices: List[float] = []
-    mark_price = 1.0
-    for ret in effective_returns:
-        mark_price *= 1.0 + ret
-        synthetic_prices.append(mark_price)
-
-    paper_balance = 1.0
-    wins = 0
-    trades = 0
-    closed_trade_pnls: List[float] = []
-    active_trade_side = 0
-    active_entry_price = 0.0
-    for idx, pos in enumerate(positions):
-        if idx >= len(synthetic_prices):
-            break
-        price_now = synthetic_prices[idx]
-        if active_trade_side == 0 and pos != 0:
-            active_trade_side = pos
-            active_entry_price = price_now
-            continue
-        if active_trade_side != 0 and pos == 0:
-            if active_entry_price != 0:
-                gross = ((price_now / active_entry_price) - 1.0) if active_trade_side > 0 else ((active_entry_price / price_now) - 1.0)
-            else:
-                gross = 0.0
-            net = gross - (2.0 * trade_cost)
-            paper_balance *= 1.0 + net
-            closed_trade_pnls.append(net)
-            trades += 1
-            if net > 0:
-                wins += 1
-            active_trade_side = 0
-            active_entry_price = 0.0
-    if active_trade_side != 0 and synthetic_prices:
-        final_price = synthetic_prices[-1]
-        if active_entry_price != 0:
-            gross = ((final_price / active_entry_price) - 1.0) if active_trade_side > 0 else ((active_entry_price / final_price) - 1.0)
-        else:
-            gross = 0.0
-        net = gross - (2.0 * trade_cost)
-        paper_balance *= 1.0 + net
-        closed_trade_pnls.append(net)
-        trades += 1
-        if net > 0:
-            wins += 1
+    if current_pos != 0 and entry_price is not None and synthetic_prices:
+        close_position(len(returns) - 1, synthetic_prices[-1])
+        positions[-1] = 0
     max_trade_loss = min(closed_trade_pnls) if closed_trade_pnls else 0.0
     equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
     drawdowns: List[float] = []
     for r in pnl:
-        # Use compounded equity so drawdown reflects portfolio behavior and
-        # cannot exceed 100% from additive accounting artifacts.
         equity *= 1.0 + r
         equity = max(equity, 0.0)
         peak = max(peak, equity)
@@ -537,10 +540,6 @@ def strategy_metrics(
         drawdowns.append(dd)
         max_drawdown = max(max_drawdown, dd)
     avg_drawdown = (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0
-    if stop_cfg.strategy == StopLossStrategy.FIXED_PERCENTAGE:
-        stop_bound = (abs(stop_cfg.fixed_pct) / 100.0) + (2.0 * trade_cost)
-        max_drawdown = min(max_drawdown, stop_bound)
-        avg_drawdown = min(avg_drawdown, stop_bound)
     hold_lengths: List[int] = []
     active_pos = 0
     active_len = 0
@@ -588,6 +587,18 @@ def strategy_metrics(
         beta_vs_sp500 = 0.0
     capm_expected_return = risk_free_rate + beta_vs_sp500 * (buy_hold_total_return - risk_free_rate)
     alpha_capm_sp500_buy_hold = total_return - capm_expected_return
+    probability_of_loss = (sum(1 for value in closed_trade_pnls if value < 0.0) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0
+    if sharpe > 3.0:
+        print("WARNING: Sharpe > 3.0; check for unrealistic backtest assumptions.")
+    if _quantile(sorted(closed_trade_pnls), 0.5) > 5.0 if closed_trade_pnls else False:
+        print("WARNING: Median return > 500%; check for unrealistic backtest assumptions.")
+    if closed_trade_pnls and probability_of_loss < 0.05:
+        print("WARNING: Probability of loss < 5%; check for unrealistic backtest assumptions.")
+    flag_unrealistic = equity > 1000.0
+    if strict_validation:
+        assert probability_of_loss > 0.0, "Unrealistic: zero loss probability"
+        assert max_drawdown > 0.1, "Unrealistic: drawdown too small"
+        assert trades > 20, "Too few trades"
     return {
         "long_threshold": long_threshold,
         "short_threshold": short_threshold,
@@ -615,9 +626,12 @@ def strategy_metrics(
         "max_drawdown": max_drawdown,
         "avg_drawdown": avg_drawdown,
         "win_rate": (wins / trades) if trades else 0.0,
+        "probability_of_loss": probability_of_loss,
         "trade_count": float(trades),
         "avg_gain_per_trade": (sum(closed_trade_pnls) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0,
         "max_loss_per_trade": max_trade_loss,
+        "trade_returns": closed_trade_pnls,
+        "flag_unrealistic": 1.0 if flag_unrealistic else 0.0,
         "hold_time_stats": hold_time_stats,
     }
 
