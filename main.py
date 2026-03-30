@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import threading
 import time
@@ -389,6 +390,56 @@ def render_hold_time_boxplot(stats: Dict[str, object], *, stroke: str = "#8ca0bf
         f"{label(max_x, 23, f'max {max_v:.1f}')}"
         "</svg>"
         f"<span class='muted' style='font-size:0.82rem;'>Hold streak samples: {count}</span>"
+        "</div>"
+    )
+
+
+def render_distribution_histogram(values: list[float], *, stroke: str = "#8ca0bf", fill: str = "#cfd8e6") -> str:
+    if not values:
+        return "<p class='muted'>No distribution values available.</p>"
+    ordered = sorted(float(v) for v in values)
+    min_v = ordered[0]
+    max_v = ordered[-1]
+    n_bins = max(8, min(24, int(math.sqrt(len(ordered)))))
+    span = max_v - min_v
+    if span <= 1e-12:
+        counts = [len(ordered)]
+        edges = [min_v - 0.5, max_v + 0.5]
+    else:
+        width = span / n_bins
+        counts = [0] * n_bins
+        edges = [min_v + (width * idx) for idx in range(n_bins + 1)]
+        for value in ordered:
+            idx = min(n_bins - 1, int((value - min_v) / width))
+            counts[idx] += 1
+    chart_w = 680.0
+    chart_h = 220.0
+    left = 40.0
+    bottom = 175.0
+    usable_w = chart_w - left - 20.0
+    usable_h = 130.0
+    bar_count = len(counts)
+    bar_w = usable_w / max(1, bar_count)
+    max_count = max(counts) if counts else 1
+    bars = []
+    for idx, count in enumerate(counts):
+        h = 0.0 if max_count <= 0 else (count / max_count) * usable_h
+        x = left + idx * bar_w + 1.0
+        y = bottom - h
+        bars.append(
+            f"<rect x='{x:.2f}' y='{y:.2f}' width='{max(1.0, bar_w - 2.0):.2f}' height='{h:.2f}' "
+            f"fill='{fill}' fill-opacity='0.45' stroke='{stroke}' stroke-width='1'/>"
+        )
+    return (
+        "<div class='mini-chart' style='overflow:auto;'>"
+        f"<svg viewBox='0 0 {chart_w:.0f} {chart_h:.0f}' width='100%' height='220' role='img' aria-label='Monte Carlo return distribution'>"
+        f"<line x1='{left:.2f}' y1='{bottom:.2f}' x2='{chart_w - 20.0:.2f}' y2='{bottom:.2f}' stroke='{stroke}' stroke-width='1.2'/>"
+        f"<line x1='{left:.2f}' y1='{bottom - usable_h:.2f}' x2='{left:.2f}' y2='{bottom:.2f}' stroke='{stroke}' stroke-width='1.2'/>"
+        + "".join(bars)
+        + f"<text x='{left:.2f}' y='198' fill='{stroke}' font-size='11'>{min_v:+.1%}</text>"
+        + f"<text x='{chart_w - 64.0:.2f}' y='198' fill='{stroke}' font-size='11'>{max_v:+.1%}</text>"
+        + f"<text x='{left:.2f}' y='{bottom - usable_h - 6.0:.2f}' fill='{stroke}' font-size='11'>count</text>"
+        + "</svg>"
         "</div>"
     )
 
@@ -1584,19 +1635,40 @@ def create_app() -> "Flask":
                         monte_carlo_results = metrics.get("monte_carlo")
                         if isinstance(monte_carlo_results, dict):
                             mc_summary = monte_carlo_results.get("summary", {})
+                            mc_raw_results = monte_carlo_results.get("raw_results", [])
                             if isinstance(mc_summary, dict):
+                                raw_total_returns = [
+                                    float(item.get("total_return", 0.0))
+                                    for item in mc_raw_results
+                                    if isinstance(item, dict)
+                                ]
+                                distribution_chart_html = render_distribution_histogram(
+                                    raw_total_returns,
+                                    stroke=theme_border,
+                                    fill=theme_table_head,
+                                )
                                 monte_carlo_html = (
                                     "<article class='card'>"
                                     "<h3>Monte Carlo Robustness</h3>"
                                     f"<p><span class='muted'>Method</span> <strong>{escape(monte_carlo_method)}</strong></p>"
                                     f"<p><span class='muted'>Simulations</span> <strong>{int(monte_carlo_n_sim)}</strong></p>"
                                     f"<p><span class='muted'>Mean Return</span> <strong>{float(mc_summary.get('mean_return', 0.0)):+.2%}</strong></p>"
+                                    f"<p><span class='muted'>Median Return</span> <strong>{float(mc_summary.get('median_return', 0.0)):+.2%}</strong></p>"
                                     f"<p><span class='muted'>Return Std Dev</span> <strong>{float(mc_summary.get('std_return', 0.0)):.2%}</strong></p>"
                                     f"<p><span class='muted'>Return Range</span> {float(mc_summary.get('min_return', 0.0)):+.2%} to {float(mc_summary.get('max_return', 0.0)):+.2%}</p>"
                                     f"<p><span class='muted'>5th / 95th Percentile</span> {float(mc_summary.get('p5_return', 0.0)):+.2%} / {float(mc_summary.get('p95_return', 0.0)):+.2%}</p>"
+                                    f"<p><span class='muted'>CVaR 5%</span> <strong>{float(mc_summary.get('cvar_5_return', 0.0)):+.2%}</strong></p>"
+                                    f"<p><span class='muted'>Log Mean / Median Return</span> {float(mc_summary.get('log_mean_return', 0.0)):+.2%} / {float(mc_summary.get('log_median_return', 0.0)):+.2%}</p>"
+                                    f"<p><span class='muted'>Skewness / Kurtosis</span> {float(mc_summary.get('skewness', 0.0)):+.3f} / {float(mc_summary.get('kurtosis', 0.0)):+.3f}</p>"
                                     f"<p><span class='muted'>Mean Sharpe</span> {float(mc_summary.get('mean_sharpe', 0.0)):.3f}</p>"
                                     f"<p><span class='muted'>Mean / Worst Drawdown</span> {float(mc_summary.get('mean_drawdown', 0.0)):.2%} / {float(mc_summary.get('worst_drawdown', 0.0)):.2%}</p>"
                                     f"<p><span class='muted'>Probability of Loss</span> <strong>{float(mc_summary.get('probability_of_loss', 0.0)):.2%}</strong></p>"
+                                    f"<p><span class='muted'>P(Return &lt; -50%)</span> {float(mc_summary.get('probability_of_large_loss', 0.0)):.2%}</p>"
+                                    f"<p><span class='muted'>P(Ruin &lt; -90%)</span> {float(mc_summary.get('probability_of_ruin', 0.0)):.2%}</p>"
+                                    "<details>"
+                                    "<summary>Hidden: Return Distribution Plot</summary>"
+                                    f"{distribution_chart_html}"
+                                    "</details>"
                                     "</article>"
                                 )
                         model_cards_html = ""

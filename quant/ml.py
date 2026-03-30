@@ -167,6 +167,7 @@ def summarize_distribution(values: List[float]) -> Dict[str, float]:
     if not values:
         return {
             "mean": 0.0,
+            "median": 0.0,
             "std": 0.0,
             "min": 0.0,
             "max": 0.0,
@@ -178,12 +179,30 @@ def summarize_distribution(values: List[float]) -> Dict[str, float]:
     variance = sum((val - mean_val) ** 2 for val in ordered) / len(ordered)
     return {
         "mean": mean_val,
+        "median": _quantile(ordered, 0.5),
         "std": math.sqrt(variance),
         "min": ordered[0],
         "max": ordered[-1],
         "p5": _quantile(ordered, 0.05),
         "p95": _quantile(ordered, 0.95),
     }
+
+
+def cvar(values: List[float], alpha: float = 0.05) -> float:
+    if not values:
+        return 0.0
+    sorted_vals = sorted(float(v) for v in values)
+    cutoff = max(1, int(len(sorted_vals) * alpha))
+    return sum(sorted_vals[:cutoff]) / cutoff
+
+
+def _distribution_shape(values: List[float], mean_val: float, std_val: float) -> Tuple[float, float]:
+    if not values or std_val <= 1e-12:
+        return 0.0, 0.0
+    n = len(values)
+    skew = sum(((value - mean_val) / std_val) ** 3 for value in values) / n
+    kurtosis_excess = (sum(((value - mean_val) / std_val) ** 4 for value in values) / n) - 3.0
+    return skew, kurtosis_excess
 
 
 def run_monte_carlo_backtest(
@@ -208,33 +227,50 @@ def run_monte_carlo_backtest(
     raw_results: List[Dict[str, float]] = []
     equity_curves: List[List[float]] = []
     n = len(returns)
+    log_returns: List[float] = []
+    for ret in returns:
+        if ret <= -1.0:
+            log_returns.append(float("-inf"))
+        else:
+            log_returns.append(math.log1p(ret))
+    log_total_returns: List[float] = []
 
     for _ in range(n_sim):
         if method == "bootstrap":
             sample_idx = [rng.randrange(n) for _ in range(n)]
             sim_returns = [returns[idx] for idx in sample_idx]
             sim_probs = [probs[idx] for idx in sample_idx]
+            sim_log_returns = [log_returns[idx] for idx in sample_idx]
         elif method == "shuffle":
             sim_returns = list(returns)
             rng.shuffle(sim_returns)
             sim_probs = list(probs)
+            sim_log_returns = list(log_returns)
+            rng.shuffle(sim_log_returns)
         else:
             sim_returns = []
             sim_probs = []
+            sim_log_returns = []
             while len(sim_returns) < n:
                 start = rng.randrange(n)
                 end = min(n, start + block_size)
                 sim_returns.extend(returns[start:end])
                 sim_probs.extend(probs[start:end])
+                sim_log_returns.extend(log_returns[start:end])
             sim_returns = sim_returns[:n]
             sim_probs = sim_probs[:n]
+            sim_log_returns = sim_log_returns[:n]
 
         sim_metrics = strategy_metrics(sim_returns, sim_probs, **strategy_kwargs)
+        total_log_return = sum(sim_log_returns)
+        log_total_return = -1.0 if math.isinf(total_log_return) and total_log_return < 0 else (math.exp(total_log_return) - 1.0)
+        log_total_returns.append(log_total_return)
         sim_result = {
             "total_return": float(sim_metrics.get("total_return", 0.0)),
             "sharpe": float(sim_metrics.get("sharpe", 0.0)),
             "max_drawdown": float(sim_metrics.get("max_drawdown", 0.0)),
             "win_rate": float(sim_metrics.get("win_rate", 0.0)),
+            "log_total_return": float(log_total_return),
         }
         raw_results.append(sim_result)
 
@@ -250,18 +286,32 @@ def run_monte_carlo_backtest(
     sharpes = [item["sharpe"] for item in raw_results]
     drawdowns = [item["max_drawdown"] for item in raw_results]
     returns_summary = summarize_distribution(total_returns)
+    log_returns_summary = summarize_distribution(log_total_returns)
+    skewness, kurtosis = _distribution_shape(total_returns, returns_summary["mean"], returns_summary["std"])
     summary = {
         "mean_return": returns_summary["mean"],
+        "median_return": returns_summary["median"],
         "std_return": returns_summary["std"],
         "min_return": returns_summary["min"],
         "max_return": returns_summary["max"],
         "p5_return": returns_summary["p5"],
         "p95_return": returns_summary["p95"],
+        "cvar_5_return": cvar(total_returns, 0.05),
+        "log_mean_return": log_returns_summary["mean"],
+        "log_median_return": log_returns_summary["median"],
+        "skewness": skewness,
+        "kurtosis": kurtosis,
         "mean_sharpe": (sum(sharpes) / len(sharpes)) if sharpes else 0.0,
         "mean_drawdown": (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0,
         "worst_drawdown": max(drawdowns) if drawdowns else 0.0,
         "probability_of_loss": (
             sum(1 for value in total_returns if value < 0.0) / len(total_returns)
+        ) if total_returns else 0.0,
+        "probability_of_large_loss": (
+            sum(1 for value in total_returns if value < -0.5) / len(total_returns)
+        ) if total_returns else 0.0,
+        "probability_of_ruin": (
+            sum(1 for value in total_returns if value < -0.9) / len(total_returns)
         ) if total_returns else 0.0,
     }
     out: Dict[str, Any] = {"raw_results": raw_results, "summary": summary}
