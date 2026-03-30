@@ -440,32 +440,56 @@ def strategy_metrics(
         positions.append(current_pos)
     pnl: List[float] = []
     prev_pos = 0
-    wins = 0
-    trades = 0
-    in_trade = False
-    trade_pnl = 0.0
-    closed_trade_pnls: List[float] = []
-    for idx, (pos, ret) in enumerate(zip(positions, effective_returns)):
+    for pos, ret in zip(positions, effective_returns):
         turnover = abs(pos - prev_pos)
         day_pnl = prev_pos * ret - turnover * trade_cost
         pnl.append(day_pnl)
-        if prev_pos == 0 and pos != 0:
-            in_trade = True
-            trade_pnl = 0.0
-        if in_trade:
-            trade_pnl += day_pnl
-        if prev_pos != 0 and pos == 0 and in_trade:
-            trades += 1
-            closed_trade_pnls.append(trade_pnl)
-            if trade_pnl > 0:
-                wins += 1
-            in_trade = False
-            trade_pnl = 0.0
         prev_pos = pos
-    if in_trade:
+
+    synthetic_prices: List[float] = []
+    mark_price = 1.0
+    for ret in effective_returns:
+        mark_price *= 1.0 + ret
+        synthetic_prices.append(mark_price)
+
+    paper_balance = 1.0
+    wins = 0
+    trades = 0
+    closed_trade_pnls: List[float] = []
+    active_trade_side = 0
+    active_entry_price = 0.0
+    for idx, pos in enumerate(positions):
+        if idx >= len(synthetic_prices):
+            break
+        price_now = synthetic_prices[idx]
+        if active_trade_side == 0 and pos != 0:
+            active_trade_side = pos
+            active_entry_price = price_now
+            continue
+        if active_trade_side != 0 and pos == 0:
+            if active_entry_price != 0:
+                gross = ((price_now / active_entry_price) - 1.0) if active_trade_side > 0 else ((active_entry_price / price_now) - 1.0)
+            else:
+                gross = 0.0
+            net = gross - (2.0 * trade_cost)
+            paper_balance *= 1.0 + net
+            closed_trade_pnls.append(net)
+            trades += 1
+            if net > 0:
+                wins += 1
+            active_trade_side = 0
+            active_entry_price = 0.0
+    if active_trade_side != 0 and synthetic_prices:
+        final_price = synthetic_prices[-1]
+        if active_entry_price != 0:
+            gross = ((final_price / active_entry_price) - 1.0) if active_trade_side > 0 else ((active_entry_price / final_price) - 1.0)
+        else:
+            gross = 0.0
+        net = gross - (2.0 * trade_cost)
+        paper_balance *= 1.0 + net
+        closed_trade_pnls.append(net)
         trades += 1
-        closed_trade_pnls.append(trade_pnl)
-        if trade_pnl > 0:
+        if net > 0:
             wins += 1
     max_trade_loss = min(closed_trade_pnls) if closed_trade_pnls else 0.0
     equity = 1.0
@@ -513,7 +537,7 @@ def strategy_metrics(
     sd = stddev(pnl)
     sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
-    total_return = equity - 1.0
+    total_return = paper_balance - 1.0
     buy_hold_total_return = (
         float(buy_hold_total_return_override)
         if buy_hold_total_return_override is not None
