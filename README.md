@@ -5,7 +5,9 @@ Refactored quant strategy trainer/presenter with modular code and persistent loc
 ## Project Structure
 
 - `main.py` — Flask routes + CLI entrypoint.
-- `quant/ml.py` — feature engineering, model training, evaluation, and prediction logic.
+- `quant/ml.py` — model training, strategy evaluation orchestration, and prediction logic.
+- `quant/ml_monte_carlo.py` — Monte Carlo simulation/statistics helpers for backtest robustness analysis.
+- `docs/ML_FEATURES_AND_OUTPUTS.md` — reference for feature sets and model output payloads.
 - `quant/data.py` — CSV/synthetic data and Yahoo OHLC-to-feature conversion.
 - `quant/storage.py` — model bundle persistence and config database.
 - `quant/constants.py` / `quant/types.py` — shared constants/types.
