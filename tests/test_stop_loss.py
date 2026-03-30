@@ -210,6 +210,22 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertLessEqual(float(metrics["max_drawdown"]), 0.021)
 
+    def test_max_drawdown_is_bounded_to_100_percent_without_stop(self):
+        returns = [-0.70, -0.70, 0.0]
+        probs = [0.9, 0.9, 0.2]
+        expected = [0.0, 0.0, 0.0]
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
+        )
+        self.assertLessEqual(float(metrics["max_drawdown"]), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

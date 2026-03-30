@@ -371,7 +371,10 @@ def strategy_metrics(
     max_drawdown = 0.0
     drawdowns: List[float] = []
     for r in pnl:
-        equity += r
+        # Use compounded equity so drawdown reflects portfolio behavior and
+        # cannot exceed 100% from additive accounting artifacts.
+        equity *= 1.0 + r
+        equity = max(equity, 0.0)
         peak = max(peak, equity)
         dd = (peak - equity) / peak if peak > 0 else 0.0
         drawdowns.append(dd)
