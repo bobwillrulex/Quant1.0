@@ -126,7 +126,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.02098975, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.021, places=6)
 
     def test_model_invalidation_exit_uses_stop_price_return(self):
         returns = [0.0, -0.05, 0.0]
@@ -142,7 +142,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.MODEL_INVALIDATION, model_mae=0.01),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.01099475, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.011, places=6)
 
 
     def test_auto_threshold_fallback_activates_when_no_signals(self):

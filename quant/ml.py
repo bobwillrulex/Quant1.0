@@ -473,7 +473,7 @@ def strategy_metrics(
     max_drawdown = 0.0
     drawdowns: List[float] = []
     for r in pnl:
-        equity *= (1.0 + r)
+        equity += r
         peak = max(peak, equity)
         dd = (peak - equity) / peak if peak > 0 else 0.0
         drawdowns.append(dd)
