@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Dict, List, Literal, Sequence, Tuple
+from typing import Any, Dict, List, Literal, Sequence, Tuple
 
 from .dqn import dqn_q_values, train_dqn_policy
 from .evaluation import (
@@ -161,6 +161,113 @@ def _quantile(sorted_values: Sequence[float], q: float) -> float:
         return float(sorted_values[lo])
     frac = idx - lo
     return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def summarize_distribution(values: List[float]) -> Dict[str, float]:
+    if not values:
+        return {
+            "mean": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p5": 0.0,
+            "p95": 0.0,
+        }
+    ordered = sorted(float(v) for v in values)
+    mean_val = sum(ordered) / len(ordered)
+    variance = sum((val - mean_val) ** 2 for val in ordered) / len(ordered)
+    return {
+        "mean": mean_val,
+        "std": math.sqrt(variance),
+        "min": ordered[0],
+        "max": ordered[-1],
+        "p5": _quantile(ordered, 0.05),
+        "p95": _quantile(ordered, 0.95),
+    }
+
+
+def run_monte_carlo_backtest(
+    returns: List[float],
+    probs: List[float],
+    n_sim: int = 500,
+    method: str = "block",
+    block_size: int = 20,
+    seed: int | None = None,
+    return_equity_curves: int = 0,
+    **strategy_kwargs: Any,
+) -> Dict[str, Any]:
+    if len(returns) != len(probs):
+        raise ValueError("returns and probs must have the same length.")
+    if n_sim < 1:
+        raise ValueError("n_sim must be at least 1.")
+    if block_size < 1:
+        raise ValueError("block_size must be at least 1.")
+    if method not in {"bootstrap", "shuffle", "block"}:
+        raise ValueError("method must be one of: bootstrap, shuffle, block.")
+    rng = random.Random(seed)
+    raw_results: List[Dict[str, float]] = []
+    equity_curves: List[List[float]] = []
+    n = len(returns)
+
+    for _ in range(n_sim):
+        if method == "bootstrap":
+            sample_idx = [rng.randrange(n) for _ in range(n)]
+            sim_returns = [returns[idx] for idx in sample_idx]
+            sim_probs = [probs[idx] for idx in sample_idx]
+        elif method == "shuffle":
+            sim_returns = list(returns)
+            rng.shuffle(sim_returns)
+            sim_probs = list(probs)
+        else:
+            sim_returns = []
+            sim_probs = []
+            while len(sim_returns) < n:
+                start = rng.randrange(n)
+                end = min(n, start + block_size)
+                sim_returns.extend(returns[start:end])
+                sim_probs.extend(probs[start:end])
+            sim_returns = sim_returns[:n]
+            sim_probs = sim_probs[:n]
+
+        sim_metrics = strategy_metrics(sim_returns, sim_probs, **strategy_kwargs)
+        sim_result = {
+            "total_return": float(sim_metrics.get("total_return", 0.0)),
+            "sharpe": float(sim_metrics.get("sharpe", 0.0)),
+            "max_drawdown": float(sim_metrics.get("max_drawdown", 0.0)),
+            "win_rate": float(sim_metrics.get("win_rate", 0.0)),
+        }
+        raw_results.append(sim_result)
+
+        if len(equity_curves) < max(0, int(return_equity_curves)):
+            curve: List[float] = []
+            equity = 1.0
+            for ret in sim_returns:
+                equity *= 1.0 + ret
+                curve.append(equity)
+            equity_curves.append(curve)
+
+    total_returns = [item["total_return"] for item in raw_results]
+    sharpes = [item["sharpe"] for item in raw_results]
+    drawdowns = [item["max_drawdown"] for item in raw_results]
+    returns_summary = summarize_distribution(total_returns)
+    summary = {
+        "mean_return": returns_summary["mean"],
+        "std_return": returns_summary["std"],
+        "min_return": returns_summary["min"],
+        "max_return": returns_summary["max"],
+        "p5_return": returns_summary["p5"],
+        "p95_return": returns_summary["p95"],
+        "mean_sharpe": (sum(sharpes) / len(sharpes)) if sharpes else 0.0,
+        "mean_drawdown": (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0,
+        "worst_drawdown": max(drawdowns) if drawdowns else 0.0,
+        "probability_of_loss": (
+            sum(1 for value in total_returns if value < 0.0) / len(total_returns)
+        ) if total_returns else 0.0,
+    }
+    out: Dict[str, Any] = {"raw_results": raw_results, "summary": summary}
+    if equity_curves:
+        out["equity_curves"] = equity_curves
+    return out
 
 
 def strategy_metrics(
@@ -605,6 +712,10 @@ def evaluate_bundle(
     sell_threshold: float = 0.4,
     allow_short: bool = True,
     stop_loss: StopLossConfig | None = None,
+    monte_carlo_method: str = "none",
+    monte_carlo_n_sim: int = 500,
+    monte_carlo_block_size: int = 20,
+    monte_carlo_seed: int | None = None,
 ) -> Dict[str, object]:
     feature_set = infer_bundle_feature_set(bundle)
     if not x_test_raw:
@@ -668,6 +779,25 @@ def evaluate_bundle(
         allow_short=allow_short,
         stop_loss=stop_loss,
     )
+    monte_carlo: Dict[str, Any] | None = None
+    if monte_carlo_method in {"bootstrap", "shuffle", "block"}:
+        monte_carlo = run_monte_carlo_backtest(
+            returns=list(y_test_ret),
+            probs=list(up_prob),
+            n_sim=monte_carlo_n_sim,
+            method=monte_carlo_method,
+            block_size=monte_carlo_block_size,
+            seed=monte_carlo_seed,
+            return_equity_curves=3,
+            expected_returns=ret_pred,
+            long_threshold=buy_threshold,
+            short_threshold=sell_threshold,
+            trade_cost=0.0005,
+            buy_hold_returns=y_test_ret,
+            buy_hold_total_return_override=buy_hold_total_return_override,
+            allow_short=allow_short,
+            stop_loss=stop_loss,
+        )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     return {
         "model_type": "dqn" if is_dqn else "linear_logistic",
@@ -692,6 +822,7 @@ def evaluate_bundle(
         "calibration": calibration_buckets(y_test_dir, up_prob),
         "confidence_edge": confidence_edge_analysis(y_test_dir, up_prob),
         "strategy": strategy,
+        "monte_carlo": monte_carlo,
         "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
         "pnl_by_regime": pnl_market_regime_breakdown(
             y_test_ret,

@@ -1030,6 +1030,12 @@ def create_app() -> "Flask":
         selected_model = request.form.get("selected_model", "__new__")
         use_manual_weights_raw = request.form.get("use_manual_weights", "no").strip().lower()
         manual_weights_json = request.form.get("manual_feature_weights", "").strip()
+        monte_carlo_method = request.form.get("monte_carlo_method", "none").strip().lower()
+        if monte_carlo_method not in {"none", "bootstrap", "shuffle", "block"}:
+            monte_carlo_method = "none"
+        monte_carlo_n_sim_raw = request.form.get("monte_carlo_n_sim", "500").strip()
+        monte_carlo_block_size_raw = request.form.get("monte_carlo_block_size", "20").strip()
+        monte_carlo_seed_raw = request.form.get("monte_carlo_seed", "").strip()
         present_ticker = request.form.get("present_ticker", ticker).upper().strip()
         present_interval = request.form.get("present_interval", interval)
         present_rows = request.form.get("present_rows", rows)
@@ -1145,6 +1151,10 @@ def create_app() -> "Flask":
                             prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
                             use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
                             manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
+                            monte_carlo_method = str(form_state.get("monte_carlo_method", monte_carlo_method)).strip().lower()
+                            monte_carlo_n_sim_raw = str(form_state.get("monte_carlo_n_sim", monte_carlo_n_sim_raw)).strip()
+                            monte_carlo_block_size_raw = str(form_state.get("monte_carlo_block_size", monte_carlo_block_size_raw)).strip()
+                            monte_carlo_seed_raw = str(form_state.get("monte_carlo_seed", monte_carlo_seed_raw)).strip()
                     elif eval_action == "open":
                         snapshot_id = int(request.form.get("evaluation_id", "0"))
                         snapshot = load_evaluation_snapshot(mode_key, snapshot_id)
@@ -1171,6 +1181,10 @@ def create_app() -> "Flask":
                         prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
                         use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
                         manual_weights_json = str(form_state.get("manual_feature_weights", manual_weights_json)).strip()
+                        monte_carlo_method = str(form_state.get("monte_carlo_method", monte_carlo_method)).strip().lower()
+                        monte_carlo_n_sim_raw = str(form_state.get("monte_carlo_n_sim", monte_carlo_n_sim_raw)).strip()
+                        monte_carlo_block_size_raw = str(form_state.get("monte_carlo_block_size", monte_carlo_block_size_raw)).strip()
+                        monte_carlo_seed_raw = str(form_state.get("monte_carlo_seed", monte_carlo_seed_raw)).strip()
                         message_html = (
                             f"<p style='color:#7bd88f;'><strong>Loaded saved evaluation:</strong> "
                             f"{escape(str(snapshot.get('name', 'Saved evaluation')))}</p>"
@@ -1263,6 +1277,13 @@ def create_app() -> "Flask":
                     dqn_episodes = int(dqn_episodes_raw or "120")
                     if dqn_episodes < 1:
                         raise ValueError("DQN episodes must be at least 1.")
+                    monte_carlo_n_sim = int(monte_carlo_n_sim_raw or "500")
+                    if monte_carlo_n_sim < 1:
+                        raise ValueError("Monte Carlo simulations must be at least 1.")
+                    monte_carlo_block_size = int(monte_carlo_block_size_raw or "20")
+                    if monte_carlo_block_size < 1:
+                        raise ValueError("Monte Carlo block size must be at least 1.")
+                    monte_carlo_seed = int(monte_carlo_seed_raw) if monte_carlo_seed_raw else None
                     use_manual_weights = use_manual_weights_raw == "yes"
                     tickers = parse_csv_values(ticker, uppercase=True)
                     if not tickers:
@@ -1304,6 +1325,10 @@ def create_app() -> "Flask":
                                     sell_threshold=sell_threshold,
                                     allow_short=allow_short,
                                     stop_loss=stop_loss_config,
+                                    monte_carlo_method=monte_carlo_method,
+                                    monte_carlo_n_sim=monte_carlo_n_sim,
+                                    monte_carlo_block_size=monte_carlo_block_size,
+                                    monte_carlo_seed=monte_carlo_seed,
                                 )
                                 trained_model_name = ""
                                 if train_action == "train":
@@ -1404,6 +1429,10 @@ def create_app() -> "Flask":
                                 sell_threshold=sell_threshold,
                                 allow_short=allow_short,
                                 stop_loss=stop_loss_config,
+                                monte_carlo_method=monte_carlo_method,
+                                monte_carlo_n_sim=monte_carlo_n_sim,
+                                monte_carlo_block_size=monte_carlo_block_size,
+                                monte_carlo_seed=monte_carlo_seed,
                             )
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
@@ -1442,6 +1471,10 @@ def create_app() -> "Flask":
                                 sell_threshold=sell_threshold,
                                 allow_short=allow_short,
                                 stop_loss=stop_loss_config,
+                                monte_carlo_method=monte_carlo_method,
+                                monte_carlo_n_sim=monte_carlo_n_sim,
+                                monte_carlo_block_size=monte_carlo_block_size,
+                                monte_carlo_seed=monte_carlo_seed,
                             )
                             metrics["train_size"] = bundle["train_size"]
                             if use_manual_weights:
@@ -1547,6 +1580,25 @@ def create_app() -> "Flask":
                             stroke=theme_border,
                             accent=theme_table_head,
                         )
+                        monte_carlo_html = ""
+                        monte_carlo_results = metrics.get("monte_carlo")
+                        if isinstance(monte_carlo_results, dict):
+                            mc_summary = monte_carlo_results.get("summary", {})
+                            if isinstance(mc_summary, dict):
+                                monte_carlo_html = (
+                                    "<article class='card'>"
+                                    "<h3>Monte Carlo Robustness</h3>"
+                                    f"<p><span class='muted'>Method</span> <strong>{escape(monte_carlo_method)}</strong></p>"
+                                    f"<p><span class='muted'>Simulations</span> <strong>{int(monte_carlo_n_sim)}</strong></p>"
+                                    f"<p><span class='muted'>Mean Return</span> <strong>{float(mc_summary.get('mean_return', 0.0)):+.2%}</strong></p>"
+                                    f"<p><span class='muted'>Return Std Dev</span> <strong>{float(mc_summary.get('std_return', 0.0)):.2%}</strong></p>"
+                                    f"<p><span class='muted'>Return Range</span> {float(mc_summary.get('min_return', 0.0)):+.2%} to {float(mc_summary.get('max_return', 0.0)):+.2%}</p>"
+                                    f"<p><span class='muted'>5th / 95th Percentile</span> {float(mc_summary.get('p5_return', 0.0)):+.2%} / {float(mc_summary.get('p95_return', 0.0)):+.2%}</p>"
+                                    f"<p><span class='muted'>Mean Sharpe</span> {float(mc_summary.get('mean_sharpe', 0.0)):.3f}</p>"
+                                    f"<p><span class='muted'>Mean / Worst Drawdown</span> {float(mc_summary.get('mean_drawdown', 0.0)):.2%} / {float(mc_summary.get('worst_drawdown', 0.0)):.2%}</p>"
+                                    f"<p><span class='muted'>Probability of Loss</span> <strong>{float(mc_summary.get('probability_of_loss', 0.0)):.2%}</strong></p>"
+                                    "</article>"
+                                )
                         model_cards_html = ""
                         if is_dqn_eval:
                             action_counts = metrics["dqn_policy"]["action_counts"]
@@ -1683,6 +1735,7 @@ def create_app() -> "Flask":
                             {hold_time_boxplot}
                           </div>
                         </article>
+                        {monte_carlo_html}
                       </div>
 
                       <article class="card">
@@ -1738,6 +1791,10 @@ def create_app() -> "Flask":
                                 "prediction_horizon": prediction_horizon_raw,
                                 "use_manual_weights": use_manual_weights_raw,
                                 "manual_feature_weights": manual_weights_json,
+                                "monte_carlo_method": monte_carlo_method,
+                                "monte_carlo_n_sim": monte_carlo_n_sim_raw,
+                                "monte_carlo_block_size": monte_carlo_block_size_raw,
+                                "monte_carlo_seed": monte_carlo_seed_raw,
                             },
                             "result_html": result_html,
                         }
@@ -2213,6 +2270,23 @@ def create_app() -> "Flask":
               </label>
               <label id="fixedStopLossWrap">Fixed Stop Loss %:
                 <input type="number" min="0.01" step="any" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
+              </label>
+              <label>Monte Carlo:
+                <select name="monte_carlo_method">
+                  <option value="none" {"selected" if monte_carlo_method == "none" else ""}>None</option>
+                  <option value="bootstrap" {"selected" if monte_carlo_method == "bootstrap" else ""}>Bootstrap resampling</option>
+                  <option value="shuffle" {"selected" if monte_carlo_method == "shuffle" else ""}>Shuffle returns</option>
+                  <option value="block" {"selected" if monte_carlo_method == "block" else ""}>Block bootstrap</option>
+                </select>
+              </label>
+              <label>Monte Carlo Simulations:
+                <input type="number" min="1" step="1" name="monte_carlo_n_sim" value="{monte_carlo_n_sim_raw}" />
+              </label>
+              <label>Monte Carlo Block Size:
+                <input type="number" min="1" step="1" name="monte_carlo_block_size" value="{monte_carlo_block_size_raw}" />
+              </label>
+              <label>Monte Carlo Seed (optional):
+                <input type="number" step="1" name="monte_carlo_seed" value="{monte_carlo_seed_raw}" placeholder="42" />
               </label>
               <label>&nbsp;
                 <div class="button-row">
