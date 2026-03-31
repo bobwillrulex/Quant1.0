@@ -85,6 +85,7 @@ def run_monte_carlo_backtest(
     block_size: int = 20,
     seed: int | None = None,
     return_equity_curves: int = 0,
+    sharpe_annualization_factor: float = 252.0,
     **strategy_kwargs: Any,
 ) -> Dict[str, Any]:
     if len(returns) != len(probs):
@@ -152,7 +153,7 @@ def run_monte_carlo_backtest(
         total_return = equity - 1.0
         mean_ret = (sum(sampled_trades) / len(sampled_trades)) if sampled_trades else 0.0
         sd_ret = stddev(sampled_trades)
-        sharpe = (mean_ret / sd_ret * math.sqrt(252.0)) if sd_ret > 1e-12 else 0.0
+        sharpe = (mean_ret / sd_ret * math.sqrt(sharpe_annualization_factor)) if sd_ret > 1e-12 else 0.0
         win_rate = (sum(1 for value in sampled_trades if value > 0.0) / len(sampled_trades)) if sampled_trades else 0.0
         total_log_return = sum(math.log1p(value) if value > -1.0 else float("-inf") for value in sampled_trades)
         log_total_return = -1.0 if math.isinf(total_log_return) and total_log_return < 0 else (math.exp(total_log_return) - 1.0)

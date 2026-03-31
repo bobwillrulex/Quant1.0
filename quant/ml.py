@@ -31,6 +31,17 @@ from .types import Row
 SplitStyle = Literal["shuffled", "chronological"]
 
 
+def annualization_factor_for_interval(interval: str) -> float:
+    normalized = interval.strip().lower()
+    factors = {
+        "1d": 252.0,
+        "1h": 252.0 * 6.5,
+        "15m": 252.0 * 26.0,
+        "5m": 252.0 * 78.0,
+    }
+    return factors.get(normalized, 252.0)
+
+
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
     data = list(rows)
     if split_style == "shuffled":
@@ -150,6 +161,7 @@ def strategy_metrics(
     stop_loss: StopLossConfig | None = None,
     strict_validation: bool = False,
     row_labels: Sequence[str] | None = None,
+    sharpe_annualization_factor: float = 252.0,
 ) -> Dict[str, object]:
     stop_cfg = stop_loss or StopLossConfig()
     if expected_returns is None:
@@ -379,7 +391,7 @@ def strategy_metrics(
         "max": float(sorted_holds[-1]) if sorted_holds else 0.0,
     }
     sd = stddev(pnl)
-    sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
+    sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(sharpe_annualization_factor)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
     total_return = equity - 1.0
     buy_hold_total_return = (
@@ -592,6 +604,7 @@ def evaluate_bundle(
     monte_carlo_n_sim: int = 500,
     monte_carlo_block_size: int = 20,
     monte_carlo_seed: int | None = None,
+    interval: str = "1d",
 ) -> Dict[str, object]:
     feature_set = infer_bundle_feature_set(bundle)
     if not x_test_raw:
@@ -653,6 +666,7 @@ def evaluate_bundle(
         if len(closes) >= 2 and closes[0] != 0.0:
             buy_hold_total_return_override = (closes[-1] / closes[0]) - 1.0
 
+    sharpe_annualization_factor = annualization_factor_for_interval(interval)
     strategy = strategy_metrics(
         y_test_ret,
         up_prob,
@@ -665,6 +679,7 @@ def evaluate_bundle(
         allow_short=allow_short,
         stop_loss=stop_loss,
         row_labels=row_labels,
+        sharpe_annualization_factor=sharpe_annualization_factor,
     )
     monte_carlo: Dict[str, Any] | None = None
     if monte_carlo_method in {"bootstrap", "shuffle", "block"}:
@@ -685,6 +700,7 @@ def evaluate_bundle(
             buy_hold_total_return_override=buy_hold_total_return_override,
             allow_short=allow_short,
             stop_loss=stop_loss,
+            sharpe_annualization_factor=sharpe_annualization_factor,
         )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     return {
