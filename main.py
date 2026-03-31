@@ -1097,6 +1097,9 @@ def create_app() -> "Flask":
         present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", fixed_stop_pct_raw).strip()
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
+        evaluate_historical_only = train_action == "evaluate_historical"
+        if evaluate_historical_only:
+            split_style = "chronological"
         data_provider = request.form.get("data_provider", "yfinance").strip().lower()
         if data_provider not in ("yfinance", "twelvedata"):
             data_provider = "yfinance"
@@ -1454,8 +1457,13 @@ def create_app() -> "Flask":
                         )
                         if provider_notice:
                             provider_notices.append(provider_notice)
-                        if train_action == "evaluate":
+                        if train_action in ("evaluate", "evaluate_historical"):
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for evaluation."
+                            if train_action == "evaluate_historical":
+                                rows_used_note = (
+                                    "Historical evaluation mode: forcing chronological split on downloaded market history."
+                                    + (f" {rows_used_note}" if rows_used_note else "")
+                                )
                             eval_rows = dataset
                         else:
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
@@ -2399,6 +2407,7 @@ def create_app() -> "Flask":
                 <div class="button-row">
                   <button type="submit" name="train_action" value="train">Download + Train</button>
                   <button type="submit" name="train_action" value="evaluate" class="secondary">Evaluate Only</button>
+                  <button type="submit" name="train_action" value="evaluate_historical" class="secondary">Evaluate Real History</button>
                 </div>
               </label>
               </div>
