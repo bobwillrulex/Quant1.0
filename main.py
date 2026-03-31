@@ -46,6 +46,15 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
+from quant.live_trading import (
+    QuestradeAuthClient,
+    get_accounts,
+    get_balances,
+    get_order_history,
+    get_positions,
+    get_quote,
+    place_order,
+)
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -456,6 +465,7 @@ def create_app() -> "Flask":
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        live_href = "/spot/live-trading" if is_spot else "/live-trading"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -704,6 +714,7 @@ def create_app() -> "Flask":
                 <a href="{home_href}" class="brand">{brand_label}</a>
                 <a href="{home_href}" class="tab-link">Model</a>
                 <a href="{manage_href}" class="tab-link active">Manage Models</a>
+                <a href="{live_href}" class="tab-link">Live Trading Bot</a>
                 <a href="{home_href}#present-mode" class="tab-link">Present Mode</a>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
@@ -1022,6 +1033,183 @@ def create_app() -> "Flask":
         </html>
         """
 
+    @app.route("/live-trading", methods=["GET", "POST"])
+    @app.route("/spot/live-trading", methods=["GET", "POST"])
+    def live_trading() -> str:
+        is_spot = request.path.startswith("/spot")
+        mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
+        home_href = "/spot" if is_spot else "/"
+        manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        live_href = "/spot/live-trading" if is_spot else "/live-trading"
+        mode_switch_href = "/" if is_spot else "/spot"
+        mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
+        brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        theme_bg = "#100d07" if is_spot else "#090c12"
+        theme_text = "#efe0be" if is_spot else "#c6ccd7"
+        theme_panel = "#19130b" if is_spot else "#121722"
+        theme_panel2 = "#221b10" if is_spot else "#1a202c"
+        theme_border = "#4a3a20" if is_spot else "#3a4455"
+        theme_muted = "#b79f66" if is_spot else "#98a2b3"
+        theme_accent = "#d4af37" if is_spot else "#c0c0c0"
+        theme_topbar_bg = "rgba(16, 13, 7, 0.94)" if is_spot else "rgba(9, 12, 18, 0.94)"
+        theme_brand = "#f2dd9f" if is_spot else "#d8dde6"
+        theme_tab = "#c8ac60" if is_spot else "#aab3c2"
+        theme_tab_active = "#f3e2b5" if is_spot else "#e5e7eb"
+        theme_tab_hover_bg = "#2a210f" if is_spot else "#1a212f"
+        theme_surface = "#130f08" if is_spot else "#0f141e"
+        theme_secondary_bg = "#312511" if is_spot else "#2a3342"
+        theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
+
+        message_html = ""
+        error_html = ""
+        details_html = ""
+        selected_model = request.form.get("model_name", "").strip()
+        symbol = request.form.get("symbol", "AAPL").strip().upper()
+        quantity_raw = request.form.get("quantity", "1").strip()
+        account_id = request.form.get("account_id", "").strip()
+        order_type = request.form.get("order_type", "Market").strip().title()
+        action = request.form.get("trade_action", "Buy").strip().title()
+        limit_price_raw = request.form.get("limit_price", "").strip()
+        interval = request.form.get("candle_interval", "OneDay").strip()
+        is_paper = request.form.get("paper_mode", "1") == "1"
+
+        saved_models = list_saved_models(mode_key)
+        model_configs = load_model_configs(mode_key)
+
+        if request.method == "POST":
+            op = request.form.get("op", "").strip()
+            try:
+                auth_client = QuestradeAuthClient()
+                if op == "login":
+                    auth_client.refresh_access_token()
+                    message_html = "<p style='color:#7bd88f;'>Authenticated with Questrade and refreshed OAuth2 token.</p>"
+                elif op == "quote":
+                    quote = get_quote(symbol, auth_client=auth_client)
+                    details_html = f"<pre>{escape(json.dumps(quote, indent=2))}</pre>"
+                    message_html = f"<p style='color:#7bd88f;'>Fetched quote for {escape(symbol)}.</p>"
+                elif op == "accounts":
+                    accounts = get_accounts(auth_client=auth_client)
+                    details_html = f"<pre>{escape(json.dumps(accounts, indent=2))}</pre>"
+                    message_html = "<p style='color:#7bd88f;'>Fetched account list.</p>"
+                elif op == "balances":
+                    balances = get_balances(account_id, auth_client=auth_client)
+                    positions = get_positions(account_id, auth_client=auth_client)
+                    details_html = "<h3>Balances</h3>" + f"<pre>{escape(json.dumps(balances, indent=2))}</pre>" + "<h3>Positions</h3>" + f"<pre>{escape(json.dumps(positions, indent=2))}</pre>"
+                    message_html = f"<p style='color:#7bd88f;'>Fetched balances and positions for account {escape(account_id)}.</p>"
+                elif op == "history":
+                    orders = get_order_history(account_id, auth_client=auth_client)
+                    details_html = f"<pre>{escape(json.dumps(orders, indent=2))}</pre>"
+                    message_html = f"<p style='color:#7bd88f;'>Fetched order history for account {escape(account_id)}.</p>"
+                elif op == "trade":
+                    order: dict[str, object] = {
+                        "accountId": account_id,
+                        "symbol": symbol,
+                        "quantity": int(quantity_raw or "0"),
+                        "action": action,
+                        "orderType": order_type,
+                        "isPaper": is_paper,
+                    }
+                    if order_type == "Limit":
+                        order["limitPrice"] = float(limit_price_raw or "0")
+                    result = place_order(order, auth_client=auth_client)
+                    details_html = f"<pre>{escape(json.dumps(result, indent=2))}</pre>"
+                    message_html = "<p style='color:#7bd88f;'>Order request processed.</p>"
+                elif op == "model_trade":
+                    if selected_model not in saved_models:
+                        raise ValueError("Select a valid saved model first.")
+                    cfg = get_model_config(selected_model, model_configs)
+                    bundle = load_model_bundle(mode_key, selected_model)
+                    rows_payload, _ = fetch_market_rows(
+                        ticker=str(cfg.get("ticker", "AAPL")),
+                        interval=str(cfg.get("interval", "1d")),
+                        row_count=int(cfg.get("rows", 250)),
+                        provider="yfinance",
+                        twelve_api_key="",
+                        prediction_horizon=int(cfg.get("prediction_horizon", 5)),
+                    )
+                    prediction = predict_signal(
+                        bundle,
+                        rows_payload[-1],
+                        buy_threshold=float(cfg.get("buy_threshold", 0.6)),
+                        sell_threshold=float(cfg.get("sell_threshold", 0.4)),
+                        long_only=is_spot,
+                    )
+                    mapped_action = str(prediction["action"]).upper()
+                    if mapped_action not in {"BUY", "SELL"}:
+                        details_html = f"<pre>{escape(json.dumps(prediction, indent=2))}</pre>"
+                        message_html = f"<p style='color:#7bd88f;'>Model signal is {escape(mapped_action)}. No order was placed.</p>"
+                    else:
+                        order_request: dict[str, object] = {
+                            "accountId": account_id,
+                            "symbol": str(cfg.get('ticker', symbol)),
+                            "quantity": int(quantity_raw or "0"),
+                            "action": "Buy" if mapped_action == "BUY" else "Sell",
+                            "orderType": order_type,
+                            "isPaper": is_paper,
+                        }
+                        if order_type == "Limit":
+                            order_request["limitPrice"] = float(limit_price_raw or "0")
+                        trade_response = place_order(order_request, auth_client=auth_client)
+                        details_html = "<h3>Model Prediction</h3>" + f"<pre>{escape(json.dumps(prediction, indent=2))}</pre>" + "<h3>Trade Response</h3>" + f"<pre>{escape(json.dumps(trade_response, indent=2))}</pre>"
+                        message_html = f"<p style='color:#7bd88f;'>Executed {escape(mapped_action)} from model rule for {escape(selected_model)}.</p>"
+            except Exception as exc:
+                error_html = f"<p style='color:#ff7b7b;'><strong>Error:</strong> {escape(str(exc))}</p>"
+
+        return f"""
+        <html><head><title>Live Trading Bot</title></head><body>
+        <style>
+        :root {{--bg:{theme_bg};--panel:{theme_panel};--panel2:{theme_panel2};--border:{theme_border};--text:{theme_text};--muted:{theme_muted};--accent:{theme_accent};}}
+        *{{box-sizing:border-box;}} body{{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;}}
+        .topbar{{position:sticky;top:0;z-index:50;background:{theme_topbar_bg};border-bottom:1px solid var(--border);}} .topbar-inner{{max-width:1100px;margin:0 auto;padding:0.9rem 2rem;display:flex;align-items:center;gap:1rem;}}
+        .brand{{font-weight:700;color:{theme_brand};text-decoration:none;margin-right:auto;}} .tab-link{{color:{theme_tab};text-decoration:none;padding:.4rem .65rem;border-radius:8px;border:1px solid transparent;}}
+        .tab-link:hover,.tab-link.active{{color:{theme_tab_active};border-color:var(--border);background:{theme_tab_hover_bg};}} .container{{max-width:1100px;margin:0 auto;padding:2rem;}}
+        .card{{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--border);border-radius:14px;padding:1rem 1.1rem;margin-bottom:1rem;}}
+        .grid{{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:.8rem;}} label{{display:block;color:var(--muted);font-size:.92rem;}}
+        input,select{{width:100%;margin-top:.35rem;background:{theme_surface};color:var(--text);border:1px solid var(--border);border-radius:10px;padding:.58rem .65rem;}}
+        .btn-row{{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem;}} button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}}
+        .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
+        pre{{white-space:pre-wrap;background:{theme_surface};padding:.8rem;border-radius:10px;border:1px solid var(--border);}}
+        </style>
+        <nav class="topbar"><div class="topbar-inner">
+            <a href="{home_href}" class="brand">{brand_label}</a>
+            <a href="{home_href}" class="tab-link">Model</a>
+            <a href="{manage_href}" class="tab-link">Manage Models</a>
+            <a href="{live_href}" class="tab-link active">Live Trading Bot</a>
+            <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+        </div></nav>
+        <div class="container">
+          <h1>Live Trading Bot Mode</h1>
+          <p style="color:var(--muted);">Safety guardrails: paper mode is on by default. Real orders require <code>ENABLE_LIVE_TRADING=true</code>.</p>
+          {message_html}
+          {error_html}
+          <form method="post" class="card">
+            <div class="grid">
+              <label>Saved Model
+                <select name="model_name"><option value="">-- Select model --</option>{''.join(f'<option value="{name}" {"selected" if selected_model == name else ""}>{name}</option>' for name in saved_models)}</select>
+              </label>
+              <label>Account ID<input name="account_id" value="{escape(account_id)}" /></label>
+              <label>Symbol<input name="symbol" value="{escape(symbol)}" /></label>
+              <label>Quantity<input type="number" min="1" name="quantity" value="{escape(quantity_raw)}" /></label>
+              <label>Order Type<select name="order_type"><option value="Market" {"selected" if order_type == "Market" else ""}>Market</option><option value="Limit" {"selected" if order_type == "Limit" else ""}>Limit</option></select></label>
+              <label>Limit Price<input type="number" step="0.01" min="0" name="limit_price" value="{escape(limit_price_raw)}" /></label>
+              <label>Action<select name="trade_action"><option value="Buy" {"selected" if action == "Buy" else ""}>Buy</option><option value="Sell" {"selected" if action == "Sell" else ""}>Sell</option></select></label>
+              <label>Candle Interval<select name="candle_interval"><option value="OneDay" {"selected" if interval == "OneDay" else ""}>OneDay</option><option value="OneHour" {"selected" if interval == "OneHour" else ""}>OneHour</option><option value="FiveMinutes" {"selected" if interval == "FiveMinutes" else ""}>FiveMinutes</option></select></label>
+              <label>Paper Trading Mode<select name="paper_mode"><option value="1" {"selected" if is_paper else ""}>Enabled (no live orders)</option><option value="0" {"selected" if not is_paper else ""}>Disabled</option></select></label>
+            </div>
+            <div class="btn-row">
+              <button type="submit" name="op" value="login" class="secondary">OAuth Login/Refresh</button>
+              <button type="submit" name="op" value="quote" class="secondary">Get Quote</button>
+              <button type="submit" name="op" value="accounts" class="secondary">Get Accounts</button>
+              <button type="submit" name="op" value="balances" class="secondary">Get Balances/Positions</button>
+              <button type="submit" name="op" value="history" class="secondary">Order History</button>
+              <button type="submit" name="op" value="trade">Place Manual Order</button>
+              <button type="submit" name="op" value="model_trade">Run Model Trade</button>
+            </div>
+          </form>
+          <div class="card"><h2>API Output</h2>{details_html or '<p style="color:var(--muted);">Run an action to view responses.</p>'}</div>
+        </div></body></html>
+        """
+
     @app.route("/", methods=["GET", "POST"])
     @app.route("/spot", methods=["GET", "POST"])
     def index() -> str:
@@ -1030,6 +1218,7 @@ def create_app() -> "Flask":
         allow_short = not is_spot
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        live_href = "/spot/live-trading" if is_spot else "/live-trading"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -2275,6 +2464,7 @@ def create_app() -> "Flask":
                 <a href="{home_href}" class="brand">{brand_label}</a>
                 <a href="{home_href}" class="tab-link active">Model</a>
                 <a href="{manage_href}" class="tab-link">Manage Models</a>
+                <a href="{live_href}" class="tab-link">Live Trading Bot</a>
                 <a href="#present-mode" class="tab-link">Present Mode</a>
                 <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                 <form method="post" style="margin:0;">
