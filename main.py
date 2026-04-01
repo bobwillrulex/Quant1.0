@@ -1096,6 +1096,7 @@ def create_app() -> "Flask":
         present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", "2.0").strip()
         prediction_horizon_raw = request.form.get("prediction_horizon", "5").strip()
         split_style = request.form.get("split_style", "shuffled")
+        evaluation_split_raw = request.form.get("evaluation_split", "").strip()
         feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
         dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
         data_provider = request.form.get("data_provider", "yfinance").strip().lower()
@@ -1314,6 +1315,7 @@ def create_app() -> "Flask":
         rows = request.form.get("rows", "250")
         prediction_horizon_raw = request.form.get("prediction_horizon", "5").strip()
         split_style = request.form.get("split_style", "shuffled")
+        evaluation_split_raw = request.form.get("evaluation_split", "").strip()
         feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
         dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
         buy_threshold_raw = request.form.get("buy_threshold", "").strip()
@@ -1436,6 +1438,7 @@ def create_app() -> "Flask":
                             interval = str(form_state.get("interval", interval))
                             rows = str(form_state.get("rows", rows))
                             split_style = str(form_state.get("split_style", split_style))
+                            evaluation_split_raw = str(form_state.get("evaluation_split", evaluation_split_raw)).strip()
                             feature_set = normalize_feature_set(str(form_state.get("feature_set", feature_set)))
                             buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
                             sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
@@ -1467,6 +1470,7 @@ def create_app() -> "Flask":
                         interval = str(form_state.get("interval", interval))
                         rows = str(form_state.get("rows", rows))
                         split_style = str(form_state.get("split_style", split_style))
+                        evaluation_split_raw = str(form_state.get("evaluation_split", evaluation_split_raw)).strip()
                         feature_set = normalize_feature_set(str(form_state.get("feature_set", feature_set)))
                         buy_threshold_raw = str(form_state.get("buy_threshold", buy_threshold_raw))
                         sell_threshold_raw = str(form_state.get("sell_threshold", sell_threshold_raw))
@@ -1571,6 +1575,13 @@ def create_app() -> "Flask":
                     stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
+                    if evaluation_split_raw == "":
+                        evaluation_split = 0.25
+                    else:
+                        evaluation_split = float(evaluation_split_raw)
+                        if not (0.0 < evaluation_split < 1.0):
+                            raise ValueError("Evaluation split must be between 0 and 1 (exclusive).")
+                    train_ratio = 1.0 - evaluation_split
                     dqn_episodes = int(dqn_episodes_raw or "120")
                     if dqn_episodes < 1:
                         raise ValueError("DQN episodes must be at least 1.")
@@ -1610,7 +1621,7 @@ def create_app() -> "Flask":
                                     provider_notices.append(provider_notice)
                                 if len(dataset) < row_count:
                                     multi_rows_used_notes.append(f"{ticker_symbol}: {len(dataset)} frames used")
-                                bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
+                                bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes, test_ratio=evaluation_split)
                                 metrics = evaluate_bundle(
                                     bundle,
                                     bundle["x_test_raw"],
@@ -1678,7 +1689,7 @@ def create_app() -> "Flask":
                             "<section class='results'>"
                             "<div class='section-heading'>"
                             f"<h2>Multi-Ticker Results • {interval}</h2>"
-                            f"<p class='muted'>Tickers: {', '.join(tickers)} | Rows: {row_count} | Split: {split_style}</p>"
+                            f"<p class='muted'>Tickers: {', '.join(tickers)} | Rows: {row_count} | Split: {split_style} | Train/Eval: {train_ratio:.0%}/{evaluation_split:.0%}</p>"
                             f"<p class='muted'>{' | '.join(multi_rows_used_notes) if multi_rows_used_notes else f'Using requested {row_count} frames for each ticker.'}</p>"
                             "</div>"
                             "<article class='card table-card'>"
@@ -1712,7 +1723,7 @@ def create_app() -> "Flask":
                             eval_rows = dataset
                         else:
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
-                            _, eval_rows = train_test_split(dataset, split_style=split_style)
+                            _, eval_rows = train_test_split(dataset, test_ratio=evaluation_split, split_style=split_style)
                         y_test_ret = [r["return_next"] for r in eval_rows]
                         y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                         if selected_model != "__new__":
@@ -1762,7 +1773,14 @@ def create_app() -> "Flask":
                                 }
                                 x_test_raw = feature_builder.transform(eval_rows)
                             else:
-                                bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=dqn_episodes)
+                                model_test_ratio = 0.25 if train_action in ("evaluate", "evaluate_historical") else evaluation_split
+                                bundle = train_strategy_models(
+                                    dataset,
+                                    split_style=split_style,
+                                    feature_set=feature_set,
+                                    dqn_episodes=dqn_episodes,
+                                    test_ratio=model_test_ratio,
+                                )
                                 x_test_raw = bundle["x_test_raw"]
                             metrics = evaluate_bundle(
                                 bundle,
@@ -2161,6 +2179,7 @@ def create_app() -> "Flask":
                                 "interval": interval,
                                 "rows": str(row_count),
                                 "split_style": split_style,
+                                "evaluation_split": evaluation_split_raw,
                                 "feature_set": feature_set,
                                 "buy_threshold": buy_threshold_raw,
                                 "sell_threshold": sell_threshold_raw,
@@ -2589,6 +2608,10 @@ def create_app() -> "Flask":
                   <option value="shuffled" {"selected" if split_style == "shuffled" else ""}>Legacy (shuffled)</option>
                   <option value="chronological" {"selected" if split_style == "chronological" else ""}>Time-aware (chronological)</option>
                 </select>
+              </label>
+              <label>Evaluation Split (optional):
+                <input type="number" min="0.01" max="0.99" step="0.01" name="evaluation_split" value="{evaluation_split_raw}" placeholder="0.25" />
+                <p class="muted">Leave blank for 25% evaluation / 75% training. Example: 0.10 = 10% eval / 90% train. Evaluate-only actions still use 100% of rows.</p>
               </label>
               <label>Feature Pipeline:
                 <select name="feature_set">
