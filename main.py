@@ -126,7 +126,7 @@ def build_forward_monte_carlo_projection(
     expected_return_per_bar: float,
     simulations: int = 300,
     seed: int = 7,
-) -> dict[str, float | int] | None:
+) -> dict[str, float | int | list[float]] | None:
     historical_mc = bundle.get("historical_monte_carlo")
     if not isinstance(historical_mc, dict):
         return None
@@ -161,6 +161,7 @@ def build_forward_monte_carlo_projection(
         "best_return": max(forward_total_returns),
         "probability_profit": sum(1 for value in forward_total_returns if value > 0.0) / len(forward_total_returns),
         "probability_loss": sum(1 for value in forward_total_returns if value < 0.0) / len(forward_total_returns),
+        "distribution": forward_total_returns,
     }
 
 
@@ -294,6 +295,14 @@ def build_run_all_rows_from_results(results: list[dict[str, object]]) -> str:
         forward_mc = item.get("forward_monte_carlo")
         model_cell = str(item["model_name"])
         if isinstance(forward_mc, dict):
+            distribution_values = forward_mc.get("distribution", [])
+            distribution_chart_html = ""
+            if isinstance(distribution_values, list):
+                distribution_chart_html = render_distribution_histogram(
+                    [float(value) for value in distribution_values],
+                    stroke="#7f94b7",
+                    fill="#9eb2d2",
+                )
             model_cell = (
                 "<details>"
                 f"<summary>{item['model_name']}</summary>"
@@ -302,6 +311,7 @@ def build_run_all_rows_from_results(results: list[dict[str, object]]) -> str:
                 f"<br>Expected {float(forward_mc.get('expected_return', 0.0)):+.2%} | Median {float(forward_mc.get('median_return', 0.0)):+.2%}"
                 f"<br>P5/P95 {float(forward_mc.get('p5_return', 0.0)):+.2%} / {float(forward_mc.get('p95_return', 0.0)):+.2%}"
                 f"<br>P(Profit) {float(forward_mc.get('probability_profit', 0.0)):.1%} | P(Loss) {float(forward_mc.get('probability_loss', 0.0)):.1%}"
+                f"{distribution_chart_html}"
                 "</div>"
                 "</details>"
             )
