@@ -90,7 +90,7 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
 
 
 def build_default_model_name(*, ticker: str, row_count: int, feature_set: str) -> str:
-    return sanitize_model_name(f"{ticker.lower()}_{row_count}_{feature_set}")
+    return sanitize_model_name(f"Ticker_{ticker} length_{row_count} rows")
 
 
 def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[float]:
