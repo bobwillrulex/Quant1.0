@@ -687,6 +687,42 @@ def evaluate_bundle(
             stop_loss=stop_loss,
         )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
+    latest_p_up = float(up_prob[-1]) if up_prob else 0.5
+    latest_expected_return = float(ret_pred[-1]) if ret_pred else 0.0
+    latest_action = "hold"
+    if latest_p_up >= buy_threshold:
+        latest_action = "buy"
+    elif latest_p_up <= sell_threshold:
+        latest_action = "sell"
+    forward_buy_now: Dict[str, float | int] | None = None
+    if monte_carlo and isinstance(monte_carlo, dict):
+        mc_raw_results = monte_carlo.get("raw_results", [])
+        if isinstance(mc_raw_results, list):
+            mc_total_returns = [
+                float(item.get("total_return", 0.0))
+                for item in mc_raw_results
+                if isinstance(item, dict)
+            ]
+            if mc_total_returns:
+                initial_capital = 10_000.0
+                terminal_values = [initial_capital * (1.0 + value) for value in mc_total_returns]
+                forward_buy_now = {
+                    "initial_capital": initial_capital,
+                    "horizon_bars": len(y_test_ret),
+                    "simulations": len(mc_total_returns),
+                    "expected_return": float(sum(mc_total_returns) / len(mc_total_returns)),
+                    "median_return": percentile(mc_total_returns, 50),
+                    "worst_return": min(mc_total_returns),
+                    "best_return": max(mc_total_returns),
+                    "p5_return": percentile(mc_total_returns, 5),
+                    "p95_return": percentile(mc_total_returns, 95),
+                    "probability_profit": sum(1 for value in mc_total_returns if value > 0.0) / len(mc_total_returns),
+                    "probability_loss": sum(1 for value in mc_total_returns if value < 0.0) / len(mc_total_returns),
+                    "expected_terminal_value": float(sum(terminal_values) / len(terminal_values)),
+                    "median_terminal_value": percentile(terminal_values, 50),
+                    "p5_terminal_value": percentile(terminal_values, 5),
+                    "p95_terminal_value": percentile(terminal_values, 95),
+                }
     return {
         "model_type": "dqn" if is_dqn else "linear_logistic",
         "features": bundle["feature_names"],
@@ -707,10 +743,18 @@ def evaluate_bundle(
         "lin_weights": list(zip(bundle["feature_names"], bundle["lin_weights"])), "lin_bias": bundle["lin_bias"],
         "logit_weights": list(zip(bundle["feature_names"], bundle["logit_weights"])), "logit_bias": bundle["logit_bias"],
         "preview": preview, "test_size": len(y_test_ret), "split_style": split_style,
+        "latest_signal": {
+            "p_up": latest_p_up,
+            "expected_return": latest_expected_return,
+            "action": latest_action,
+            "buy_threshold": buy_threshold,
+            "sell_threshold": sell_threshold,
+        },
         "calibration": calibration_buckets(y_test_dir, up_prob),
         "confidence_edge": confidence_edge_analysis(y_test_dir, up_prob),
         "strategy": strategy,
         "monte_carlo": monte_carlo,
+        "forward_buy_now": forward_buy_now,
         "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
         "pnl_by_regime": pnl_market_regime_breakdown(
             y_test_ret,
