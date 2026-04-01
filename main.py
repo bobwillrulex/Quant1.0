@@ -1342,7 +1342,11 @@ def create_app() -> "Flask":
         .form-grid{{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:.8rem;}} label{{display:block;color:var(--muted);font-size:.92rem;}}
         input,select{{width:100%;margin-top:.35rem;background:{theme_surface};color:var(--text);border:1px solid var(--border);border-radius:10px;padding:.58rem .65rem;}}
         ul,li{{color:var(--text);}}
-        table{{width:100%;border-collapse:collapse}} th,td{{padding:.5rem;border-bottom:1px solid var(--border);text-align:left;}}
+        .muted{{color:var(--muted);}}
+        table{{width:100%;border-collapse:collapse;color:var(--text);}} th,td{{padding:.5rem;border-bottom:1px solid var(--border);text-align:left;color:var(--text);}}
+        .run-all-group-row td{{background:rgba(255,255,255,0.02);color:var(--text);}}
+        .run-all-group-divider td{{padding:0;border-bottom:none;height:.35rem;}}
+        details,summary{{color:var(--text);}}
         button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}} .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
         </style>
         <nav class="topbar"><div class="topbar-inner">
