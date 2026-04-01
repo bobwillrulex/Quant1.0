@@ -186,7 +186,28 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
 
 def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
     run_all_rows = ""
-    for item in evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only):
+    interval_order = {"5m": 0, "15m": 1, "1h": 2, "1d": 3}
+    interval_labels = {"5m": "5 min presets", "15m": "15 min presets", "1h": "1h presets", "1d": "1d presets"}
+    results = evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only)
+    sorted_results = sorted(
+        results,
+        key=lambda item: (
+            interval_order.get(str(item.get("interval", "1d")), 99),
+            str(item.get("ticker", "")),
+            str(item.get("model_name", "")),
+        ),
+    )
+
+    current_interval = None
+    for item in sorted_results:
+        item_interval = str(item.get("interval", "1d"))
+        if item_interval != current_interval:
+            current_interval = item_interval
+            run_all_rows += (
+                "<tr class='run-all-group-row'>"
+                f"<td colspan='10'><strong>{interval_labels.get(item_interval, f'{item_interval} presets')}</strong></td>"
+                "</tr>"
+            )
         if item["error"]:
             run_all_rows += (
                 "<tr>"
