@@ -188,11 +188,15 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
     run_all_rows = ""
     interval_order = {"5m": 0, "15m": 1, "1h": 2, "1d": 3}
     interval_labels = {"5m": "5 min presets", "15m": "15 min presets", "1h": "1h presets", "1d": "1d presets"}
+
+    def normalize_interval(value: object) -> str:
+        return str(value or "1d").strip().lower()
+
     results = evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only)
     sorted_results = sorted(
         results,
         key=lambda item: (
-            interval_order.get(str(item.get("interval", "1d")), 99),
+            interval_order.get(normalize_interval(item.get("interval", "1d")), 99),
             str(item.get("ticker", "")),
             str(item.get("model_name", "")),
         ),
@@ -200,7 +204,7 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
 
     current_interval = None
     for item in sorted_results:
-        item_interval = str(item.get("interval", "1d"))
+        item_interval = normalize_interval(item.get("interval", "1d"))
         if item_interval != current_interval:
             current_interval = item_interval
             run_all_rows += (
@@ -208,12 +212,13 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
                 f"<td colspan='10'><strong>{interval_labels.get(item_interval, f'{item_interval} presets')}</strong></td>"
                 "</tr>"
             )
+            run_all_rows += "<tr class='run-all-group-divider'><td colspan='10'></td></tr>"
         if item["error"]:
             run_all_rows += (
                 "<tr>"
                 f"<td>{item['model_name']}</td>"
                 f"<td>{item['ticker']}</td>"
-                f"<td>{item['interval']}</td>"
+                f"<td>{item_interval}</td>"
                 f"<td>{int(item['row_count'])}</td>"
                 f"<td>{float(item['buy_threshold']):.2f} / {float(item['sell_threshold']):.2f}</td>"
                 f"<td>{item['stop_strategy']}</td>"
@@ -229,7 +234,7 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
             "<tr>"
             f"<td>{item['model_name']}</td>"
             f"<td>{item['ticker']}</td>"
-            f"<td>{item['interval']}</td>"
+            f"<td>{item_interval}</td>"
             f"<td>{int(item['row_count'])}</td>"
             f"<td>{float(item['buy_threshold']):.2f} / {float(item['sell_threshold']):.2f}</td>"
             f"<td>{item['stop_strategy']}</td>"

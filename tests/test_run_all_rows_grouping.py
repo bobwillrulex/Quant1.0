@@ -28,7 +28,7 @@ def test_build_run_all_rows_groups_by_interval() -> None:
         {
             "model_name": "m_5m",
             "ticker": "MSFT",
-            "interval": "5m",
+            "interval": " 5M ",
             "row_count": 300,
             "buy_threshold": 0.6,
             "sell_threshold": 0.4,
@@ -48,3 +48,4 @@ def test_build_run_all_rows_groups_by_interval() -> None:
     assert "5 min presets" in html
     assert "1d presets" in html
     assert html.index("5 min presets") < html.index("1d presets")
+    assert ">5m<" in html
