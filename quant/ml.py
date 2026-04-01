@@ -709,22 +709,24 @@ def evaluate_bundle(
             if mc_total_returns:
                 initial_capital = 10_000.0
                 terminal_values = [initial_capital * (1.0 + value) for value in mc_total_returns]
+                sorted_total_returns = sorted(mc_total_returns)
+                sorted_terminal_values = sorted(terminal_values)
                 forward_buy_now = {
                     "initial_capital": initial_capital,
                     "horizon_bars": len(y_test_ret),
                     "simulations": len(mc_total_returns),
                     "expected_return": float(sum(mc_total_returns) / len(mc_total_returns)),
-                    "median_return": percentile(mc_total_returns, 50),
+                    "median_return": quantile(sorted_total_returns, 0.5),
                     "worst_return": min(mc_total_returns),
                     "best_return": max(mc_total_returns),
-                    "p5_return": percentile(mc_total_returns, 5),
-                    "p95_return": percentile(mc_total_returns, 95),
+                    "p5_return": quantile(sorted_total_returns, 0.05),
+                    "p95_return": quantile(sorted_total_returns, 0.95),
                     "probability_profit": sum(1 for value in mc_total_returns if value > 0.0) / len(mc_total_returns),
                     "probability_loss": sum(1 for value in mc_total_returns if value < 0.0) / len(mc_total_returns),
                     "expected_terminal_value": float(sum(terminal_values) / len(terminal_values)),
-                    "median_terminal_value": percentile(terminal_values, 50),
-                    "p5_terminal_value": percentile(terminal_values, 5),
-                    "p95_terminal_value": percentile(terminal_values, 95),
+                    "median_terminal_value": quantile(sorted_terminal_values, 0.5),
+                    "p5_terminal_value": quantile(sorted_terminal_values, 0.05),
+                    "p95_terminal_value": quantile(sorted_terminal_values, 0.95),
                 }
     return {
         "model_type": "dqn" if is_dqn else "linear_logistic",
