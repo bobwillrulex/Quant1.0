@@ -32,6 +32,8 @@ SplitStyle = Literal["shuffled", "chronological"]
 
 
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
+    if not (0.0 < test_ratio < 1.0):
+        raise ValueError("test_ratio must be between 0 and 1 (exclusive).")
     data = list(rows)
     if split_style == "shuffled":
         random.shuffle(data)
@@ -85,8 +87,9 @@ def train_strategy_models(
     split_style: SplitStyle = "shuffled",
     feature_set: FeatureSet | str = "feature2",
     dqn_episodes: int = 120,
+    test_ratio: float = 0.25,
 ) -> Dict[str, object]:
-    train_rows, test_rows = train_test_split(rows, split_style=split_style)
+    train_rows, test_rows = train_test_split(rows, test_ratio=test_ratio, split_style=split_style)
     resolved_feature_set = normalize_feature_set(feature_set)
     features = get_strategy_feature_builder(resolved_feature_set)
     x_train_raw = features.transform(train_rows)
