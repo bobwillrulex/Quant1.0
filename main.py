@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 import os
+import random
 import threading
 import time
 from datetime import datetime, timedelta
@@ -104,6 +105,65 @@ def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[
     return [weight / total for weight in weights]
 
 
+def _mc_quantile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    idx = (len(ordered) - 1) * q
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return float(ordered[lo])
+    frac = idx - lo
+    return float(ordered[lo] + (ordered[hi] - ordered[lo]) * frac)
+
+
+def build_forward_monte_carlo_projection(
+    bundle: Dict[str, object],
+    *,
+    expected_return_per_bar: float,
+    simulations: int = 300,
+    seed: int = 7,
+) -> dict[str, float | int] | None:
+    historical_mc = bundle.get("historical_monte_carlo")
+    if not isinstance(historical_mc, dict):
+        return None
+    historical_summary = historical_mc.get("summary", {})
+    if not isinstance(historical_summary, dict):
+        return None
+    historical_std_total = float(historical_summary.get("std_return", 0.0))
+    historical_raw = historical_mc.get("raw_results", [])
+    horizon_bars = 20
+    if isinstance(historical_raw, list) and historical_raw:
+        horizon_bars = max(1, min(252, len(historical_raw)))
+    per_bar_vol = max(0.0, historical_std_total / math.sqrt(float(horizon_bars)))
+    rng = random.Random(seed)
+    forward_total_returns: list[float] = []
+    for _ in range(max(10, simulations)):
+        equity = 1.0
+        for _step in range(horizon_bars):
+            sampled_ret = rng.gauss(expected_return_per_bar, per_bar_vol)
+            sampled_ret = max(-0.95, min(0.95, sampled_ret))
+            equity *= 1.0 + sampled_ret
+        forward_total_returns.append(equity - 1.0)
+    if not forward_total_returns:
+        return None
+    return {
+        "simulations": len(forward_total_returns),
+        "horizon_bars": horizon_bars,
+        "expected_return": sum(forward_total_returns) / len(forward_total_returns),
+        "median_return": _mc_quantile(forward_total_returns, 0.5),
+        "p5_return": _mc_quantile(forward_total_returns, 0.05),
+        "p95_return": _mc_quantile(forward_total_returns, 0.95),
+        "worst_return": min(forward_total_returns),
+        "best_return": max(forward_total_returns),
+        "probability_profit": sum(1 for value in forward_total_returns if value > 0.0) / len(forward_total_returns),
+        "probability_loss": sum(1 for value in forward_total_returns if value < 0.0) / len(forward_total_returns),
+    }
+
+
 def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only: bool) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     data_provider = str(model_configs.get("__ui_data_provider__", "yfinance")).strip().lower()
@@ -150,6 +210,11 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
                     "p_up": float(prediction["p_up"]),
                     "stop_price": stop_price_value,
                     "action": str(prediction["action"]),
+                    "forward_monte_carlo": build_forward_monte_carlo_projection(
+                        bundle,
+                        expected_return_per_bar=float(prediction["expected_return"]),
+                        seed=abs(hash(model_name)) % 100_000,
+                    ),
                     "provider_notice": provider_notice_html,
                     "error": "",
                 }
@@ -168,6 +233,7 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
                     "p_up": 0.0,
                     "stop_price": None,
                     "action": "ERROR",
+                    "forward_monte_carlo": None,
                     "provider_notice": "",
                     "error": str(exc),
                 }
@@ -225,9 +291,23 @@ def build_run_all_rows_from_results(results: list[dict[str, object]]) -> str:
             continue
         stop_price = item["stop_price"]
         stop_price_display = f"{float(stop_price):.4f}" if stop_price is not None else "n/a"
+        forward_mc = item.get("forward_monte_carlo")
+        model_cell = str(item["model_name"])
+        if isinstance(forward_mc, dict):
+            model_cell = (
+                "<details>"
+                f"<summary>{item['model_name']}</summary>"
+                "<div class='muted' style='margin-top:.4rem;'>"
+                f"Forward MC · sims {int(forward_mc.get('simulations', 0))} · horizon {int(forward_mc.get('horizon_bars', 0))} bars"
+                f"<br>Expected {float(forward_mc.get('expected_return', 0.0)):+.2%} | Median {float(forward_mc.get('median_return', 0.0)):+.2%}"
+                f"<br>P5/P95 {float(forward_mc.get('p5_return', 0.0)):+.2%} / {float(forward_mc.get('p95_return', 0.0)):+.2%}"
+                f"<br>P(Profit) {float(forward_mc.get('probability_profit', 0.0)):.1%} | P(Loss) {float(forward_mc.get('probability_loss', 0.0)):.1%}"
+                "</div>"
+                "</details>"
+            )
         run_all_rows += (
             "<tr>"
-            f"<td>{item['model_name']}</td>"
+            f"<td>{model_cell}</td>"
             f"<td>{item['ticker']}</td>"
             f"<td>{item_interval}</td>"
             f"<td>{int(item['row_count'])}</td>"
@@ -1686,6 +1766,8 @@ def create_app() -> "Flask":
                                         feature_set=feature_set,
                                         prediction_horizon=prediction_horizon,
                                     )
+                                    bundle["historical_monte_carlo"] = metrics.get("monte_carlo")
+                                    bundle["forward_monte_carlo_train"] = metrics.get("forward_buy_now")
                                     save_model_bundle(mode_key, trained_model_name, bundle)
                                     model_configs[trained_model_name] = {
                                         "ticker": ticker_symbol,
@@ -1847,6 +1929,8 @@ def create_app() -> "Flask":
                                     feature_set=feature_set,
                                     prediction_horizon=prediction_horizon,
                                 )
+                                bundle["historical_monte_carlo"] = metrics.get("monte_carlo")
+                                bundle["forward_monte_carlo_train"] = metrics.get("forward_buy_now")
                                 save_model_bundle(mode_key, model_name_to_save, bundle)
                                 model_configs = load_model_configs(mode_key)
                                 model_configs[model_name_to_save] = {

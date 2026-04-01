@@ -191,6 +191,8 @@ def save_model_bundle(mode: str, model_name: str, bundle: Dict[str, object]) -> 
             "dqn_action_returns",
             "dqn_last_epsilon",
             "dqn_episode_rewards",
+            "historical_monte_carlo",
+            "forward_monte_carlo_train",
         ]
         if k in bundle
     }
