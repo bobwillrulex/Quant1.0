@@ -1903,6 +1903,8 @@ def create_app() -> "Flask":
                         )
                         monte_carlo_html = ""
                         monte_carlo_results = metrics.get("monte_carlo")
+                        forward_buy_now = metrics.get("forward_buy_now")
+                        latest_signal = metrics.get("latest_signal") if isinstance(metrics.get("latest_signal"), dict) else {}
                         if isinstance(monte_carlo_results, dict):
                             mc_summary = monte_carlo_results.get("summary", {})
                             mc_raw_results = monte_carlo_results.get("raw_results", [])
@@ -1917,6 +1919,31 @@ def create_app() -> "Flask":
                                     stroke=theme_border,
                                     fill=theme_table_head,
                                 )
+                                forward_buy_now_html = ""
+                                if isinstance(forward_buy_now, dict):
+                                    action_text = str(latest_signal.get("action", "hold")).upper()
+                                    forward_buy_now_html = (
+                                        "<details open>"
+                                        "<summary>Forward Monte Carlo: If You Buy Now</summary>"
+                                        f"<p><span class='muted'>Current signal</span> <strong>{action_text}</strong> "
+                                        f"(P(Up)={float(latest_signal.get('p_up', 0.5)):.2%}, "
+                                        f"Expected next return={float(latest_signal.get('expected_return', 0.0)):+.2%})</p>"
+                                        f"<p><span class='muted'>Projection horizon</span> <strong>{int(forward_buy_now.get('horizon_bars', 0))} bars</strong> "
+                                        f"from historical evaluation returns ({int(forward_buy_now.get('simulations', 0))} simulations)</p>"
+                                        "<table>"
+                                        "<tr><th>Metric</th><th>Value</th></tr>"
+                                        f"<tr><td>Expected total return</td><td><strong>{float(forward_buy_now.get('expected_return', 0.0)):+.2%}</strong></td></tr>"
+                                        f"<tr><td>Median total return</td><td>{float(forward_buy_now.get('median_return', 0.0)):+.2%}</td></tr>"
+                                        f"<tr><td>Best / Worst return</td><td>{float(forward_buy_now.get('best_return', 0.0)):+.2%} / {float(forward_buy_now.get('worst_return', 0.0)):+.2%}</td></tr>"
+                                        f"<tr><td>5th / 95th return percentile</td><td>{float(forward_buy_now.get('p5_return', 0.0)):+.2%} / {float(forward_buy_now.get('p95_return', 0.0)):+.2%}</td></tr>"
+                                        f"<tr><td>Probability of profit / loss</td><td>{float(forward_buy_now.get('probability_profit', 0.0)):.2%} / {float(forward_buy_now.get('probability_loss', 0.0)):.2%}</td></tr>"
+                                        f"<tr><td>Expected terminal value ($10,000)</td><td><strong>${float(forward_buy_now.get('expected_terminal_value', 0.0)):,.2f}</strong></td></tr>"
+                                        f"<tr><td>Median terminal value ($10,000)</td><td>${float(forward_buy_now.get('median_terminal_value', 0.0)):,.2f}</td></tr>"
+                                        f"<tr><td>5th / 95th terminal percentile</td><td>${float(forward_buy_now.get('p5_terminal_value', 0.0)):,.2f} / ${float(forward_buy_now.get('p95_terminal_value', 0.0)):,.2f}</td></tr>"
+                                        "</table>"
+                                        "<p class='muted'>Use this as a scenario range, not a guarantee. It re-samples your evaluation-period behavior.</p>"
+                                        "</details>"
+                                    )
                                 monte_carlo_html = (
                                     "<article class='card'>"
                                     "<h3>Monte Carlo Robustness</h3>"
@@ -1939,6 +1966,7 @@ def create_app() -> "Flask":
                                     "<summary>Hidden: Return Distribution Plot</summary>"
                                     f"{distribution_chart_html}"
                                     "</details>"
+                                    f"{forward_buy_now_html}"
                                     "</article>"
                                 )
                         model_cards_html = ""
