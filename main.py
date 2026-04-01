@@ -89,8 +89,8 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
     return values
 
 
-def build_default_model_name(*, ticker: str, row_count: int, feature_set: str) -> str:
-    return sanitize_model_name(f"Ticker_{ticker} length_{row_count} rows")
+def build_default_model_name(*, ticker: str, interval: str, row_count: int, feature_set: str) -> str:
+    return sanitize_model_name(f"{ticker}_{interval}_{row_count}")
 
 
 def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[float]:
@@ -1599,6 +1599,7 @@ def create_app() -> "Flask":
                                     candidate_name = model_names[idx] if model_names else ""
                                     trained_model_name = sanitize_model_name(candidate_name) if candidate_name else build_default_model_name(
                                         ticker=ticker_symbol,
+                                        interval=interval,
                                         row_count=row_count,
                                         feature_set=feature_set,
                                     )
@@ -1751,6 +1752,7 @@ def create_app() -> "Flask":
                             if train_action == "train":
                                 model_name_to_save = sanitize_model_name(model_name) if model_name else build_default_model_name(
                                     ticker=ticker,
+                                    interval=interval,
                                     row_count=row_count,
                                     feature_set=feature_set,
                                 )

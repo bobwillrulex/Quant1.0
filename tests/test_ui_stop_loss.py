@@ -208,9 +208,9 @@ class StopLossUITests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         save_bundle_mock.assert_called_once()
-        self.assertEqual(save_bundle_mock.call_args[0][1], "aapl_4000_fvg2")
+        self.assertEqual(save_bundle_mock.call_args[0][1], "aapl_1d_4000")
         saved_payload = save_configs_mock.call_args[0][1]
-        self.assertIn("aapl_4000_fvg2", saved_payload)
+        self.assertIn("aapl_1d_4000", saved_payload)
 
     @patch("main.save_model_configs")
     @patch("main.list_saved_models")
@@ -418,8 +418,8 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(save_bundle_mock.call_count, 2)
         self.assertTrue(save_configs_mock.called)
         saved_payload = save_configs_mock.call_args[0][1]
-        self.assertEqual(saved_payload["nvda_4000_hybrid_sharpe_core_no_stack"]["ticker"], "NVDA")
-        self.assertEqual(saved_payload["amd_4000_hybrid_sharpe_core_no_stack"]["ticker"], "AMD")
+        self.assertEqual(saved_payload["nvda_1d_4000"]["ticker"], "NVDA")
+        self.assertEqual(saved_payload["amd_1d_4000"]["ticker"], "AMD")
 
 
 if __name__ == "__main__":
