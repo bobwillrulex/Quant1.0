@@ -11,7 +11,7 @@ import math
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Dict
 from zoneinfo import ZoneInfo
@@ -176,6 +176,11 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
 
 
 def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: bool) -> str:
+    results = evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only)
+    return build_run_all_rows_from_results(results)
+
+
+def build_run_all_rows_from_results(results: list[dict[str, object]]) -> str:
     run_all_rows = ""
     interval_order = {"5m": 0, "15m": 1, "1h": 2, "1d": 3}
     interval_labels = {"5m": "5 min presets", "15m": "15 min presets", "1h": "1h presets", "1d": "1d presets"}
@@ -183,7 +188,6 @@ def build_run_all_rows(saved_models, model_configs, *, mode: str, long_only: boo
     def normalize_interval(value: object) -> str:
         return str(value or "1d").strip().lower()
 
-    results = evaluate_run_all_models(saved_models, model_configs, mode=mode, long_only=long_only)
     sorted_results = sorted(
         results,
         key=lambda item: (
@@ -246,6 +250,15 @@ def is_us_market_open(now: datetime | None = None) -> bool:
     return (9 * 60 + 30) <= minute_of_day < (16 * 60)
 
 
+def seconds_until_next_aligned_ten_minute(now: datetime | None = None) -> float:
+    ts = now or datetime.utcnow()
+    minute_bucket = (ts.minute // 10) * 10
+    aligned = ts.replace(minute=minute_bucket, second=0, microsecond=0)
+    if aligned <= ts:
+        aligned += timedelta(minutes=10)
+    return max(1.0, (aligned - ts).total_seconds())
+
+
 class RunAllMonitor:
     def __init__(self) -> None:
         self._state: dict[str, dict[str, object]] = {
@@ -258,6 +271,8 @@ class RunAllMonitor:
                 "last_error": "",
                 "last_market_state": "unknown",
                 "worker_state": "stopped",
+                "last_rows": [],
+                "next_tick_at": "",
             },
             SPOT_MODE: {
                 "running": False,
@@ -268,6 +283,8 @@ class RunAllMonitor:
                 "last_error": "",
                 "last_market_state": "unknown",
                 "worker_state": "stopped",
+                "last_rows": [],
+                "next_tick_at": "",
             },
         }
         self._lock = threading.Lock()
@@ -296,6 +313,8 @@ class RunAllMonitor:
             mode_state["last_tick"] = now_iso
             mode_state["last_error"] = ""
             mode_state["worker_state"] = "running"
+            mode_state["last_rows"] = []
+            mode_state["next_tick_at"] = ""
             worker = threading.Thread(
                 target=self._loop,
                 kwargs={
@@ -309,11 +328,14 @@ class RunAllMonitor:
             )
             mode_state["thread"] = worker
             worker.start()
+        self._send_lifecycle_message(mode=mode, webhook_url=webhook_url, status="up")
 
-    def stop(self, mode: str) -> None:
+    def stop(self, mode: str, webhook_url: str) -> None:
         with self._lock:
             self._state[mode]["running"] = False
             self._state[mode]["worker_state"] = "stopped"
+            self._state[mode]["next_tick_at"] = ""
+        self._send_lifecycle_message(mode=mode, webhook_url=webhook_url, status="down")
 
     def _loop(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
         try:
@@ -325,32 +347,33 @@ class RunAllMonitor:
                 market_open = is_us_market_open()
                 with self._lock:
                     self._state[mode]["last_market_state"] = "open" if market_open else "closed"
-                if market_open:
-                    try:
-                        configs = load_model_configs(mode)
-                        configs["__ui_data_provider__"] = data_provider
-                        configs["__ui_twelve_api_key__"] = twelve_api_key
-                        models = list_saved_models(mode)
-                        rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
-                        self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
-                        with self._lock:
-                            self._state[mode]["last_error"] = ""
-                    except Exception as exc:
-                        with self._lock:
-                            self._state[mode]["last_error"] = str(exc)
-                    finally:
-                        with self._lock:
-                            self._state[mode]["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-                else:
+                try:
+                    configs = load_model_configs(mode)
+                    configs["__ui_data_provider__"] = data_provider
+                    configs["__ui_twelve_api_key__"] = twelve_api_key
+                    models = list_saved_models(mode)
+                    rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
+                    self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
                     with self._lock:
-                        self._state[mode]["last_tick"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-                time.sleep(600)
+                        self._state[mode]["last_error"] = ""
+                        self._state[mode]["last_rows"] = rows
+                except Exception as exc:
+                    with self._lock:
+                        self._state[mode]["last_error"] = str(exc)
+                wait_seconds = seconds_until_next_aligned_ten_minute()
+                now_iso = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                next_tick_iso = datetime.utcfromtimestamp(time.time() + wait_seconds).replace(microsecond=0).isoformat() + "Z"
+                with self._lock:
+                    self._state[mode]["last_tick"] = now_iso
+                    self._state[mode]["next_tick_at"] = next_tick_iso
+                time.sleep(wait_seconds)
         except Exception as exc:
             with self._lock:
                 self._state[mode]["running"] = False
                 self._state[mode]["thread"] = None
                 self._state[mode]["worker_state"] = "crashed"
                 self._state[mode]["last_error"] = str(exc)
+            self._send_lifecycle_message(mode=mode, webhook_url=webhook_url, status="crash")
             return
 
     def _notify_action_changes(self, *, mode: str, rows: list[dict[str, object]], webhook_url: str) -> None:
@@ -368,11 +391,19 @@ class RunAllMonitor:
                 continue
             content = (
                 f"📈 Quant1.0 {mode.upper()} action change for {row['ticker']} ({model_name})\n"
-                f"{prev} ➜ {action} | P(Up): {float(row['p_up']):.2%} | Exp Ret: {float(row['expected_return']):+.4%}"
+                f"{prev} ➜ {action} | Model: {model_name} | P(Up): {float(row['p_up']):.2%} | Linear: {float(row['expected_return']):+.4%}"
             )
             send_discord_webhook(webhook_url, content)
         with self._lock:
             self._state[mode]["last_actions"] = new_known
+
+    def _send_lifecycle_message(self, *, mode: str, webhook_url: str, status: str) -> None:
+        if not webhook_url.strip():
+            return
+        emoji = "🟢" if status == "up" else ("🟠" if status == "down" else "🔴")
+        content = f"{emoji} Quant1.0 {mode.upper()} bot {status}."
+        send_discord_webhook(webhook_url, content)
+
 
 
 RUN_ALL_MONITOR = RunAllMonitor()
@@ -1182,7 +1213,7 @@ def create_app() -> "Flask":
                         RUN_ALL_MONITOR.start(mode=mode_key, long_only=is_spot, data_provider=data_provider, twelve_api_key=twelve_api_key, webhook_url=webhook_url)
                         message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong></p>"
                     elif monitor_action == "stop":
-                        RUN_ALL_MONITOR.stop(mode_key)
+                        RUN_ALL_MONITOR.stop(mode_key, webhook_url)
                         message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode stopped.</strong></p>"
                     elif monitor_action == "save_webhook":
                         message_html = "<p style='color:#7bd88f;'><strong>Webhook URL saved.</strong></p>"
@@ -1194,10 +1225,14 @@ def create_app() -> "Flask":
         worker_state = escape(str(monitor_state.get("worker_state", "stopped")))
         monitor_running = bool(monitor_state.get("running"))
         monitor_last_error = escape(str(monitor_state.get("last_error", "")))
+        monitor_next_tick = escape(str(monitor_state.get("next_tick_at", "")))
+        monitor_rows = monitor_state.get("last_rows", [])
+        monitor_rows_html = build_run_all_rows_from_results(monitor_rows) if isinstance(monitor_rows, list) else ""
         error_line = f"<br><span style='color:#ff7b7b;'><strong>Last error:</strong> {monitor_last_error}</span>" if monitor_last_error else ""
         monitor_status_html = (
             f"<p class='muted'><strong>Bot:</strong> {'Online' if worker_alive else 'Offline'} | "
-            f"<strong>Lifecycle:</strong> {'Crashed' if worker_state == 'crashed' else ('Running' if monitor_running else 'Stopped')}</p>{error_line}"
+            f"<strong>Lifecycle:</strong> {'Crashed' if worker_state == 'crashed' else ('Running' if monitor_running else 'Stopped')} | "
+            f"<strong>Next aligned update:</strong> {monitor_next_tick or 'n/a'}</p>{error_line}"
         )
         provider_notice_html = ""
         if provider_notices:
@@ -1260,6 +1295,9 @@ def create_app() -> "Flask":
             {monitor_status_html}
             <label>Discord Webhook URL<input type="text" name="discord_webhook_url" value="{escape(webhook_url)}" /></label>
             <div style="margin-top:.8rem;display:flex;gap:.6rem;"><button type="submit" name="monitor_action" value="save_webhook" class="secondary">Save Webhook</button><button type="submit" name="monitor_action" value="start">Start</button><button type="submit" name="monitor_action" value="stop" class="secondary">Stop</button></div>
+            <p class="muted" style="margin-top:.65rem;">Continuous mode runs a full Run All update every aligned 10 minutes (:00, :10, :20, ...). Discord posts bot up/down/crash lifecycle events and model action changes.</p>
+            <table><tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
+            {monitor_rows_html if monitor_rows_html else "<tr><td colspan='10'>No continuous updates yet. Start continuous mode to begin.</td></tr>"}</table>
           </form>
           {message_html}{error_html}{present_html}{provider_notice_html}
         </div></body></html>
@@ -1405,10 +1443,10 @@ def create_app() -> "Flask":
                         )
                         message_html = (
                             "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong> "
-                            "Checks every 10 minutes while U.S. market hours are open (Mon-Fri 9:30-16:00 ET).</p>"
+                            "Checks every aligned 10 minutes (:00, :10, :20, ...).</p>"
                         )
                     elif monitor_action == "stop":
-                        RUN_ALL_MONITOR.stop(mode_key)
+                        RUN_ALL_MONITOR.stop(mode_key, webhook_url)
                         message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode stopped.</strong></p>"
                     elif monitor_action == "save_webhook":
                         if not webhook_url:
