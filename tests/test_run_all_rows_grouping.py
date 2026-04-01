@@ -76,6 +76,7 @@ def test_build_run_all_rows_renders_forward_monte_carlo_details() -> None:
                 "p95_return": 0.4,
                 "probability_profit": 0.7,
                 "probability_loss": 0.3,
+                "distribution": [-0.15, -0.05, 0.01, 0.1, 0.24],
             },
             "provider_notice": "",
             "error": "",
@@ -85,3 +86,4 @@ def test_build_run_all_rows_renders_forward_monte_carlo_details() -> None:
         html = build_run_all_rows({}, {}, mode="stocks", long_only=False)
     assert "<details>" in html
     assert "Forward MC" in html
+    assert "Monte Carlo return distribution" in html
