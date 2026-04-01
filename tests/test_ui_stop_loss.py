@@ -131,7 +131,7 @@ class StopLossUITests(unittest.TestCase):
     @patch("main.fetch_market_rows")
     @patch("main.evaluate_bundle")
     @patch("main.train_strategy_models")
-    def test_blank_model_name_defaults_to_ticker_rows_feature_set(
+    def test_blank_model_name_defaults_to_ticker_rows_and_prediction_horizon(
         self,
         train_mock,
         eval_mock,
@@ -208,9 +208,9 @@ class StopLossUITests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         save_bundle_mock.assert_called_once()
-        self.assertEqual(save_bundle_mock.call_args[0][1], "aapl_1d_4000")
+        self.assertEqual(save_bundle_mock.call_args[0][1], "aapl_1d_4000_5")
         saved_payload = save_configs_mock.call_args[0][1]
-        self.assertIn("aapl_1d_4000", saved_payload)
+        self.assertIn("aapl_1d_4000_5", saved_payload)
 
     @patch("main.save_model_configs")
     @patch("main.list_saved_models")
@@ -418,8 +418,8 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(save_bundle_mock.call_count, 2)
         self.assertTrue(save_configs_mock.called)
         saved_payload = save_configs_mock.call_args[0][1]
-        self.assertEqual(saved_payload["nvda_1d_4000"]["ticker"], "NVDA")
-        self.assertEqual(saved_payload["amd_1d_4000"]["ticker"], "AMD")
+        self.assertEqual(saved_payload["nvda_1d_4000_5"]["ticker"], "NVDA")
+        self.assertEqual(saved_payload["amd_1d_4000_5"]["ticker"], "AMD")
 
 
 if __name__ == "__main__":
