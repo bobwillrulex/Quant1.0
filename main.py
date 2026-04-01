@@ -2611,7 +2611,6 @@ def create_app() -> "Flask":
               </label>
               <label>Evaluation Split (optional):
                 <input type="number" min="0.01" max="0.99" step="0.01" name="evaluation_split" value="{evaluation_split_raw}" placeholder="0.25" />
-                <p class="muted">Leave blank for 25% evaluation / 75% training. Example: 0.10 = 10% eval / 90% train. Evaluate-only actions still use 100% of rows.</p>
               </label>
               <label>Feature Pipeline:
                 <select name="feature_set">
