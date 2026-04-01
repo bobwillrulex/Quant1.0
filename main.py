@@ -46,15 +46,6 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
-from quant.live_trading import (
-    QuestradeAuthClient,
-    get_accounts,
-    get_balances,
-    get_order_history,
-    get_positions,
-    get_quote,
-    place_order,
-)
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -491,7 +482,7 @@ def create_app() -> "Flask":
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
-        live_href = "/spot/live-trading" if is_spot else "/live-trading"
+        run_models_href = "/spot/run-models" if is_spot else "/run-models"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -740,8 +731,7 @@ def create_app() -> "Flask":
                 <a href="{home_href}" class="brand">{brand_label}</a>
                 <a href="{home_href}" class="tab-link">Model</a>
                 <a href="{manage_href}" class="tab-link active">Manage Models</a>
-                <a href="{live_href}" class="tab-link">Live Trading Bot</a>
-                <a href="{home_href}#present-mode" class="tab-link">Present Mode</a>
+                <a href="{run_models_href}" class="tab-link">Run Models</a>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>
             </nav>
@@ -1059,17 +1049,22 @@ def create_app() -> "Flask":
         </html>
         """
 
-    @app.route("/live-trading", methods=["GET", "POST"])
-    @app.route("/spot/live-trading", methods=["GET", "POST"])
-    def live_trading() -> str:
+    @app.route("/run-models", methods=["GET", "POST"])
+    @app.route("/spot/run-models", methods=["GET", "POST"])
+    def run_models_page() -> str:
         is_spot = request.path.startswith("/spot")
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
-        live_href = "/spot/live-trading" if is_spot else "/live-trading"
+        run_models_href = "/spot/run-models" if is_spot else "/run-models"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        present_rule_text = (
+            "Decision rule: BUY if P(Up) exceeds BUY threshold, SELL to exit if P(Up) is below SELL threshold, else HOLD."
+            if is_spot
+            else "Decision rule: BUY if P(Up) exceeds BUY threshold, SELL(short) if P(Up) is below SELL threshold, else HOLD."
+        )
         theme_bg = "#100d07" if is_spot else "#090c12"
         theme_text = "#efe0be" if is_spot else "#c6ccd7"
         theme_panel = "#19130b" if is_spot else "#121722"
@@ -1088,101 +1083,129 @@ def create_app() -> "Flask":
 
         message_html = ""
         error_html = ""
-        details_html = ""
-        selected_model = request.form.get("model_name", "").strip()
-        symbol = request.form.get("symbol", "AAPL").strip().upper()
-        quantity_raw = request.form.get("quantity", "1").strip()
-        account_id = request.form.get("account_id", "").strip()
-        order_type = request.form.get("order_type", "Market").strip().title()
-        action = request.form.get("trade_action", "Buy").strip().title()
-        limit_price_raw = request.form.get("limit_price", "").strip()
-        interval = request.form.get("candle_interval", "OneDay").strip()
-        is_paper = request.form.get("paper_mode", "1") == "1"
-
+        present_html = ""
+        run_all_html = ""
+        provider_notices: list[str] = []
+        present_ticker = request.form.get("present_ticker", "AAPL").upper().strip()
+        present_interval = request.form.get("present_interval", "1d")
+        present_rows = request.form.get("present_rows", "250")
+        present_buy_raw = request.form.get("present_buy_threshold", "").strip()
+        present_sell_raw = request.form.get("present_sell_threshold", "").strip()
+        present_model = request.form.get("present_model", "__new__")
+        present_stop_loss_strategy_raw = request.form.get("present_stop_loss_strategy", StopLossStrategy.NONE.value).strip()
+        present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", "2.0").strip()
+        prediction_horizon_raw = request.form.get("prediction_horizon", "5").strip()
+        split_style = request.form.get("split_style", "shuffled")
+        feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
+        dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
+        data_provider = request.form.get("data_provider", "yfinance").strip().lower()
+        if data_provider not in ("yfinance", "twelvedata"):
+            data_provider = "yfinance"
+        twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "e90093c59e7a436d9436e34b56a6e6a5").strip()
+        webhook_url = get_app_setting(mode_key, "discord_webhook_url", "")
         saved_models = list_saved_models(mode_key)
-        model_configs = load_model_configs(mode_key)
+        run_all_rows = ""
 
         if request.method == "POST":
-            op = request.form.get("op", "").strip()
+            mode = request.form.get("mode", "").strip()
             try:
-                auth_client = QuestradeAuthClient()
-                if op == "login":
-                    auth_client.refresh_access_token()
-                    message_html = "<p style='color:#7bd88f;'>Authenticated with Questrade and refreshed OAuth2 token.</p>"
-                elif op == "quote":
-                    quote = get_quote(symbol, auth_client=auth_client)
-                    details_html = f"<pre>{escape(json.dumps(quote, indent=2))}</pre>"
-                    message_html = f"<p style='color:#7bd88f;'>Fetched quote for {escape(symbol)}.</p>"
-                elif op == "accounts":
-                    accounts = get_accounts(auth_client=auth_client)
-                    details_html = f"<pre>{escape(json.dumps(accounts, indent=2))}</pre>"
-                    message_html = "<p style='color:#7bd88f;'>Fetched account list.</p>"
-                elif op == "balances":
-                    balances = get_balances(account_id, auth_client=auth_client)
-                    positions = get_positions(account_id, auth_client=auth_client)
-                    details_html = "<h3>Balances</h3>" + f"<pre>{escape(json.dumps(balances, indent=2))}</pre>" + "<h3>Positions</h3>" + f"<pre>{escape(json.dumps(positions, indent=2))}</pre>"
-                    message_html = f"<p style='color:#7bd88f;'>Fetched balances and positions for account {escape(account_id)}.</p>"
-                elif op == "history":
-                    orders = get_order_history(account_id, auth_client=auth_client)
-                    details_html = f"<pre>{escape(json.dumps(orders, indent=2))}</pre>"
-                    message_html = f"<p style='color:#7bd88f;'>Fetched order history for account {escape(account_id)}.</p>"
-                elif op == "trade":
-                    order: dict[str, object] = {
-                        "accountId": account_id,
-                        "symbol": symbol,
-                        "quantity": int(quantity_raw or "0"),
-                        "action": action,
-                        "orderType": order_type,
-                        "isPaper": is_paper,
-                    }
-                    if order_type == "Limit":
-                        order["limitPrice"] = float(limit_price_raw or "0")
-                    result = place_order(order, auth_client=auth_client)
-                    details_html = f"<pre>{escape(json.dumps(result, indent=2))}</pre>"
-                    message_html = "<p style='color:#7bd88f;'>Order request processed.</p>"
-                elif op == "model_trade":
-                    if selected_model not in saved_models:
-                        raise ValueError("Select a valid saved model first.")
-                    cfg = get_model_config(selected_model, model_configs)
-                    bundle = load_model_bundle(mode_key, selected_model)
-                    rows_payload, _ = fetch_market_rows(
-                        ticker=str(cfg.get("ticker", "AAPL")),
-                        interval=str(cfg.get("interval", "1d")),
-                        row_count=int(cfg.get("rows", 250)),
-                        provider="yfinance",
-                        twelve_api_key="",
-                        prediction_horizon=int(cfg.get("prediction_horizon", 5)),
+                if mode == "present":
+                    present_row_count = int(present_rows)
+                    if present_row_count < 50:
+                        raise ValueError("Rows must be at least 50.")
+                    present_buy_threshold, present_sell_threshold = parse_thresholds(present_buy_raw, present_sell_raw)
+                    present_stop_loss_strategy = parse_stop_loss_strategy(present_stop_loss_strategy_raw)
+                    present_fixed_stop_pct = 2.0
+                    if present_stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
+                        present_fixed_stop_pct = validate_fixed_stop_pct(float(present_fixed_stop_pct_raw or "2.0"))
+                    dataset, provider_notice = fetch_market_rows(
+                        ticker=present_ticker,
+                        interval=present_interval,
+                        row_count=present_row_count,
+                        provider=data_provider,
+                        twelve_api_key=twelve_api_key,
+                        prediction_horizon=int(prediction_horizon_raw or "5"),
                     )
+                    if provider_notice:
+                        provider_notices.append(provider_notice)
+                    latest_row = dataset[-1]
+                    present_dqn_episodes = int(dqn_episodes_raw or "120")
+                    if present_model == "__new__":
+                        bundle = train_strategy_models(dataset, split_style=split_style, feature_set=feature_set, dqn_episodes=present_dqn_episodes)
+                    else:
+                        bundle = load_model_bundle(mode_key, present_model)
                     prediction = predict_signal(
                         bundle,
-                        rows_payload[-1],
-                        buy_threshold=float(cfg.get("buy_threshold", 0.6)),
-                        sell_threshold=float(cfg.get("sell_threshold", 0.4)),
+                        latest_row,
+                        buy_threshold=present_buy_threshold,
+                        sell_threshold=present_sell_threshold,
                         long_only=is_spot,
                     )
-                    mapped_action = str(prediction["action"]).upper()
-                    if mapped_action not in {"BUY", "SELL"}:
-                        details_html = f"<pre>{escape(json.dumps(prediction, indent=2))}</pre>"
-                        message_html = f"<p style='color:#7bd88f;'>Model signal is {escape(mapped_action)}. No order was placed.</p>"
-                    else:
-                        order_request: dict[str, object] = {
-                            "accountId": account_id,
-                            "symbol": str(cfg.get('ticker', symbol)),
-                            "quantity": int(quantity_raw or "0"),
-                            "action": "Buy" if mapped_action == "BUY" else "Sell",
-                            "orderType": order_type,
-                            "isPaper": is_paper,
-                        }
-                        if order_type == "Limit":
-                            order_request["limitPrice"] = float(limit_price_raw or "0")
-                        trade_response = place_order(order_request, auth_client=auth_client)
-                        details_html = "<h3>Model Prediction</h3>" + f"<pre>{escape(json.dumps(prediction, indent=2))}</pre>" + "<h3>Trade Response</h3>" + f"<pre>{escape(json.dumps(trade_response, indent=2))}</pre>"
-                        message_html = f"<p style='color:#7bd88f;'>Executed {escape(mapped_action)} from model rule for {escape(selected_model)}.</p>"
+                    present_stop_price = stop_loss_price(
+                        strategy=present_stop_loss_strategy,
+                        action=str(prediction["action"]),
+                        reference_price=float(latest_row.get("close", 0.0)),
+                        expected_return=float(prediction["expected_return"]),
+                        fixed_pct=present_fixed_stop_pct,
+                        atr_fraction=float(latest_row.get("atr_frac", 0.0)),
+                        model_mae=MODEL_MAE_DEFAULT,
+                    )
+                    present_html = (
+                        "<section class='results'><article class='card'>"
+                        f"<h2>Present Mode • {present_ticker} ({present_interval})</h2>"
+                        f"<p class='muted'>Model: {'Freshly trained on current dataset' if present_model == '__new__' else present_model}</p>"
+                        f"<p class='muted'>{present_rule_text} (BUY&gt;{present_buy_threshold:.2f}, SELL&lt;{present_sell_threshold:.2f}).</p>"
+                        f"<p><span class='muted'>Expected Return (next candle)</span> <strong>{prediction['expected_return']:+.4%}</strong></p>"
+                        f"<p><span class='muted'>P(Up)</span> <strong>{prediction['p_up']:.2%}</strong></p>"
+                        f"<p><span class='muted'>Stop Loss Strategy</span> <strong>{present_stop_loss_strategy.value}</strong></p>"
+                        f"<p><span class='muted'>Calculated Stop Price</span> <strong>{f'{present_stop_price:.4f}' if present_stop_price is not None else 'n/a'}</strong></p>"
+                        f"<p><span class='muted'>Action</span> <strong>{prediction['action']}</strong></p>"
+                        "</article></section>"
+                    )
+                elif mode == "present_all":
+                    model_configs = load_model_configs(mode_key)
+                    model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
+                    model_configs["__ui_data_provider__"] = data_provider
+                    model_configs["__ui_twelve_api_key__"] = twelve_api_key
+                    run_all_rows = build_run_all_rows(saved_models, model_configs, mode=mode_key, long_only=is_spot)
+                    run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
+                elif mode == "run_all_monitor":
+                    monitor_action = request.form.get("monitor_action", "").strip()
+                    webhook_input = request.form.get("discord_webhook_url", "").strip()
+                    if webhook_input:
+                        webhook_url = webhook_input
+                        set_app_setting(mode_key, "discord_webhook_url", webhook_url)
+                    if monitor_action == "start":
+                        if not webhook_url:
+                            raise ValueError("Please enter and save a Discord webhook URL before starting continuous mode.")
+                        RUN_ALL_MONITOR.start(mode=mode_key, long_only=is_spot, data_provider=data_provider, twelve_api_key=twelve_api_key, webhook_url=webhook_url)
+                        message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong></p>"
+                    elif monitor_action == "stop":
+                        RUN_ALL_MONITOR.stop(mode_key)
+                        message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode stopped.</strong></p>"
+                    elif monitor_action == "save_webhook":
+                        message_html = "<p style='color:#7bd88f;'><strong>Webhook URL saved.</strong></p>"
             except Exception as exc:
-                error_html = f"<p style='color:#ff7b7b;'><strong>Error:</strong> {escape(str(exc))}</p>"
+                error_html = f"<p style='color:red;'><strong>Error:</strong> {escape(str(exc))}</p>"
+
+        monitor_state = RUN_ALL_MONITOR.status(mode_key)
+        worker_alive = bool(monitor_state.get("worker_alive"))
+        worker_state = escape(str(monitor_state.get("worker_state", "stopped")))
+        monitor_running = bool(monitor_state.get("running"))
+        monitor_last_error = escape(str(monitor_state.get("last_error", "")))
+        error_line = f"<br><span style='color:#ff7b7b;'><strong>Last error:</strong> {monitor_last_error}</span>" if monitor_last_error else ""
+        monitor_status_html = (
+            f"<p class='muted'><strong>Bot:</strong> {'Online' if worker_alive else 'Offline'} | "
+            f"<strong>Lifecycle:</strong> {'Crashed' if worker_state == 'crashed' else ('Running' if monitor_running else 'Stopped')}</p>{error_line}"
+        )
+        provider_notice_html = ""
+        if provider_notices:
+            provider_notice_html = "<div class='card'><h3>Data Provider Notices</h3><ul>" + "".join(
+                f"<li>{escape(note)}</li>" for note in dict.fromkeys(provider_notices)
+            ) + "</ul></div>"
 
         return f"""
-        <html><head><title>Live Trading Bot</title></head><body>
+        <html><head><title>Run Models</title></head><body>
         <style>
         :root {{--bg:{theme_bg};--panel:{theme_panel};--panel2:{theme_panel2};--border:{theme_border};--text:{theme_text};--muted:{theme_muted};--accent:{theme_accent};}}
         *{{box-sizing:border-box;}} body{{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;}}
@@ -1190,49 +1213,54 @@ def create_app() -> "Flask":
         .brand{{font-weight:700;color:{theme_brand};text-decoration:none;margin-right:auto;}} .tab-link{{color:{theme_tab};text-decoration:none;padding:.4rem .65rem;border-radius:8px;border:1px solid transparent;}}
         .tab-link:hover,.tab-link.active{{color:{theme_tab_active};border-color:var(--border);background:{theme_tab_hover_bg};}} .container{{max-width:1100px;margin:0 auto;padding:2rem;}}
         .card{{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--border);border-radius:14px;padding:1rem 1.1rem;margin-bottom:1rem;}}
-        .grid{{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:.8rem;}} label{{display:block;color:var(--muted);font-size:.92rem;}}
+        .form-grid{{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:.8rem;}} label{{display:block;color:var(--muted);font-size:.92rem;}}
         input,select{{width:100%;margin-top:.35rem;background:{theme_surface};color:var(--text);border:1px solid var(--border);border-radius:10px;padding:.58rem .65rem;}}
-        .btn-row{{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem;}} button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}}
-        .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
-        pre{{white-space:pre-wrap;background:{theme_surface};padding:.8rem;border-radius:10px;border:1px solid var(--border);}}
+        table{{width:100%;border-collapse:collapse}} th,td{{padding:.5rem;border-bottom:1px solid var(--border);text-align:left;}}
+        button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}} .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
         </style>
         <nav class="topbar"><div class="topbar-inner">
             <a href="{home_href}" class="brand">{brand_label}</a>
             <a href="{home_href}" class="tab-link">Model</a>
             <a href="{manage_href}" class="tab-link">Manage Models</a>
-            <a href="{live_href}" class="tab-link active">Live Trading Bot</a>
+            <a href="{run_models_href}" class="tab-link active">Run Models</a>
             <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
         </div></nav>
         <div class="container">
-          <h1>Live Trading Bot Mode</h1>
-          <p style="color:var(--muted);">Safety guardrails: paper mode is on by default. Real orders require <code>ENABLE_LIVE_TRADING=true</code>.</p>
-          {message_html}
-          {error_html}
+          <h1>Run Models</h1>
           <form method="post" class="card">
-            <div class="grid">
-              <label>Saved Model
-                <select name="model_name"><option value="">-- Select model --</option>{''.join(f'<option value="{name}" {"selected" if selected_model == name else ""}>{name}</option>' for name in saved_models)}</select>
-              </label>
-              <label>Account ID<input name="account_id" value="{escape(account_id)}" /></label>
-              <label>Symbol<input name="symbol" value="{escape(symbol)}" /></label>
-              <label>Quantity<input type="number" min="1" name="quantity" value="{escape(quantity_raw)}" /></label>
-              <label>Order Type<select name="order_type"><option value="Market" {"selected" if order_type == "Market" else ""}>Market</option><option value="Limit" {"selected" if order_type == "Limit" else ""}>Limit</option></select></label>
-              <label>Limit Price<input type="number" step="0.01" min="0" name="limit_price" value="{escape(limit_price_raw)}" /></label>
-              <label>Action<select name="trade_action"><option value="Buy" {"selected" if action == "Buy" else ""}>Buy</option><option value="Sell" {"selected" if action == "Sell" else ""}>Sell</option></select></label>
-              <label>Candle Interval<select name="candle_interval"><option value="OneDay" {"selected" if interval == "OneDay" else ""}>OneDay</option><option value="OneHour" {"selected" if interval == "OneHour" else ""}>OneHour</option><option value="FiveMinutes" {"selected" if interval == "FiveMinutes" else ""}>FiveMinutes</option></select></label>
-              <label>Paper Trading Mode<select name="paper_mode"><option value="1" {"selected" if is_paper else ""}>Enabled (no live orders)</option><option value="0" {"selected" if not is_paper else ""}>Disabled</option></select></label>
-            </div>
-            <div class="btn-row">
-              <button type="submit" name="op" value="login" class="secondary">OAuth Login/Refresh</button>
-              <button type="submit" name="op" value="quote" class="secondary">Get Quote</button>
-              <button type="submit" name="op" value="accounts" class="secondary">Get Accounts</button>
-              <button type="submit" name="op" value="balances" class="secondary">Get Balances/Positions</button>
-              <button type="submit" name="op" value="history" class="secondary">Order History</button>
-              <button type="submit" name="op" value="trade">Place Manual Order</button>
-              <button type="submit" name="op" value="model_trade">Run Model Trade</button>
+            <input type="hidden" name="mode" value="present" />
+            <input type="hidden" name="data_provider" value="{data_provider}" />
+            <h2>Run Model</h2>
+            <div class="form-grid">
+              <label>Ticker<input type="text" name="present_ticker" value="{present_ticker}" required /></label>
+              <label>Candle Length<select name="present_interval"><option value="1d" {"selected" if present_interval == "1d" else ""}>Daily</option><option value="1h" {"selected" if present_interval == "1h" else ""}>1 hour</option><option value="15m" {"selected" if present_interval == "15m" else ""}>15 min</option><option value="5m" {"selected" if present_interval == "5m" else ""}>5 min</option></select></label>
+              <label>Rows<input type="number" min="50" name="present_rows" value="{present_rows}" required /></label>
+              <label>Model<select name="present_model"><option value="__new__">Train new model</option>{"".join(f'<option value="{name}" {"selected" if present_model == name else ""}>{name}</option>' for name in saved_models)}</select></label>
+              <label>BUY threshold<input type="number" min="0" max="1" step="0.01" name="present_buy_threshold" value="{present_buy_raw}" placeholder="0.60" /></label>
+              <label>SELL threshold<input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" /></label>
+              <label>Stop Loss Strategy<select name="present_stop_loss_strategy"><option value="none" {"selected" if present_stop_loss_strategy_raw == "none" else ""}>None</option><option value="atr" {"selected" if present_stop_loss_strategy_raw == "atr" else ""}>ATR</option><option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation</option><option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time Decay</option><option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option><option value="trailing_stop" {"selected" if present_stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop</option></select></label>
+              <label>Fixed Stop %<input type="number" min="0.01" step="any" name="present_fixed_stop_pct" value="{present_fixed_stop_pct_raw}" /></label>
+              <label>&nbsp;<button type="submit">Run Model</button></label>
             </div>
           </form>
-          <div class="card"><h2>API Output</h2>{details_html or '<p style="color:var(--muted);">Run an action to view responses.</p>'}</div>
+          <form method="post" class="card">
+            <input type="hidden" name="mode" value="present_all" />
+            <input type="hidden" name="data_provider" value="{data_provider}" />
+            <h2>Run All Preset Models</h2>
+            <button type="submit">Run All Presets</button>
+            {run_all_html}
+            <table><tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
+            {run_all_rows if run_all_rows else "<tr><td colspan='10'>Press 'Run All Presets' to generate outputs.</td></tr>"}</table>
+          </form>
+          <form method="post" class="card">
+            <input type="hidden" name="mode" value="run_all_monitor" />
+            <input type="hidden" name="data_provider" value="{data_provider}" />
+            <h2>Continuous Run All + Discord</h2>
+            {monitor_status_html}
+            <label>Discord Webhook URL<input type="text" name="discord_webhook_url" value="{escape(webhook_url)}" /></label>
+            <div style="margin-top:.8rem;display:flex;gap:.6rem;"><button type="submit" name="monitor_action" value="save_webhook" class="secondary">Save Webhook</button><button type="submit" name="monitor_action" value="start">Start</button><button type="submit" name="monitor_action" value="stop" class="secondary">Stop</button></div>
+          </form>
+          {message_html}{error_html}{present_html}{provider_notice_html}
         </div></body></html>
         """
 
@@ -1244,7 +1272,7 @@ def create_app() -> "Flask":
         allow_short = not is_spot
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
-        live_href = "/spot/live-trading" if is_spot else "/live-trading"
+        run_models_href = "/spot/run-models" if is_spot else "/run-models"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -2494,8 +2522,7 @@ def create_app() -> "Flask":
                 <a href="{home_href}" class="brand">{brand_label}</a>
                 <a href="{home_href}" class="tab-link active">Model</a>
                 <a href="{manage_href}" class="tab-link">Manage Models</a>
-                <a href="{live_href}" class="tab-link">Live Trading Bot</a>
-                <a href="#present-mode" class="tab-link">Present Mode</a>
+                <a href="{run_models_href}" class="tab-link">Run Models</a>
                 <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                 <form method="post" style="margin:0;">
                   <input type="hidden" name="mode" value="provider_toggle" />
@@ -2632,94 +2659,11 @@ def create_app() -> "Flask":
               </label>
               </div>
             </form>
-            <form method="post" class="card" id="present-mode">
-              <input type="hidden" name="mode" value="present" />
-              <input type="hidden" name="data_provider" value="{data_provider}" />
-              <h2>Present Mode</h2>
-              <p class="muted">Get current model call using the same thresholds used in testing (BUY &gt; 0.60, SELL &lt; 0.40, else HOLD).</p>
-              <div class="form-grid">
-              <label>Ticker:
-                <input type="text" name="present_ticker" value="{present_ticker}" required />
-              </label>
-              <label>Candle Length:
-                <select name="present_interval">
-                  <option value="1d" {"selected" if present_interval == "1d" else ""}>Daily</option>
-                  <option value="1h" {"selected" if present_interval == "1h" else ""}>1 hour</option>
-                  <option value="15m" {"selected" if present_interval == "15m" else ""}>15 min</option>
-                  <option value="5m" {"selected" if present_interval == "5m" else ""}>5 min</option>
-                </select>
-              </label>
-              <label>Rows:
-                <input type="number" min="50" name="present_rows" value="{present_rows}" required />
-              </label>
-              <label>Model:
-                <select name="present_model">
-                  <option value="__new__">Train new model</option>
-                  {"".join(f'<option value="{name}" {"selected" if present_model == name else ""}>{name}</option>' for name in saved_models)}
-                </select>
-              </label>
-              <label>BUY if P(Up) &gt; (optional):
-                <input type="number" min="0" max="1" step="0.01" name="present_buy_threshold" value="{present_buy_raw}" placeholder="0.60" />
-              </label>
-              <label>SELL if P(Up) &lt; (optional):
-                <input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" />
-              </label>
-              <label>Stop Loss Strategy:
-                <select name="present_stop_loss_strategy" id="presentStopLossStrategy">
-                  <option value="none" {"selected" if present_stop_loss_strategy_raw == "none" else ""}>None</option>
-                  <option value="atr" {"selected" if present_stop_loss_strategy_raw == "atr" else ""}>Volatility Buffer (ATR-Based)</option>
-                  <option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation (MAE-Linked)</option>
-                  <option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time-Decay (Temporal Exit)</option>
-                  <option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option>
-                  <option value="trailing_stop" {"selected" if present_stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop Loss</option>
-                </select>
-              </label>
-              <label id="presentFixedStopLossWrap">Present Fixed Stop Loss %:
-                <input type="number" min="0.01" step="any" name="present_fixed_stop_pct" value="{present_fixed_stop_pct_raw}" placeholder="2.0" />
-              </label>
-              <label>&nbsp;
-                <button type="submit">Run Present Mode</button>
-              </label>
-              </div>
-            </form>
-            <form method="post" class="card">
-              <input type="hidden" name="mode" value="present_all" />
-              <input type="hidden" name="data_provider" value="{data_provider}" />
-              <h2>Run All Present Models</h2>
-              <p class="muted">Runs each saved model in this mode only (isolated from the other mode) and shows the live prediction.</p>
-              <button type="submit">Run All Present Models</button>
-              {run_all_html}
-              <table id="runAllTable">
-                <tr>
-                  <th data-sort-type="text">Model</th>
-                  <th data-sort-type="text">Ticker</th>
-                  <th data-sort-type="text">Candle</th>
-                  <th data-sort-type="number">Rows</th>
-                  <th data-sort-type="text">BUY/SELL</th>
-                  <th data-sort-type="text">Stop Strategy</th>
-                  <th data-sort-type="percent">Expected Return (next candle)</th>
-                  <th data-sort-type="percent">P(Up)</th>
-                  <th data-sort-type="number">Stop Price</th>
-                  <th data-sort-type="text">Action</th>
-                </tr>
-                {run_all_rows if run_all_rows else "<tr><td colspan='10' class='muted'>Press 'Run All Present Models' to generate outputs.</td></tr>"}
-              </table>
-            </form>
-            <form method="post" class="card">
-              <input type="hidden" name="mode" value="run_all_monitor" />
-              <input type="hidden" name="data_provider" value="{data_provider}" />
-              <h2>Continuous Run All + Discord</h2>
-              <p class="muted">When running, this polls every 10 minutes. It only evaluates during U.S. market hours (Mon-Fri 9:30-16:00 ET) and posts to Discord when a model action changes.</p>
-              {monitor_status_html}
-              <label>Discord Webhook URL:
-                <input type="text" name="discord_webhook_url" value="{escape(webhook_url)}" placeholder="https://discord.com/api/webhooks/..." />
-              </label>
-              <div class="button-row" style="margin-top:0.8rem;">
-                <button type="submit" name="monitor_action" value="save_webhook" class="secondary">Save Webhook</button>
-                <button type="submit" name="monitor_action" value="start">Start Continuous Mode</button>
-                <button type="submit" name="monitor_action" value="stop" class="secondary">Stop Continuous Mode</button>
-              </div>
-            </form>
+            <div class="card">
+              <h2>Run Models</h2>
+              <p class="muted">Run single-model and run-all preset workflows have moved to their own page.</p>
+              <a href="{run_models_href}" class="tab-link" style="display:inline-block;">Open Run Models Page</a>
+            </div>
             {message_html}
             {error_html}
             {present_html}
