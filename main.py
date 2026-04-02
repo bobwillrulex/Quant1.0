@@ -1380,7 +1380,7 @@ def create_app() -> "Flask":
             <h2>Run All Preset Models</h2>
             <button type="submit">Run All Presets</button>
             {run_all_html}
-            <table><tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
+            <table id="runAllTable"><tr><th>Model</th><th>Ticker</th><th>Candle</th><th data-sort-type="number">Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th data-sort-type="percent">Expected Return</th><th data-sort-type="percent">P(Up)</th><th data-sort-type="number">Stop Price</th><th>Action</th></tr>
             {run_all_rows if run_all_rows else "<tr><td colspan='10'>Press 'Run All Presets' to generate outputs.</td></tr>"}</table>
           </form>
           <form method="post" class="card">
@@ -1395,7 +1395,70 @@ def create_app() -> "Flask":
             {monitor_rows_html if monitor_rows_html else "<tr><td colspan='10'>No continuous updates yet. Start continuous mode to begin.</td></tr>"}</table>
           </form>
           {message_html}{error_html}{present_html}{provider_notice_html}
-        </div></body></html>
+        </div>
+        <script>
+          const runAllTable = document.getElementById("runAllTable");
+          const sortDirections = {{}};
+
+          function parseSortValue(rawValue, sortType) {{
+            const textValue = (rawValue || "").trim();
+            if (sortType === "number") {{
+              const parsed = Number.parseFloat(textValue.replace(/,/g, ""));
+              return Number.isFinite(parsed) ? parsed : null;
+            }}
+            if (sortType === "percent") {{
+              const parsed = Number.parseFloat(textValue.replace("%", "").replace(/,/g, ""));
+              return Number.isFinite(parsed) ? parsed : null;
+            }}
+            return textValue.toLowerCase();
+          }}
+
+          function sortRunAllTable(columnIndex, direction, sortType) {{
+            if (!runAllTable) return;
+            const allRows = Array.from(runAllTable.querySelectorAll("tr")).slice(1);
+            if (!allRows.length) return;
+            const sortableRows = allRows.filter((row) => !row.classList.contains("run-all-group-row") && !row.classList.contains("run-all-group-divider"));
+            if (!sortableRows.length) return;
+
+            sortableRows.sort((leftRow, rightRow) => {{
+              const leftCell = leftRow.children[columnIndex];
+              const rightCell = rightRow.children[columnIndex];
+              const leftValue = parseSortValue(leftCell?.textContent || "", sortType);
+              const rightValue = parseSortValue(rightCell?.textContent || "", sortType);
+
+              if (sortType === "number" || sortType === "percent") {{
+                if (leftValue === null && rightValue === null) return 0;
+                if (leftValue === null) return 1;
+                if (rightValue === null) return -1;
+                return direction === "desc" ? rightValue - leftValue : leftValue - rightValue;
+              }}
+
+              if (leftValue === rightValue) return 0;
+              if (direction === "desc") {{
+                return String(rightValue).localeCompare(String(leftValue));
+              }}
+              return String(leftValue).localeCompare(String(rightValue));
+            }});
+
+            allRows.forEach((row) => row.remove());
+            sortableRows.forEach((row) => runAllTable.appendChild(row));
+          }}
+
+          if (runAllTable) {{
+            const headerCells = Array.from(runAllTable.querySelectorAll("th"));
+            headerCells.forEach((headerCell, index) => {{
+              headerCell.style.cursor = "pointer";
+              headerCell.title = "Click to sort";
+              headerCell.addEventListener("click", () => {{
+                const currentDirection = sortDirections[index] || "asc";
+                const nextDirection = currentDirection === "asc" ? "desc" : "asc";
+                sortDirections[index] = nextDirection;
+                sortRunAllTable(index, nextDirection, headerCell.dataset.sortType || "text");
+              }});
+            }});
+          }}
+        </script>
+        </body></html>
         """
 
     @app.route("/", methods=["GET", "POST"])
