@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from main import is_us_market_open, seconds_until_next_aligned_ten_minute
+from main import is_us_market_open, seconds_until_next_aligned_five_minute
 
 
 def test_is_us_market_open_during_session() -> None:
@@ -18,11 +18,11 @@ def test_is_us_market_open_outside_session() -> None:
     assert not is_us_market_open(weekend)
 
 
-def test_next_ten_minute_alignment_waits_until_next_boundary() -> None:
+def test_next_five_minute_alignment_waits_until_next_boundary() -> None:
     ts = datetime(2026, 3, 20, 10, 4, 15)
-    assert seconds_until_next_aligned_ten_minute(ts) == 345.0
+    assert seconds_until_next_aligned_five_minute(ts) == 45.0
 
 
-def test_next_ten_minute_alignment_rolls_hour() -> None:
+def test_next_five_minute_alignment_rolls_hour() -> None:
     ts = datetime(2026, 3, 20, 10, 59, 59)
-    assert seconds_until_next_aligned_ten_minute(ts) == 1.0
+    assert seconds_until_next_aligned_five_minute(ts) == 1.0

@@ -388,12 +388,12 @@ def is_us_market_open(now: datetime | None = None) -> bool:
     return (9 * 60 + 30) <= minute_of_day < (16 * 60)
 
 
-def seconds_until_next_aligned_ten_minute(now: datetime | None = None) -> float:
+def seconds_until_next_aligned_five_minute(now: datetime | None = None) -> float:
     ts = now or datetime.utcnow()
-    minute_bucket = (ts.minute // 10) * 10
+    minute_bucket = (ts.minute // 5) * 5
     aligned = ts.replace(minute=minute_bucket, second=0, microsecond=0)
     if aligned <= ts:
-        aligned += timedelta(minutes=10)
+        aligned += timedelta(minutes=5)
     return max(1.0, (aligned - ts).total_seconds())
 
 
@@ -498,7 +498,7 @@ class RunAllMonitor:
                 except Exception as exc:
                     with self._lock:
                         self._state[mode]["last_error"] = str(exc)
-                wait_seconds = seconds_until_next_aligned_ten_minute()
+                wait_seconds = seconds_until_next_aligned_five_minute()
                 now_iso = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
                 next_tick_iso = datetime.utcfromtimestamp(time.time() + wait_seconds).replace(microsecond=0).isoformat() + "Z"
                 with self._lock:
@@ -1438,7 +1438,7 @@ def create_app() -> "Flask":
             {monitor_status_html}
             <label>Discord Webhook URL<input type="text" name="discord_webhook_url" value="{escape(webhook_url)}" /></label>
             <div style="margin-top:.8rem;display:flex;gap:.6rem;"><button type="submit" name="monitor_action" value="save_webhook" class="secondary">Save Webhook</button><button type="submit" name="monitor_action" value="start">Start</button><button type="submit" name="monitor_action" value="stop" class="secondary">Stop</button></div>
-            <p class="muted" style="margin-top:.65rem;">Continuous mode runs a full Run All update every aligned 10 minutes (:00, :10, :20, ...). Discord posts bot up/down/crash lifecycle events and model action changes.</p>
+            <p class="muted" style="margin-top:.65rem;">Continuous mode runs a full Run All update every aligned 5 minutes (:00, :05, :10, ...). Discord posts bot up/down/crash lifecycle events and model action changes.</p>
             <table><tr><th>Model</th><th>Ticker</th><th>Candle</th><th>Rows</th><th>BUY/SELL</th><th>Stop Strategy</th><th>Expected Return</th><th>P(Up)</th><th>Stop Price</th><th>Action</th></tr>
             {monitor_rows_html if monitor_rows_html else "<tr><td colspan='10'>No continuous updates yet. Start continuous mode to begin.</td></tr>"}</table>
           </form>
@@ -1653,7 +1653,7 @@ def create_app() -> "Flask":
                         )
                         message_html = (
                             "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong> "
-                            "Checks every aligned 10 minutes (:00, :10, :20, ...).</p>"
+                            "Checks every aligned 5 minutes (:00, :05, :10, ...).</p>"
                         )
                     elif monitor_action == "stop":
                         RUN_ALL_MONITOR.stop(mode_key, webhook_url)
