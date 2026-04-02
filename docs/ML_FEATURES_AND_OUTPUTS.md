@@ -34,6 +34,8 @@ Supported canonical sets:
 - `hybrid_sharpe_regime`
 - `hybrid_sharpe_volume_flow`
 - `hybrid_sharpe_volume_regime`
+- `close_hold_reversion`
+- `close_hold_momentum`
 - `rsi_thresholds`
 - `stoch_rsi_thresholds`
 

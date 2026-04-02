@@ -53,6 +53,8 @@ FeatureSet = Literal[
     "hybrid_sharpe_regime",
     "hybrid_sharpe_volume_flow",
     "hybrid_sharpe_volume_regime",
+    "close_hold_reversion",
+    "close_hold_momentum",
     "rsi_thresholds",
     "stoch_rsi_thresholds",
 ]
@@ -139,6 +141,22 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "volume_regime",
     ):
         return "hybrid_sharpe_volume_regime"
+    if value in (
+        "close_hold_reversion",
+        "close-hold-reversion",
+        "close_reversion",
+        "eod_reversion",
+        "overnight_reversion",
+    ):
+        return "close_hold_reversion"
+    if value in (
+        "close_hold_momentum",
+        "close-hold-momentum",
+        "close_momentum",
+        "eod_momentum",
+        "overnight_momentum",
+    ):
+        return "close_hold_momentum"
     if value in ("fvg2", "fvg-2", "fvg_2", "legacy2", "legacy-fvg2"):
         return "fvg2"
     if value in ("rsi_thresholds", "rsi-thresholds", "rsi_threshold", "rsi-threshold", "rsi"):
@@ -626,6 +644,62 @@ def build_hybrid_sharpe_volume_regime_strategy_features() -> StrategyFeatureBuil
 
 
 
+def build_close_hold_reversion_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ret_1", lambda r: g(r, "ret_1"))
+    builder.add("ret_3", lambda r: g(r, "ret_3"))
+    builder.add("stoch_rsi_norm", lambda r: g(r, "stoch_rsi") / 100.0)
+    builder.add("stoch_low_zone", lambda r: g(r, "stoch_low_zone"))
+    builder.add("stoch_high_zone", lambda r: g(r, "stoch_high_zone"))
+    builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
+    builder.add("rsi", lambda r: g(r, "rsi"))
+    builder.add("trend_20", lambda r: g(r, "trend_20"))
+    builder.add("vol_20", lambda r: g(r, "vol_20"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    builder.add("bb_percent_b", lambda r: g(r, "bb_percent_b"))
+    builder.add("bb_reversion_distance", lambda r: 0.5 - g(r, "bb_percent_b", 0.5))
+    builder.add("vwap_mid_dislocation", lambda r: (g(r, "close") - ((g(r, "vwap_anchor_high") + g(r, "vwap_anchor_low")) / 2.0)) / atr_guard(r))
+    builder.add("close_to_vwap_low_atr", lambda r: (g(r, "close") - g(r, "vwap_anchor_low")) / atr_guard(r))
+    builder.add("close_to_vwap_high_atr", lambda r: (g(r, "vwap_anchor_high") - g(r, "close")) / atr_guard(r))
+    builder.add("bearish_exhaustion", lambda r: max(0.0, -g(r, "ret_1")) * max(0.0, g(r, "stoch_low_zone")))
+    builder.add("bullish_exhaustion", lambda r: max(0.0, g(r, "ret_1")) * max(0.0, g(r, "stoch_high_zone")))
+    return builder
+
+
+def build_close_hold_momentum_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("ret_1", lambda r: g(r, "ret_1"))
+    builder.add("ret_3", lambda r: g(r, "ret_3"))
+    builder.add("ret_5", lambda r: g(r, "ret_5"))
+    builder.add("trend_20", lambda r: g(r, "trend_20"))
+    builder.add("vol_20", lambda r: g(r, "vol_20"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema21_slope", lambda r: g(r, "ema21_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("macd_acceleration", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")) / atr_guard(r))
+    builder.add("vwap_breakout_strength", lambda r: (g(r, "close") - g(r, "vwap_anchor_high")) / atr_guard(r))
+    builder.add("vwap_breakdown_strength", lambda r: (g(r, "vwap_anchor_low") - g(r, "close")) / atr_guard(r))
+    builder.add("momentum_alignment", lambda r: (g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1")) + g(r, "macd_hist"))
+    return builder
+
+
 
 def build_rsi_threshold_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
@@ -688,6 +762,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_hybrid_sharpe_volume_flow_strategy_features()
     if normalized == "hybrid_sharpe_volume_regime":
         return build_hybrid_sharpe_volume_regime_strategy_features()
+    if normalized == "close_hold_reversion":
+        return build_close_hold_reversion_strategy_features()
+    if normalized == "close_hold_momentum":
+        return build_close_hold_momentum_strategy_features()
     if normalized == "derivative":
         return build_derivative_strategy_features()
     if normalized == "feature2":
@@ -732,6 +810,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "hybrid_sharpe_regime"
     if isinstance(names, list) and "volume_spike_ratio" in names and "high_volume_regime" in names:
         return "hybrid_sharpe_volume_regime"
+    if isinstance(names, list) and "bb_reversion_distance" in names and "bearish_exhaustion" in names:
+        return "close_hold_reversion"
+    if isinstance(names, list) and "momentum_alignment" in names and "macd_acceleration" in names:
+        return "close_hold_momentum"
     if isinstance(names, list) and "volume_spike_ratio" in names:
         return "hybrid_sharpe_volume_flow"
     if isinstance(names, list) and "ema3_slope" in names and "ema9_slope" in names and "ema21_slope" not in names and "macd_hist_delta" not in names:
