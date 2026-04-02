@@ -32,6 +32,15 @@ Your DB and saved models remain until you manually delete them.
 python main.py --ui
 ```
 
+Run Flask through ngrok (shareable public URL):
+
+```bash
+export NGROK_AUTHTOKEN="your_token_here"
+python main.py --ui --host 127.0.0.1 --port 5000 --ngrok
+```
+
+You can also pass the token inline with `--ngrok-authtoken`, but using `NGROK_AUTHTOKEN` is safer because it keeps secrets out of shell history.
+
 CLI mode (synthetic data):
 
 ```bash
