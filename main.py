@@ -1572,6 +1572,8 @@ def create_app() -> "Flask":
                 "vwap_intraday_momentum",
                 "vwap_intraday_5m_session",
                 "vwap_breakout_reversion_regime",
+                "close_hold_reversion",
+                "close_hold_momentum",
                 "new",
                 "legacy",
             )
@@ -2822,6 +2824,8 @@ def create_app() -> "Flask":
                   <option value="hybrid_sharpe_regime" {"selected" if feature_set == "hybrid_sharpe_regime" else ""}>Hybrid Sharpe Regime (context aware)</option>
                   <option value="hybrid_sharpe_volume_flow" {"selected" if feature_set == "hybrid_sharpe_volume_flow" else ""}>Hybrid Sharpe Volume Flow (no-stack + participation)</option>
                   <option value="hybrid_sharpe_volume_regime" {"selected" if feature_set == "hybrid_sharpe_volume_regime" else ""}>Hybrid Sharpe Volume Regime (flow + gating)</option>
+                  <option value="close_hold_reversion" {"selected" if feature_set == "close_hold_reversion" else ""}>Close Hold Reversion (1-2 day mean reversion)</option>
+                  <option value="close_hold_momentum" {"selected" if feature_set == "close_hold_momentum" else ""}>Close Hold Momentum (1-2 day continuation)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
@@ -3091,6 +3095,8 @@ def create_app() -> "Flask":
               const featureNameMap = {json.dumps(feature_name_map)};
               const featurePipelineDescriptions = {{
                 vwap_intraday_5m_session: "5m session reset VWAP with EMA 3/9/21 context, VWAP delta-to-mean, ±1/±2 standard-deviation envelopes, price-to-band distances, and envelope ranges.",
+                close_hold_reversion: "Built for market-close entries held 1-2 bars: overshoot/exhaustion cues using RSI/Stoch zones, Bollinger dislocation, and VWAP distance normalized by ATR.",
+                close_hold_momentum: "Built for market-close entries held 1-2 bars: continuation cues from EMA slope/spread stack, MACD acceleration, and VWAP breakout-vs-breakdown pressure.",
               }};
 
               function parseSortValue(rawValue, sortType) {{
@@ -3384,6 +3390,8 @@ def parse_args() -> argparse.Namespace:
             "hybrid_sharpe_regime",
             "hybrid_sharpe_volume_flow",
             "hybrid_sharpe_volume_regime",
+            "close_hold_reversion",
+            "close_hold_momentum",
             "dqn",
             "fvg2",
             "fvg3",

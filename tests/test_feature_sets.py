@@ -408,3 +408,47 @@ def test_stoch_rsi_thresholds_feature_set_is_supported() -> None:
     assert normalize_feature_set("stoch_rsi_thresholds") == "stoch_rsi_thresholds"
     builder = get_strategy_feature_builder("stoch_rsi_thresholds")
     assert builder.names() == ["stoch_rsi_over_80", "stoch_rsi_under_20"]
+
+
+def test_close_hold_reversion_feature_set_is_supported() -> None:
+    assert normalize_feature_set("eod_reversion") == "close_hold_reversion"
+    builder = get_strategy_feature_builder("close_hold_reversion")
+    names = builder.names()
+    expected = {
+        "ret_1",
+        "ret_3",
+        "stoch_rsi_norm",
+        "stoch_low_zone",
+        "stoch_high_zone",
+        "bb_percent_b",
+        "bb_reversion_distance",
+        "vwap_mid_dislocation",
+        "close_to_vwap_low_atr",
+        "close_to_vwap_high_atr",
+        "bearish_exhaustion",
+        "bullish_exhaustion",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_close_hold_momentum_feature_set_is_supported() -> None:
+    assert normalize_feature_set("overnight_momentum") == "close_hold_momentum"
+    builder = get_strategy_feature_builder("close_hold_momentum")
+    names = builder.names()
+    expected = {
+        "ret_1",
+        "ret_3",
+        "ret_5",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "ema3_slope",
+        "ema9_slope",
+        "ema21_slope",
+        "macd_hist",
+        "macd_hist_delta",
+        "macd_acceleration",
+        "vwap_breakout_strength",
+        "vwap_breakdown_strength",
+        "momentum_alignment",
+    }
+    assert expected.issubset(set(names))
