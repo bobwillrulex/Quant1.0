@@ -235,6 +235,17 @@ def compute_strategy_rows_from_prices(
     # We intentionally lag FVG features one bar so "first touch/dip" is observable at i
     # without peeking into i+1.
     for i in range(3, n - prediction_horizon):
+        session_bar_index = i % bars_per_regular_session_5m
+        opening_range_start = i - session_bar_index
+        opening_range_end = min(opening_range_start + 2, i)
+        opening_range_high_15m = max(highs[j] for j in range(opening_range_start, opening_range_end + 1))
+        opening_range_low_15m = min(lows[j] for j in range(opening_range_start, opening_range_end + 1))
+        opening_range_width_15m = max(1e-9, opening_range_high_15m - opening_range_low_15m)
+        opening_range_mid_15m = (opening_range_high_15m + opening_range_low_15m) / 2.0
+        bars_remaining_in_session_5m = float(max(0, bars_per_regular_session_5m - (session_bar_index + 1)))
+        intraday_trade_window_open = 1.0 if (session_bar_index >= 3 and session_bar_index <= 63) else 0.0
+        near_session_close_5m = 1.0 if session_bar_index >= 72 else 0.0
+        post_opening_range_window_15m = 1.0 if session_bar_index >= 3 else 0.0
         stoch_now = stoch_rsi[i] / 100.0
         stoch_prev = stoch_rsi[i - 1] / 100.0 if i > 0 else stoch_now
         gap_up = lows[i] > highs[i - 1]
@@ -342,6 +353,7 @@ def compute_strategy_rows_from_prices(
                 "vwap_anchor_low": vwap_anchor_low[i],
                 "session_vwap_5m": session_vwap_5m[i],
                 "session_vwap_delta_5m": session_vwap_delta_5m[i],
+                "price_vs_session_vwap_5m": close_now - session_vwap_5m[i],
                 "session_vwap_delta_to_mean_5m": session_vwap_delta_to_mean_5m[i],
                 "session_vwap_std_1_5m": session_vwap_std_1_5m[i],
                 "session_vwap_std_2_5m": session_vwap_std_2_5m[i],
@@ -355,6 +367,25 @@ def compute_strategy_rows_from_prices(
                 "price_to_session_vwap_std_2_upper_5m": price_to_session_vwap_std_2_upper_5m[i],
                 "price_to_session_vwap_std_2_lower_5m": price_to_session_vwap_std_2_lower_5m[i],
                 "session_vwap_std_2_range_5m": session_vwap_std_2_range_5m[i],
+                "session_bar_index_5m": float(session_bar_index),
+                "bars_remaining_in_session_5m": bars_remaining_in_session_5m,
+                "intraday_trade_window_open": intraday_trade_window_open,
+                "near_session_close_5m": near_session_close_5m,
+                "opening_range_high_15m": opening_range_high_15m,
+                "opening_range_low_15m": opening_range_low_15m,
+                "opening_range_mid_15m": opening_range_mid_15m,
+                "opening_range_width_15m": opening_range_high_15m - opening_range_low_15m,
+                "opening_range_width_pct_15m": opening_range_width_15m / close_now if close_now != 0 else 0.0,
+                "price_vs_opening_range_high_15m": close_now - opening_range_high_15m,
+                "price_vs_opening_range_low_15m": close_now - opening_range_low_15m,
+                "price_vs_opening_range_mid_15m": close_now - opening_range_mid_15m,
+                "opening_range_position_pct_15m": (close_now - opening_range_low_15m) / opening_range_width_15m,
+                "opening_range_breakout_up_15m": 1.0 if (session_bar_index >= 3 and close_now > opening_range_high_15m) else 0.0,
+                "opening_range_breakdown_15m": 1.0 if (session_bar_index >= 3 and close_now < opening_range_low_15m) else 0.0,
+                "post_opening_range_window_15m": post_opening_range_window_15m,
+                "session_vwap_reversion_signal_5m": 1.0 if abs(close_now - session_vwap_5m[i]) <= session_vwap_std_1_5m[i] else 0.0,
+                "vwap_reclaim_long_signal_5m": 1.0 if (session_vwap_delta_to_mean_5m[i] > 0.0 and closes[i - 1] <= session_vwap_5m[i - 1]) else 0.0,
+                "vwap_reclaim_short_signal_5m": 1.0 if (session_vwap_delta_to_mean_5m[i] < 0.0 and closes[i - 1] >= session_vwap_5m[i - 1]) else 0.0,
                 "atr_frac": atr_frac[i],
             }
         if timestamps is not None:
