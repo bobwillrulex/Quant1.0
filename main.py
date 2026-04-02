@@ -10,11 +10,14 @@ import json
 import math
 import os
 import random
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Dict
+from urllib.error import URLError
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 from quant.constants import OPTIONS_MODE, SPOT_MODE
@@ -83,6 +86,51 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
 
 def build_default_model_name(*, ticker: str, interval: str, row_count: int, feature_set: str, prediction_horizon: int) -> str:
     return sanitize_model_name(f"{ticker}_{interval}_{row_count}_{prediction_horizon}")
+
+
+def wait_for_ngrok_url(*, timeout_seconds: float = 10.0) -> str:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            tunnels = payload.get("tunnels", [])
+            https_url = ""
+            http_url = ""
+            for tunnel in tunnels:
+                if not isinstance(tunnel, dict):
+                    continue
+                public_url = str(tunnel.get("public_url", ""))
+                if public_url.startswith("https://"):
+                    https_url = public_url
+                elif public_url.startswith("http://"):
+                    http_url = public_url
+            if https_url:
+                return https_url
+            if http_url:
+                return http_url
+        except (URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            pass
+        time.sleep(0.25)
+    raise RuntimeError("Timed out waiting for ngrok tunnel URL. Is ngrok installed and running?")
+
+
+def start_ngrok_tunnel(*, host: str, port: int, authtoken: str = "") -> tuple[subprocess.Popen[bytes], str]:
+    ngrok_bin = os.getenv("NGROK_BIN", "ngrok")
+    if authtoken:
+        subprocess.run(
+            [ngrok_bin, "config", "add-authtoken", authtoken],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    process = subprocess.Popen(
+        [ngrok_bin, "http", f"{host}:{port}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    public_url = wait_for_ngrok_url()
+    return process, public_url
 
 
 def parse_manual_feature_weights(raw: str, expected_feature_count: int) -> list[float]:
@@ -3415,6 +3463,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ui", action="store_true", help="Run Flask UI.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Flask host when using --ui.")
     parser.add_argument("--port", type=int, default=5000, help="Flask port when using --ui.")
+    parser.add_argument("--ngrok", action="store_true", help="Expose Flask UI through ngrok when using --ui.")
+    parser.add_argument(
+        "--ngrok-authtoken",
+        type=str,
+        default="",
+        help="Optional ngrok auth token. Prefer NGROK_AUTHTOKEN env var to avoid shell history leaks.",
+    )
     return parser.parse_args()
 
 
@@ -3422,7 +3477,16 @@ def main() -> None:
     args = parse_args()
     if args.ui:
         app = create_app()
-        app.run(host=args.host, port=args.port, debug=False)
+        ngrok_process: subprocess.Popen[bytes] | None = None
+        try:
+            if args.ngrok:
+                authtoken = args.ngrok_authtoken or os.getenv("NGROK_AUTHTOKEN", "")
+                ngrok_process, public_url = start_ngrok_tunnel(host=args.host, port=args.port, authtoken=authtoken)
+                print(f"ngrok tunnel active: {public_url}")
+            app.run(host=args.host, port=args.port, debug=False)
+        finally:
+            if ngrok_process and ngrok_process.poll() is None:
+                ngrok_process.terminate()
         return
 
     if args.csv:
