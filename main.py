@@ -1620,6 +1620,8 @@ def create_app() -> "Flask":
                 "vwap_intraday_momentum",
                 "vwap_intraday_5m_session",
                 "vwap_breakout_reversion_regime",
+                "open15_orb_intraday",
+                "open15_vwap_reclaim_intraday",
                 "close_hold_reversion",
                 "close_hold_momentum",
                 "new",
@@ -2888,6 +2890,8 @@ def create_app() -> "Flask":
                   <option value="vwap_intraday_momentum" {"selected" if feature_set == "vwap_intraday_momentum" else ""}>VWAP Intraday Momentum</option>
                   <option value="vwap_intraday_5m_session" {"selected" if feature_set == "vwap_intraday_5m_session" else ""}>VWAP Intraday 5m Session (daily reset)</option>
                   <option value="vwap_breakout_reversion_regime" {"selected" if feature_set == "vwap_breakout_reversion_regime" else ""}>VWAP Breakout vs Reversion Regime</option>
+                  <option value="open15_orb_intraday" {"selected" if feature_set == "open15_orb_intraday" else ""}>Open 15 ORB Intraday (max-2 trade style)</option>
+                  <option value="open15_vwap_reclaim_intraday" {"selected" if feature_set == "open15_vwap_reclaim_intraday" else ""}>Open 15 VWAP Reclaim Intraday</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
@@ -3145,6 +3149,8 @@ def create_app() -> "Flask":
                 vwap_intraday_5m_session: "5m session reset VWAP with EMA 3/9/21 context, VWAP delta-to-mean, ±1/±2 standard-deviation envelopes, price-to-band distances, and envelope ranges.",
                 close_hold_reversion: "Built for market-close entries held 1-2 bars: overshoot/exhaustion cues using RSI/Stoch zones, Bollinger dislocation, and VWAP distance normalized by ATR.",
                 close_hold_momentum: "Built for market-close entries held 1-2 bars: continuation cues from EMA slope/spread stack, MACD acceleration, and VWAP breakout-vs-breakdown pressure.",
+                open15_orb_intraday: "Built for 5m day trading after observing first 15m: opening-range breakout/breakdown confirmation, session VWAP alignment, and explicit intraday time-window gating.",
+                open15_vwap_reclaim_intraday: "Built for 5m day trading after first 15m: opening-range location plus VWAP reclaim/reversion triggers with late-session risk flags.",
               }};
 
               function parseSortValue(rawValue, sortType) {{
@@ -3454,6 +3460,8 @@ def parse_args() -> argparse.Namespace:
             "vwap_intraday_momentum",
             "vwap_intraday_5m_session",
             "vwap_breakout_reversion_regime",
+            "open15_orb_intraday",
+            "open15_vwap_reclaim_intraday",
             "new",
             "legacy",
         ],

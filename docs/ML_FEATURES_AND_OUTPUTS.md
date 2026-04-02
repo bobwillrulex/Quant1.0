@@ -27,6 +27,8 @@ Supported canonical sets:
 - `vwap_intraday_momentum`
 - `vwap_intraday_5m_session`
 - `vwap_breakout_reversion_regime`
+- `open15_orb_intraday`
+- `open15_vwap_reclaim_intraday`
 - `hybrid_sharpe_core`
 - `hybrid_sharpe_core_no_stack`
 - `hybrid_sharpe_momentum`

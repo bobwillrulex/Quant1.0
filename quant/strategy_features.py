@@ -46,6 +46,8 @@ FeatureSet = Literal[
     "vwap_intraday_momentum",
     "vwap_intraday_5m_session",
     "vwap_breakout_reversion_regime",
+    "open15_orb_intraday",
+    "open15_vwap_reclaim_intraday",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
@@ -108,6 +110,22 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "breakout_reversion_vwap",
     ):
         return "vwap_breakout_reversion_regime"
+    if value in (
+        "open15_orb_intraday",
+        "open15-orb-intraday",
+        "open15_orb",
+        "orb_open15",
+        "opening_range_breakout",
+    ):
+        return "open15_orb_intraday"
+    if value in (
+        "open15_vwap_reclaim_intraday",
+        "open15-vwap-reclaim-intraday",
+        "open15_vwap_reclaim",
+        "vwap_reclaim_open15",
+        "opening_range_vwap_reclaim",
+    ):
+        return "open15_vwap_reclaim_intraday"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
     if value in (
@@ -517,6 +535,52 @@ def build_vwap_breakout_reversion_regime_strategy_features() -> StrategyFeatureB
     return builder
 
 
+def build_open15_orb_intraday_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("post_opening_range_window_15m", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("opening_range_breakout_up_15m", lambda r: g(r, "opening_range_breakout_up_15m"))
+    builder.add("opening_range_breakdown_15m", lambda r: g(r, "opening_range_breakdown_15m"))
+    builder.add("price_vs_opening_range_high_15m", lambda r: g(r, "price_vs_opening_range_high_15m"))
+    builder.add("price_vs_opening_range_low_15m", lambda r: g(r, "price_vs_opening_range_low_15m"))
+    builder.add("opening_range_width_pct_15m", lambda r: g(r, "opening_range_width_pct_15m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("bars_remaining_in_session_5m", lambda r: g(r, "bars_remaining_in_session_5m"))
+    return builder
+
+
+def build_open15_vwap_reclaim_intraday_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("post_opening_range_window_15m", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("opening_range_mid_15m", lambda r: g(r, "opening_range_mid_15m"))
+    builder.add("price_vs_opening_range_mid_15m", lambda r: g(r, "price_vs_opening_range_mid_15m"))
+    builder.add("opening_range_position_pct_15m", lambda r: g(r, "opening_range_position_pct_15m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_to_mean_5m", lambda r: g(r, "session_vwap_delta_to_mean_5m"))
+    builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_reversion_signal_5m"))
+    builder.add("vwap_reclaim_long_signal_5m", lambda r: g(r, "vwap_reclaim_long_signal_5m"))
+    builder.add("vwap_reclaim_short_signal_5m", lambda r: g(r, "vwap_reclaim_short_signal_5m"))
+    builder.add("stoch_rsi_norm", lambda r: g(r, "stoch_rsi") / 100.0)
+    builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    return builder
+
+
 def build_hybrid_sharpe_core_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -748,6 +812,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_intraday_5m_session_strategy_features()
     if normalized == "vwap_breakout_reversion_regime":
         return build_vwap_breakout_reversion_regime_strategy_features()
+    if normalized == "open15_orb_intraday":
+        return build_open15_orb_intraday_strategy_features()
+    if normalized == "open15_vwap_reclaim_intraday":
+        return build_open15_vwap_reclaim_intraday_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
     if normalized == "hybrid_sharpe_core_no_stack":
@@ -798,6 +866,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_anchor"
     if isinstance(names, list) and "vwap_regime_signal" in names and "breakout_pressure" in names:
         return "vwap_breakout_reversion_regime"
+    if isinstance(names, list) and "opening_range_breakout_up_15m" in names and "post_opening_range_window_15m" in names:
+        return "open15_orb_intraday"
+    if isinstance(names, list) and "vwap_reclaim_long_signal_5m" in names and "opening_range_position_pct_15m" in names:
+        return "open15_vwap_reclaim_intraday"
     if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:
         return "vwap_intraday_reversion"
     if isinstance(names, list) and "vwap_breakout_strength" in names and "vwap_breakdown_strength" in names:

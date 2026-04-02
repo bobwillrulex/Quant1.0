@@ -235,6 +235,43 @@ def test_vwap_breakout_reversion_regime_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_open15_orb_intraday_feature_set_is_supported() -> None:
+    assert normalize_feature_set("opening_range_breakout") == "open15_orb_intraday"
+    builder = get_strategy_feature_builder("open15_orb_intraday")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "price_vs_opening_range_high_15m",
+        "price_vs_opening_range_low_15m",
+        "opening_range_width_pct_15m",
+        "price_vs_session_vwap_5m",
+        "intraday_trade_window_open",
+        "near_session_close_5m",
+        "bars_remaining_in_session_5m",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_open15_vwap_reclaim_intraday_feature_set_is_supported() -> None:
+    assert normalize_feature_set("vwap_reclaim_open15") == "open15_vwap_reclaim_intraday"
+    builder = get_strategy_feature_builder("open15_vwap_reclaim_intraday")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_position_pct_15m",
+        "price_vs_session_vwap_5m",
+        "session_vwap_reversion_signal_5m",
+        "vwap_reclaim_long_signal_5m",
+        "vwap_reclaim_short_signal_5m",
+        "stoch_rsi_norm",
+        "intraday_trade_window_open",
+        "near_session_close_5m",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
     assert normalize_feature_set("hybrid-core") == "hybrid_sharpe_core"
     builder = get_strategy_feature_builder("hybrid_sharpe_core")
