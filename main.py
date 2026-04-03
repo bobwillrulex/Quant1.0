@@ -1020,7 +1020,7 @@ def create_app() -> "Flask":
                       <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="cfgFixedStopPct" placeholder="2.0" />
                     </label>
                     <label>Take Profit %
-                      <input type="number" min="0.01" step="0.1" name="take_profit_pct" id="cfgTakeProfitPct" placeholder="1.5" />
+                      <input type="number" min="0.01" step="0.01" name="take_profit_pct" id="cfgTakeProfitPct" placeholder="1.5" />
                     </label>
                     <label>Max Hold Bars
                       <input type="number" min="1" step="1" name="max_hold_bars" id="cfgMaxHoldBars" placeholder="10" />
@@ -1094,7 +1094,7 @@ def create_app() -> "Flask":
                       <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="allFixedStopPct" placeholder="2.0" />
                     </label>
                     <label>Take Profit %
-                      <input type="number" min="0.01" step="0.1" name="take_profit_pct" id="allTakeProfitPct" placeholder="No change" />
+                      <input type="number" min="0.01" step="0.01" name="take_profit_pct" id="allTakeProfitPct" placeholder="No change" />
                     </label>
                     <label>Max Hold Bars
                       <input type="number" min="1" step="1" name="max_hold_bars" id="allMaxHoldBars" placeholder="No change" />
@@ -1482,7 +1482,7 @@ def create_app() -> "Flask":
               <label>SELL threshold<input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" /></label>
               <label>Stop Loss Strategy<select name="present_stop_loss_strategy"><option value="none" {"selected" if present_stop_loss_strategy_raw == "none" else ""}>None</option><option value="atr" {"selected" if present_stop_loss_strategy_raw == "atr" else ""}>ATR</option><option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation</option><option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time Decay</option><option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option><option value="trailing_stop" {"selected" if present_stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop</option></select></label>
               <label>Fixed Stop %<input type="number" min="0.01" step="any" name="present_fixed_stop_pct" value="{present_fixed_stop_pct_raw}" /></label>
-              <label>Take Profit %<input type="number" min="0.01" step="0.1" name="present_take_profit_pct" value="{present_take_profit_pct_raw}" placeholder="1.5" /></label>
+              <label>Take Profit %<input type="number" min="0.01" step="0.01" name="present_take_profit_pct" value="{present_take_profit_pct_raw}" placeholder="1.5" /></label>
               <label>Max Hold Bars<input type="number" min="1" step="1" name="present_max_hold_bars" value="{present_max_hold_bars_raw}" placeholder="10" /></label>
               <label>&nbsp;<button type="submit">Run Model</button></label>
             </div>
@@ -3047,7 +3047,7 @@ def create_app() -> "Flask":
                 <input type="number" min="0.01" step="any" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
               </label>
               <label>Take Profit %:
-                <input type="number" min="0.01" step="0.1" name="take_profit_pct" value="{take_profit_pct_raw}" placeholder="1.5" />
+                <input type="number" min="0.01" step="0.01" name="take_profit_pct" value="{take_profit_pct_raw}" placeholder="1.5" />
               </label>
               <label>Max Hold Bars:
                 <input type="number" min="1" step="1" name="max_hold_bars" value="{max_hold_bars_raw}" placeholder="10" />
