@@ -2876,6 +2876,8 @@ def create_app() -> "Flask":
                   <option value="hybrid_sharpe_volume_regime" {"selected" if feature_set == "hybrid_sharpe_volume_regime" else ""}>Hybrid Sharpe Volume Regime (flow + gating)</option>
                   <option value="close_hold_reversion" {"selected" if feature_set == "close_hold_reversion" else ""}>Close Hold Reversion (1-2 day mean reversion)</option>
                   <option value="close_hold_momentum" {"selected" if feature_set == "close_hold_momentum" else ""}>Close Hold Momentum (1-2 day continuation)</option>
+                  <option value="war_shock_reversion" {"selected" if feature_set == "war_shock_reversion" else ""}>War Shock Reversion (high-volatility snapback)</option>
+                  <option value="war_shock_momentum" {"selected" if feature_set == "war_shock_momentum" else ""}>War Shock Momentum (high-volatility continuation)</option>
                   <option value="dqn" {"selected" if feature_set == "dqn" else ""}>DQN (Q-learning model)</option>
                   <option value="fvg2" {"selected" if feature_set == "fvg2" else ""}>FVG 2 (legacy split extremes)</option>
                   <option value="fvg3" {"selected" if feature_set == "fvg3" else ""}>FVG 3</option>
@@ -3446,6 +3448,8 @@ def parse_args() -> argparse.Namespace:
             "hybrid_sharpe_volume_regime",
             "close_hold_reversion",
             "close_hold_momentum",
+            "war_shock_reversion",
+            "war_shock_momentum",
             "dqn",
             "fvg2",
             "fvg3",

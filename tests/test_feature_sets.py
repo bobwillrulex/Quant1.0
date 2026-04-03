@@ -272,6 +272,38 @@ def test_open15_vwap_reclaim_intraday_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_war_shock_reversion_feature_set_is_supported() -> None:
+    assert normalize_feature_set("war-shock-reversion") == "war_shock_reversion"
+    builder = get_strategy_feature_builder("war_shock_reversion")
+    names = builder.names()
+    expected = {
+        "shock_intensity",
+        "panic_down_move",
+        "oversold_snapback_bias",
+        "distance_to_vwap_low_atr",
+        "bb_reversion_distance",
+        "mean_revert_long_bias",
+        "session_vwap_reversion_signal_5m",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_war_shock_momentum_feature_set_is_supported() -> None:
+    assert normalize_feature_set("war-shock-momentum") == "war_shock_momentum"
+    builder = get_strategy_feature_builder("war_shock_momentum")
+    names = builder.names()
+    expected = {
+        "shock_intensity",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "macd_hist_delta",
+        "breakout_strength_atr",
+        "breakdown_strength_atr",
+        "trend_follow_thrust",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_hybrid_sharpe_core_feature_set_is_supported() -> None:
     assert normalize_feature_set("hybrid-core") == "hybrid_sharpe_core"
     builder = get_strategy_feature_builder("hybrid_sharpe_core")
