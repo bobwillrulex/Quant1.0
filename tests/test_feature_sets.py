@@ -324,6 +324,58 @@ def test_open15_dual_breakout_daytrade_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_open15_dual_breakout_daytrade_plus_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open15_breakout_followthrough_plus") == "open15_dual_breakout_daytrade_plus"
+    builder = get_strategy_feature_builder("open15_dual_breakout_daytrade_plus")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "opening_range_position_pct_15m",
+        "price_vs_session_vwap_5m",
+        "session_vwap_delta_to_mean_5m",
+        "vwap_reclaim_long_signal_5m",
+        "vwap_breakout_strength_atr",
+        "ema3_9_spread",
+        "macd_hist",
+        "trend_pullback_quality",
+        "intraday_trade_window_open",
+        "near_session_close_5m",
+        "trade_count_today",
+        "trades_remaining_cap_3",
+        "third_trade_only_if_reclaim_valid",
+        "avoid_overnight_bias",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_open15_dual_breakout_daytrade_scalp_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open15_breakout_followthrough_scalp") == "open15_dual_breakout_daytrade_scalp"
+    builder = get_strategy_feature_builder("open15_dual_breakout_daytrade_scalp")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "price_vs_session_vwap_5m",
+        "session_vwap_reversion_signal_5m",
+        "vwap_reclaim_long_signal_5m",
+        "vwap_breakout_strength_atr",
+        "ema3_9_spread",
+        "ema3_slope",
+        "macd_hist",
+        "ret_1",
+        "ret_3",
+        "intraday_trade_window_open",
+        "trade_count_today",
+        "trades_remaining_cap_5",
+        "fourth_plus_trade_requires_momentum",
+        "avoid_overnight_bias",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_war_shock_reversion_feature_set_is_supported() -> None:
     assert normalize_feature_set("war-shock-reversion") == "war_shock_reversion"
     builder = get_strategy_feature_builder("war_shock_reversion")

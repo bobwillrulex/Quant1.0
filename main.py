@@ -1694,6 +1694,8 @@ def create_app() -> "Flask":
                 "open15_vwap_reclaim_intraday",
                 "open15_trend_momentum_daytrade",
                 "open15_dual_breakout_daytrade",
+                "open15_dual_breakout_daytrade_plus",
+                "open15_dual_breakout_daytrade_scalp",
                 "vwap_momentum_trend_5m_conservative",
                 "vwap_momentum_trend_5m_pullback",
                 "close_hold_reversion",
@@ -2997,6 +2999,8 @@ def create_app() -> "Flask":
                   <option value="open15_vwap_reclaim_intraday" {"selected" if feature_set == "open15_vwap_reclaim_intraday" else ""}>Open 15 VWAP Reclaim Intraday</option>
                   <option value="open15_trend_momentum_daytrade" {"selected" if feature_set == "open15_trend_momentum_daytrade" else ""}>Open 15 Trend Momentum Daytrade (max-2/day)</option>
                   <option value="open15_dual_breakout_daytrade" {"selected" if feature_set == "open15_dual_breakout_daytrade" else ""}>Open 15 Dual Breakout Daytrade (follow-through)</option>
+                  <option value="open15_dual_breakout_daytrade_plus" {"selected" if feature_set == "open15_dual_breakout_daytrade_plus" else ""}>Open 15 Dual Breakout+ Daytrade (up to 3/day)</option>
+                  <option value="open15_dual_breakout_daytrade_scalp" {"selected" if feature_set == "open15_dual_breakout_daytrade_scalp" else ""}>Open 15 Dual Breakout Scalp (up to 5/day)</option>
                   <option value="vwap_momentum_trend_5m_conservative" {"selected" if feature_set == "vwap_momentum_trend_5m_conservative" else ""}>VWAP Momentum Trend 5m (conservative, up to 4/day)</option>
                   <option value="vwap_momentum_trend_5m_pullback" {"selected" if feature_set == "vwap_momentum_trend_5m_pullback" else ""}>VWAP Momentum Trend 5m Pullback (up to 3/day)</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
@@ -3266,6 +3270,8 @@ def create_app() -> "Flask":
                 open15_vwap_reclaim_intraday: "Built for 5m day trading after first 15m: opening-range location plus VWAP reclaim/reversion triggers with late-session risk flags.",
                 open15_trend_momentum_daytrade: "Built for 5m day trading after first 15m: ORB confirmation + EMA/MACD trend acceleration with intraday-only gating and max-2-trade/day control features.",
                 open15_dual_breakout_daytrade: "Built for 5m day trading after first 15m: opening-range continuation plus VWAP/EMA follow-through filters with explicit same-day exit bias controls.",
+                open15_dual_breakout_daytrade_plus: "Built for 5m day trading after first 15m: improved dual-breakout follow-through with VWAP reclaim quality filters and controlled scaling to ~0-3 trades/day.",
+                open15_dual_breakout_daytrade_scalp: "Built for 5m day trading after first 15m: faster dual-breakout/reclaim entries with tighter momentum checks and higher turnover targeting ~1-5 trades/day.",
                 vwap_momentum_trend_5m_conservative: "Built for 5m trend continuation around VWAP: EMA slope/stack + MACD agreement, VWAP breakout strength, and daily trade cap features targeting ~0-4 trades/day.",
                 vwap_momentum_trend_5m_pullback: "Built for 5m trend pullbacks to VWAP: reclaim/reversion context + momentum re-acceleration, with strict intraday window and lower trade-frequency cap features.",
               }};
@@ -3583,6 +3589,8 @@ def parse_args() -> argparse.Namespace:
             "open15_vwap_reclaim_intraday",
             "open15_trend_momentum_daytrade",
             "open15_dual_breakout_daytrade",
+            "open15_dual_breakout_daytrade_plus",
+            "open15_dual_breakout_daytrade_scalp",
             "vwap_momentum_trend_5m_conservative",
             "vwap_momentum_trend_5m_pullback",
             "new",
