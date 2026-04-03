@@ -31,6 +31,8 @@ Supported canonical sets:
 - `open15_vwap_reclaim_intraday`
 - `open15_trend_momentum_daytrade`
 - `open15_dual_breakout_daytrade`
+- `open15_dual_breakout_daytrade_plus`
+- `open15_dual_breakout_daytrade_scalp`
 - `hybrid_sharpe_core`
 - `hybrid_sharpe_core_no_stack`
 - `hybrid_sharpe_momentum`
