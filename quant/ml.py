@@ -640,6 +640,7 @@ def evaluate_bundle(
     baseline_up_accuracy = sum(y_test_dir) / max(1, len(y_test_dir))
     baseline_zero = [0.0] * len(y_test_ret)
     buy_hold_total_return_override: float | None = None
+    strategy_returns = list(y_test_ret)
     row_labels: List[str] = [str(i) for i in range(len(y_test_ret))]
     if eval_rows and split_style == "chronological":
         test_rows = list(eval_rows)[-len(y_test_ret) :] if y_test_ret else []
@@ -655,15 +656,22 @@ def evaluate_bundle(
             row_labels = derived_labels
         if len(closes) >= 2 and closes[0] != 0.0:
             buy_hold_total_return_override = (closes[-1] / closes[0]) - 1.0
+            step_returns: List[float] = [0.0]
+            for i in range(1, len(closes)):
+                prev_close = closes[i - 1]
+                current_close = closes[i]
+                step_returns.append(((current_close / prev_close) - 1.0) if prev_close != 0.0 else 0.0)
+            if len(step_returns) == len(y_test_ret):
+                strategy_returns = step_returns
 
     strategy = strategy_metrics(
-        y_test_ret,
+        strategy_returns,
         up_prob,
         expected_returns=ret_pred,
         long_threshold=buy_threshold,
         short_threshold=sell_threshold,
         trade_cost=0.0005,
-        buy_hold_returns=y_test_ret,
+        buy_hold_returns=strategy_returns,
         buy_hold_total_return_override=buy_hold_total_return_override,
         allow_short=allow_short,
         stop_loss=stop_loss,
@@ -684,7 +692,7 @@ def evaluate_bundle(
             long_threshold=buy_threshold,
             short_threshold=sell_threshold,
             trade_cost=0.0005,
-            buy_hold_returns=y_test_ret,
+            buy_hold_returns=strategy_returns,
             buy_hold_total_return_override=buy_hold_total_return_override,
             allow_short=allow_short,
             stop_loss=stop_loss,

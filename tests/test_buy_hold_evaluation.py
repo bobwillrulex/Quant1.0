@@ -13,6 +13,32 @@ def _minimal_bundle(feature_count: int = 1) -> dict[str, object]:
     }
 
 
+def test_strategy_uses_step_returns_for_chronological_eval_rows() -> None:
+    bundle = _minimal_bundle()
+    bundle["logit_bias"] = 10.0  # always long
+    x_test_raw = [[0.0], [0.0], [0.0]]
+    y_test_ret = [1.0, 1.0, 1.0]  # overlapping horizon returns (misleading for per-bar compounding)
+    y_test_dir = [1, 1, 1]
+    eval_rows = [
+        {"close": 100.0, "return_next": 1.0},
+        {"close": 50.0, "return_next": 1.0},
+        {"close": 25.0, "return_next": 1.0},
+    ]
+
+    metrics = evaluate_bundle(
+        bundle=bundle,
+        x_test_raw=x_test_raw,
+        y_test_ret=y_test_ret,
+        y_test_dir=y_test_dir,
+        eval_rows=eval_rows,
+        split_style="chronological",
+        allow_short=False,
+    )
+
+    total_return = float(metrics["strategy"]["total_return"])
+    assert total_return < 0.0
+
+
 def test_buy_hold_uses_close_to_close_for_chronological_eval_rows() -> None:
     bundle = _minimal_bundle()
     x_test_raw = [[0.0], [0.0], [0.0]]
