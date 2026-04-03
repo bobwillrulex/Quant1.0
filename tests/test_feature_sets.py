@@ -272,6 +272,58 @@ def test_open15_vwap_reclaim_intraday_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_open15_trend_momentum_daytrade_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open15_momentum_daytrade") == "open15_trend_momentum_daytrade"
+    builder = get_strategy_feature_builder("open15_trend_momentum_daytrade")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "macd_hist",
+        "macd_hist_delta",
+        "session_trend_pressure",
+        "intraday_trade_window_open",
+        "near_session_close_5m",
+        "bars_remaining_in_session_5m",
+        "trade_count_today",
+        "trades_remaining_cap_2",
+        "avoid_overnight_bias",
+        "open15_breakout_strength_atr",
+        "open15_breakdown_strength_atr",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_open15_dual_breakout_daytrade_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open15_breakout_followthrough") == "open15_dual_breakout_daytrade"
+    builder = get_strategy_feature_builder("open15_dual_breakout_daytrade")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "opening_range_position_pct_15m",
+        "price_vs_session_vwap_5m",
+        "vwap_breakout_strength",
+        "vwap_breakdown_strength",
+        "ema3_9_spread",
+        "ema9_21_spread",
+        "macd_hist",
+        "macd_hist_delta",
+        "momentum_alignment",
+        "intraday_trade_window_open",
+        "near_session_close_5m",
+        "bars_remaining_in_session_5m",
+        "trade_count_today",
+        "second_trade_only_if_trend_intact",
+        "avoid_overnight_bias",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_war_shock_reversion_feature_set_is_supported() -> None:
     assert normalize_feature_set("war-shock-reversion") == "war_shock_reversion"
     builder = get_strategy_feature_builder("war_shock_reversion")
