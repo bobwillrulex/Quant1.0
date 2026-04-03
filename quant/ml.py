@@ -383,24 +383,11 @@ def strategy_metrics(
         drawdowns.append(dd)
         max_drawdown = max(max_drawdown, dd)
     avg_drawdown = (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0
-    hold_lengths: List[int] = []
-    active_pos = 0
-    active_len = 0
-    for pos in positions:
-        if pos != 0 and pos == active_pos:
-            active_len += 1
-            continue
-        if active_pos != 0 and active_len > 0:
-            hold_lengths.append(active_len)
-        if pos != 0:
-            active_pos = pos
-            active_len = 1
-        else:
-            active_pos = 0
-            active_len = 0
-    if active_pos != 0 and active_len > 0:
-        hold_lengths.append(active_len)
-    hold_lengths_float = [float(x) for x in hold_lengths]
+    hold_lengths_float = [
+        float(max(1.0, float(trade.get("bars_held", 1.0))))
+        for trade in trade_log
+        if isinstance(trade, dict)
+    ]
     sorted_holds = sorted(hold_lengths_float)
     hold_time_stats = {
         "count": float(len(hold_lengths_float)),
