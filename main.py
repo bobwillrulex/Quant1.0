@@ -217,6 +217,7 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
     rows: list[dict[str, object]] = []
     data_provider = str(model_configs.get("__ui_data_provider__", "yfinance")).strip().lower()
     twelve_api_key = str(model_configs.get("__ui_twelve_api_key__", "")).strip()
+    massive_api_key = str(model_configs.get("__ui_massive_api_key__", "")).strip()
     for model_name in saved_models:
         cfg = get_model_config(model_name, model_configs)
         if not cfg.get("include_in_run_all", True):
@@ -228,6 +229,7 @@ def evaluate_run_all_models(saved_models, model_configs, *, mode: str, long_only
                 row_count=int(cfg.get("rows", 250)),
                 provider=data_provider,
                 twelve_api_key=twelve_api_key,
+                massive_api_key=massive_api_key,
                 prediction_horizon=int(cfg.get("prediction_horizon", 5)),
             )
             latest_row = dataset[-1]
@@ -439,7 +441,7 @@ class RunAllMonitor:
             mode_state.pop("thread", None)
             return mode_state
 
-    def start(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
+    def start(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, massive_api_key: str, webhook_url: str) -> None:
         with self._lock:
             mode_state = self._state[mode]
             if bool(mode_state.get("running")):
@@ -460,6 +462,7 @@ class RunAllMonitor:
                     "long_only": long_only,
                     "data_provider": data_provider,
                     "twelve_api_key": twelve_api_key,
+                    "massive_api_key": massive_api_key,
                     "webhook_url": webhook_url,
                 },
                 daemon=True,
@@ -475,7 +478,7 @@ class RunAllMonitor:
             self._state[mode]["next_tick_at"] = ""
         self._send_lifecycle_message(mode=mode, webhook_url=webhook_url, status="down")
 
-    def _loop(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, webhook_url: str) -> None:
+    def _loop(self, *, mode: str, long_only: bool, data_provider: str, twelve_api_key: str, massive_api_key: str, webhook_url: str) -> None:
         try:
             while True:
                 with self._lock:
@@ -489,6 +492,7 @@ class RunAllMonitor:
                     configs = load_model_configs(mode)
                     configs["__ui_data_provider__"] = data_provider
                     configs["__ui_twelve_api_key__"] = twelve_api_key
+                    configs["__ui_massive_api_key__"] = massive_api_key
                     models = list_saved_models(mode)
                     rows = evaluate_run_all_models(models, configs, mode=mode, long_only=long_only)
                     self._notify_action_changes(mode=mode, rows=rows, webhook_url=webhook_url)
@@ -1269,9 +1273,10 @@ def create_app() -> "Flask":
         feature_set = normalize_feature_set(request.form.get("feature_set", "feature2"))
         dqn_episodes_raw = request.form.get("dqn_episodes", "120").strip()
         data_provider = request.form.get("data_provider", "yfinance").strip().lower()
-        if data_provider not in ("yfinance", "twelvedata"):
+        if data_provider not in ("yfinance", "twelvedata", "massive"):
             data_provider = "yfinance"
         twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "e90093c59e7a436d9436e34b56a6e6a5").strip()
+        massive_api_key = os.getenv("MASSIVE_API_KEY", "5_9g13XovqZWWKsHiPp9B8L9LaReqjbn").strip()
         webhook_url = get_app_setting(mode_key, "discord_webhook_url", "")
         saved_models = list_saved_models(mode_key)
         run_all_rows = ""
@@ -1294,6 +1299,7 @@ def create_app() -> "Flask":
                         row_count=present_row_count,
                         provider=data_provider,
                         twelve_api_key=twelve_api_key,
+                        massive_api_key=massive_api_key,
                         prediction_horizon=int(prediction_horizon_raw or "5"),
                     )
                     if provider_notice:
@@ -1337,6 +1343,7 @@ def create_app() -> "Flask":
                     model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
                     model_configs["__ui_data_provider__"] = data_provider
                     model_configs["__ui_twelve_api_key__"] = twelve_api_key
+                    model_configs["__ui_massive_api_key__"] = massive_api_key
                     run_all_rows = build_run_all_rows(saved_models, model_configs, mode=mode_key, long_only=is_spot)
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 elif mode == "run_all_monitor":
@@ -1348,7 +1355,14 @@ def create_app() -> "Flask":
                     if monitor_action == "start":
                         if not webhook_url:
                             raise ValueError("Please enter and save a Discord webhook URL before starting continuous mode.")
-                        RUN_ALL_MONITOR.start(mode=mode_key, long_only=is_spot, data_provider=data_provider, twelve_api_key=twelve_api_key, webhook_url=webhook_url)
+                        RUN_ALL_MONITOR.start(
+                            mode=mode_key,
+                            long_only=is_spot,
+                            data_provider=data_provider,
+                            twelve_api_key=twelve_api_key,
+                            massive_api_key=massive_api_key,
+                            webhook_url=webhook_url,
+                        )
                         message_html = "<p style='color:#7bd88f;'><strong>Continuous Run All mode started.</strong></p>"
                     elif monitor_action == "stop":
                         RUN_ALL_MONITOR.stop(mode_key, webhook_url)
@@ -1590,9 +1604,10 @@ def create_app() -> "Flask":
         if evaluate_historical_only:
             split_style = "chronological"
         data_provider = request.form.get("data_provider", "yfinance").strip().lower()
-        if data_provider not in ("yfinance", "twelvedata"):
+        if data_provider not in ("yfinance", "twelvedata", "massive"):
             data_provider = "yfinance"
         twelve_api_key = os.getenv("TWELVE_DATA_API_KEY", "e90093c59e7a436d9436e34b56a6e6a5").strip()
+        massive_api_key = os.getenv("MASSIVE_API_KEY", "5_9g13XovqZWWKsHiPp9B8L9LaReqjbn").strip()
         webhook_url = get_app_setting(mode_key, "discord_webhook_url", "")
         provider_notices: list[str] = []
         saved_models = list_saved_models(mode_key)
@@ -1635,7 +1650,7 @@ def create_app() -> "Flask":
             try:
                 if mode == "provider_toggle":
                     toggled_provider = request.form.get("toggle_to", "yfinance").strip().lower()
-                    data_provider = toggled_provider if toggled_provider in ("yfinance", "twelvedata") else "yfinance"
+                    data_provider = toggled_provider if toggled_provider in ("yfinance", "twelvedata", "massive") else "yfinance"
                     message_html = f"<p style='color:#7bd88f;'><strong>Data provider:</strong> {data_provider}</p>"
                 elif mode == "run_all_monitor":
                     monitor_action = request.form.get("monitor_action", "").strip()
@@ -1651,6 +1666,7 @@ def create_app() -> "Flask":
                             long_only=is_spot,
                             data_provider=data_provider,
                             twelve_api_key=twelve_api_key,
+                            massive_api_key=massive_api_key,
                             webhook_url=webhook_url,
                         )
                         message_html = (
@@ -1760,6 +1776,7 @@ def create_app() -> "Flask":
                         row_count=present_row_count,
                         provider=data_provider,
                         twelve_api_key=twelve_api_key,
+                        massive_api_key=massive_api_key,
                         prediction_horizon=int(prediction_horizon_raw or "5"),
                     )
                     if provider_notice:
@@ -1810,6 +1827,7 @@ def create_app() -> "Flask":
                     model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
                     model_configs["__ui_data_provider__"] = data_provider
                     model_configs["__ui_twelve_api_key__"] = twelve_api_key
+                    model_configs["__ui_massive_api_key__"] = massive_api_key
                     run_all_rows = build_run_all_rows(saved_models, model_configs, mode=mode_key, long_only=is_spot)
                     run_all_html = "<p class='muted'>Latest outputs for all models currently included in Run All.</p>"
                 else:
@@ -1865,6 +1883,7 @@ def create_app() -> "Flask":
                                     row_count=row_count,
                                     provider=data_provider,
                                     twelve_api_key=twelve_api_key,
+                                    massive_api_key=massive_api_key,
                                     prediction_horizon=prediction_horizon,
                                 )
                                 if provider_notice:
@@ -1961,6 +1980,7 @@ def create_app() -> "Flask":
                             row_count=row_count,
                             provider=data_provider,
                             twelve_api_key=twelve_api_key,
+                            massive_api_key=massive_api_key,
                             prediction_horizon=prediction_horizon,
                         )
                         if provider_notice:
@@ -2505,6 +2525,9 @@ def create_app() -> "Flask":
             )
             for item in saved_evaluations
         )
+        provider_cycle = {"yfinance": "twelvedata", "twelvedata": "massive", "massive": "yfinance"}
+        provider_labels = {"yfinance": "YFinance", "twelvedata": "Twelve Data", "massive": "Massive"}
+        next_provider = provider_cycle.get(data_provider, "yfinance")
 
         return f"""
         <html>
@@ -2827,9 +2850,9 @@ def create_app() -> "Flask":
                 <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                 <form method="post" style="margin:0;">
                   <input type="hidden" name="mode" value="provider_toggle" />
-                  <input type="hidden" name="toggle_to" value="{'yfinance' if data_provider == 'twelvedata' else 'twelvedata'}" />
+                  <input type="hidden" name="toggle_to" value="{next_provider}" />
                   <input type="hidden" name="data_provider" value="{data_provider}" />
-                  <button type="submit" class="secondary provider-pill">Data: {'Twelve Data' if data_provider == 'twelvedata' else 'YFinance'}</button>
+                  <button type="submit" class="secondary provider-pill">Data: {provider_labels.get(data_provider, 'YFinance')}</button>
                 </form>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               </div>

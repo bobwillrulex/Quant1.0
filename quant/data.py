@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+from datetime import datetime, timedelta, timezone
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -485,19 +486,84 @@ def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: 
     return rows[-row_count:] if len(rows) >= row_count else rows
 
 
+def _massive_interval(interval: str) -> tuple[int, str]:
+    interval_map = {"1d": (1, "day"), "1h": (1, "hour"), "15m": (15, "minute"), "5m": (5, "minute")}
+    if interval not in interval_map:
+        raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
+    return interval_map[interval]
+
+
+def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str, prediction_horizon: int = 5) -> List[Row]:
+    if row_count < 50:
+        raise ValueError("Please request at least 50 rows.")
+    multiplier, timespan = _massive_interval(interval)
+    range_days = {"1d": 3650, "1h": 730, "15m": 90, "5m": 60}
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=range_days[interval])
+    query = urlencode(
+        {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": min(50000, max(500, row_count + 150)),
+            "apiKey": api_key,
+        }
+    )
+    endpoint = (
+        "https://api.polygon.io/v2/aggs/ticker/"
+        f"{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{now.date().isoformat()}?{query}"
+    )
+    try:
+        with urlopen(endpoint, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except URLError as exc:
+        raise ValueError(f"Massive request failed: {exc}") from exc
+    if payload.get("status") == "ERROR":
+        message = str(payload.get("error", "Unknown Massive API error"))
+        raise ValueError(message)
+    values = payload.get("results")
+    if not isinstance(values, list) or not values:
+        raise ValueError("Massive returned no candles.")
+    highs = [float(item["h"]) for item in values]
+    lows = [float(item["l"]) for item in values]
+    closes = [float(item["c"]) for item in values]
+    timestamps = [datetime.fromtimestamp(float(point["t"]) / 1000.0, tz=timezone.utc).isoformat() for point in values]
+    rows = compute_strategy_rows_from_prices(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        prediction_horizon=prediction_horizon,
+        timestamps=timestamps,
+    )
+    return rows[-row_count:] if len(rows) >= row_count else rows
+
+
 def fetch_market_rows(
     ticker: str,
     interval: str,
     row_count: int,
     provider: str,
     twelve_api_key: str,
+    massive_api_key: str,
     prediction_horizon: int = 5,
 ) -> tuple[List[Row], str | None]:
     selected_provider = provider.strip().lower()
-    if selected_provider not in ("yfinance", "twelvedata"):
-        raise ValueError("Data provider must be either yfinance or twelvedata.")
+    if selected_provider not in ("yfinance", "twelvedata", "massive"):
+        raise ValueError("Data provider must be one of: yfinance, twelvedata, massive.")
     if selected_provider == "yfinance":
         return fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon), None
+    if selected_provider == "massive":
+        try:
+            rows = fetch_massive_rows(
+                ticker=ticker,
+                interval=interval,
+                row_count=row_count,
+                api_key=massive_api_key,
+                prediction_horizon=prediction_horizon,
+            )
+            return rows, None
+        except Exception as exc:
+            rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon)
+            return rows, f"Massive failed for {ticker} ({exc}). Fell back to yfinance."
     if _ticker_is_unavailable_for_twelve_data(ticker):
         rows = fetch_yahoo_rows(ticker=ticker, interval=interval, row_count=row_count, prediction_horizon=prediction_horizon)
         return rows, (
