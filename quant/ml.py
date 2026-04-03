@@ -186,6 +186,8 @@ def strategy_metrics(
     stop_price: float | None = None
     stop_loss_exits = 0
     time_decay_exits = 0
+    take_profit_exits = 0
+    max_hold_exits = 0
     time_decay_limit = max(1, int(stop_cfg.time_decay_bars))
     atr_window = 14
     atr_returns: List[float] = []
@@ -205,8 +207,15 @@ def strategy_metrics(
     trades = 0
     closed_trade_pnls: List[float] = []
     trade_log: List[Dict[str, object]] = []
-    def close_position(idx: int, fill_price: float, stop_exit: bool = False, time_decay_exit: bool = False) -> None:
-        nonlocal current_pos, entry_price, trailing_anchor, stop_price, bars_in_position, cooldown, wins, trades, pnl, stop_loss_exits, time_decay_exits
+    def close_position(
+        idx: int,
+        fill_price: float,
+        stop_exit: bool = False,
+        time_decay_exit: bool = False,
+        take_profit_exit: bool = False,
+        max_hold_exit: bool = False,
+    ) -> None:
+        nonlocal current_pos, entry_price, trailing_anchor, stop_price, bars_in_position, cooldown, wins, trades, pnl, stop_loss_exits, time_decay_exits, take_profit_exits, max_hold_exits
         if current_pos == 0 or entry_price is None:
             return
         gross = ((fill_price / entry_price) - 1.0) if current_pos > 0 else ((entry_price / fill_price) - 1.0)
@@ -221,6 +230,10 @@ def strategy_metrics(
             cooldown = cooldown_bars
         if time_decay_exit:
             time_decay_exits += 1
+        if take_profit_exit:
+            take_profit_exits += 1
+        if max_hold_exit:
+            max_hold_exits += 1
         entry_bar = int(entry_idx) if entry_idx is not None else int(idx)
         exit_bar = int(idx)
         entry_label = row_labels[entry_bar] if row_labels and 0 <= entry_bar < len(row_labels) else str(entry_bar)
@@ -237,7 +250,11 @@ def strategy_metrics(
                 "bars_held": float(max(1, (exit_bar - entry_bar) + 1)),
                 "gross_pnl": float(gross),
                 "net_pnl": float(net),
-                "exit_reason": "stop_loss" if stop_exit else ("time_decay" if time_decay_exit else "signal"),
+                "exit_reason": (
+                    "stop_loss"
+                    if stop_exit
+                    else ("time_decay" if time_decay_exit else ("take_profit" if take_profit_exit else ("max_hold_time" if max_hold_exit else "signal")))
+                ),
             }
         )
         current_pos = 0
@@ -263,7 +280,9 @@ def strategy_metrics(
                 trailing_anchor = max(trailing_anchor, current_price)
                 stop_price = trailing_anchor * (1.0 - (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
+            max_hold_hit = stop_cfg.max_hold_bars > 0 and bars_in_position >= stop_cfg.max_hold_bars
             fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and stop_price is not None and current_price <= stop_price
+            take_profit_hit = stop_cfg.take_profit_pct > 0 and entry_price > 0 and (((current_price / entry_price) - 1.0) >= (stop_cfg.take_profit_pct / 100.0))
             model_invalidation_hit = False
             if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
@@ -279,6 +298,10 @@ def strategy_metrics(
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
                 effective_stop_price = entry_price * (1.0 + threshold)
                 close_position(idx, min(effective_stop_price, current_price), stop_exit=True)
+            elif take_profit_hit:
+                close_position(idx, current_price, take_profit_exit=True)
+            elif max_hold_hit:
+                close_position(idx, current_price, max_hold_exit=True)
             elif bars_in_position >= min_hold_bars and signal < sell_threshold:
                 close_position(idx, current_price)
             else:
@@ -288,7 +311,9 @@ def strategy_metrics(
                 trailing_anchor = min(trailing_anchor, current_price)
                 stop_price = trailing_anchor * (1.0 + (stop_cfg.fixed_pct / 100.0))
             time_decay_hit = stop_cfg.strategy == StopLossStrategy.TIME_DECAY and bars_in_position > time_decay_limit
+            max_hold_hit = stop_cfg.max_hold_bars > 0 and bars_in_position >= stop_cfg.max_hold_bars
             fixed_or_atr_hit = stop_cfg.strategy in (StopLossStrategy.ATR, StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP) and stop_price is not None and current_price >= stop_price
+            take_profit_hit = stop_cfg.take_profit_pct > 0 and entry_price > 0 and (((entry_price / current_price) - 1.0) >= (stop_cfg.take_profit_pct / 100.0))
             model_invalidation_hit = False
             if stop_cfg.strategy == StopLossStrategy.MODEL_INVALIDATION and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
@@ -304,6 +329,10 @@ def strategy_metrics(
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
                 effective_stop_price = entry_price * (1.0 - threshold)
                 close_position(idx, max(effective_stop_price, current_price), stop_exit=True)
+            elif take_profit_hit:
+                close_position(idx, current_price, take_profit_exit=True)
+            elif max_hold_hit:
+                close_position(idx, current_price, max_hold_exit=True)
             elif bars_in_position >= min_hold_bars and signal > long_threshold:
                 close_position(idx, current_price)
             else:
@@ -426,8 +455,12 @@ def strategy_metrics(
         "stop_loss_strategy": stop_cfg.strategy.value,
         "stop_loss_exits": float(stop_loss_exits),
         "time_decay_exits": float(time_decay_exits),
+        "take_profit_exits": float(take_profit_exits),
+        "max_hold_exits": float(max_hold_exits),
         "time_decay_bars": float(time_decay_limit),
         "fixed_stop_pct": float(stop_cfg.fixed_pct),
+        "take_profit_pct": float(stop_cfg.take_profit_pct),
+        "max_hold_bars": float(stop_cfg.max_hold_bars),
         "model_mae": float(stop_cfg.model_mae),
         "atr_multiplier": float(stop_cfg.atr_multiplier),
         "total_return": total_return,

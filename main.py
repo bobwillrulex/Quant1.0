@@ -34,7 +34,16 @@ from quant.ml import (
     train_strategy_models,
     train_test_split,
 )
-from quant.stop_loss import MODEL_MAE_DEFAULT, StopLossConfig, StopLossStrategy, parse_stop_loss_strategy, stop_loss_price, validate_fixed_stop_pct
+from quant.stop_loss import (
+    MODEL_MAE_DEFAULT,
+    StopLossConfig,
+    StopLossStrategy,
+    parse_stop_loss_strategy,
+    stop_loss_price,
+    validate_fixed_stop_pct,
+    validate_max_hold_bars,
+    validate_take_profit_pct,
+)
 from quant.storage import (
     get_app_setting,
     list_saved_models,
@@ -65,6 +74,8 @@ def default_model_config() -> Dict[str, object]:
         "sell_threshold": 0.4,
         "stop_loss_strategy": StopLossStrategy.NONE.value,
         "fixed_stop_pct": 2.0,
+        "take_profit_pct": 0.0,
+        "max_hold_bars": 0,
         "prediction_horizon": 5,
     }
 
@@ -702,9 +713,13 @@ def create_app() -> "Flask":
                     sell_raw = request.form.get("sell_threshold", "").strip()
                     stop_loss_strategy = parse_stop_loss_strategy(request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value))
                     fixed_stop_raw = request.form.get("fixed_stop_pct", "2.0").strip()
+                    take_profit_raw = request.form.get("take_profit_pct", "").strip()
+                    max_hold_raw = request.form.get("max_hold_bars", "").strip()
                     fixed_stop_pct = 2.0
                     if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
+                    take_profit_pct = 0.0 if not take_profit_raw else validate_take_profit_pct(float(take_profit_raw))
+                    max_hold_bars = 0 if not max_hold_raw else validate_max_hold_bars(int(max_hold_raw))
                     include_in_run_all = request.form.get("include_in_run_all", "0") == "1"
                     rows = int(rows_raw)
                     buy_threshold, sell_threshold = parse_thresholds(buy_raw, sell_raw)
@@ -721,6 +736,8 @@ def create_app() -> "Flask":
                         "sell_threshold": sell_threshold,
                         "stop_loss_strategy": stop_loss_strategy.value,
                         "fixed_stop_pct": fixed_stop_pct,
+                        "take_profit_pct": take_profit_pct,
+                        "max_hold_bars": max_hold_bars,
                     }
                     save_model_configs(mode_key, model_configs)
                     message_html = f"<p style='color:#7bd88f;'><strong>Saved settings for:</strong> {model_name}</p>"
@@ -734,6 +751,8 @@ def create_app() -> "Flask":
                     sell_raw = request.form.get("sell_threshold", "").strip()
                     stop_loss_strategy_raw = request.form.get("stop_loss_strategy", "").strip()
                     fixed_stop_raw = request.form.get("fixed_stop_pct", "").strip()
+                    take_profit_raw = request.form.get("take_profit_pct", "").strip()
+                    max_hold_raw = request.form.get("max_hold_bars", "").strip()
                     include_in_run_all_raw = request.form.get("include_in_run_all", "").strip()
 
                     updates: Dict[str, object] = {}
@@ -759,6 +778,10 @@ def create_app() -> "Flask":
                             updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw or "2.0"))
                     if fixed_stop_raw and not stop_loss_strategy_raw:
                         updates["fixed_stop_pct"] = validate_fixed_stop_pct(float(fixed_stop_raw))
+                    if take_profit_raw:
+                        updates["take_profit_pct"] = validate_take_profit_pct(float(take_profit_raw))
+                    if max_hold_raw:
+                        updates["max_hold_bars"] = validate_max_hold_bars(int(max_hold_raw))
                     if include_in_run_all_raw in ("0", "1"):
                         updates["include_in_run_all"] = include_in_run_all_raw == "1"
                     if not updates:
@@ -827,7 +850,9 @@ def create_app() -> "Flask":
                 f"data-buy='{float(cfg.get('buy_threshold', 0.6)):.2f}' "
                 f"data-sell='{float(cfg.get('sell_threshold', 0.4)):.2f}' "
                 f"data-stop-loss='{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}' "
-                f"data-fixed-stop='{float(cfg.get('fixed_stop_pct', 2.0)):.2f}'>"
+                f"data-fixed-stop='{float(cfg.get('fixed_stop_pct', 2.0)):.2f}' "
+                f"data-take-profit='{float(cfg.get('take_profit_pct', 0.0)):.2f}' "
+                f"data-max-hold='{int(cfg.get('max_hold_bars', 0))}'>"
                 f"<td>{model_name}</td>"
                 f"<td>{cfg.get('ticker')}</td>"
                 f"<td>{cfg.get('interval')}</td>"
@@ -836,6 +861,8 @@ def create_app() -> "Flask":
                 f"<td>{float(cfg.get('sell_threshold', 0.4)):.2f}</td>"
                 f"<td>{cfg.get('stop_loss_strategy', StopLossStrategy.NONE.value)}</td>"
                 f"<td>{float(cfg.get('fixed_stop_pct', 2.0)):.2f}%</td>"
+                f"<td>{float(cfg.get('take_profit_pct', 0.0)):.2f}%</td>"
+                f"<td>{int(cfg.get('max_hold_bars', 0))}</td>"
                 f"<td>{include_badge}</td>"
                 "</tr>"
             )
@@ -936,6 +963,8 @@ def create_app() -> "Flask":
                         <th>Sell &lt;</th>
                         <th>Stop Loss</th>
                         <th>Fixed Stop</th>
+                        <th>Take Profit</th>
+                        <th>Max Hold</th>
                         <th>Run All</th>
                       </tr>
                     </thead>
@@ -989,6 +1018,12 @@ def create_app() -> "Flask":
                     </label>
                     <label id="cfgFixedStopWrap">Fixed Stop Loss %
                       <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="cfgFixedStopPct" placeholder="2.0" />
+                    </label>
+                    <label>Take Profit %
+                      <input type="number" min="0.01" step="0.1" name="take_profit_pct" id="cfgTakeProfitPct" placeholder="1.5" />
+                    </label>
+                    <label>Max Hold Bars
+                      <input type="number" min="1" step="1" name="max_hold_bars" id="cfgMaxHoldBars" placeholder="10" />
                     </label>
                     <label>Include in Run All
                       <select name="include_in_run_all" id="cfgInclude">
@@ -1058,6 +1093,12 @@ def create_app() -> "Flask":
                     <label id="allFixedStopWrap">Fixed Stop Loss %
                       <input type="number" min="0.01" step="0.1" name="fixed_stop_pct" id="allFixedStopPct" placeholder="2.0" />
                     </label>
+                    <label>Take Profit %
+                      <input type="number" min="0.01" step="0.1" name="take_profit_pct" id="allTakeProfitPct" placeholder="No change" />
+                    </label>
+                    <label>Max Hold Bars
+                      <input type="number" min="1" step="1" name="max_hold_bars" id="allMaxHoldBars" placeholder="No change" />
+                    </label>
                     <label>Include in Run All
                       <select name="include_in_run_all" id="allInclude">
                         <option value="">No change</option>
@@ -1108,6 +1149,8 @@ def create_app() -> "Flask":
                 document.getElementById("cfgSellThreshold").value = card.dataset.sell || "0.40";
                 document.getElementById("cfgStopLossStrategy").value = card.dataset.stopLoss || "none";
                 document.getElementById("cfgFixedStopPct").value = card.dataset.fixedStop || "2.0";
+                document.getElementById("cfgTakeProfitPct").value = card.dataset.takeProfit || "";
+                document.getElementById("cfgMaxHoldBars").value = card.dataset.maxHold || "";
                 document.getElementById("cfgInclude").value = card.dataset.include || "1";
                 toggleCfgFixedStop();
                 settingsModal.style.display = "flex";
@@ -1140,6 +1183,8 @@ def create_app() -> "Flask":
                 document.getElementById("allSellThreshold").value = "";
                 document.getElementById("allStopLossStrategy").value = "";
                 document.getElementById("allFixedStopPct").value = "";
+                document.getElementById("allTakeProfitPct").value = "";
+                document.getElementById("allMaxHoldBars").value = "";
                 document.getElementById("allInclude").value = "";
                 toggleAllFixedStop();
                 allSettingsModal.style.display = "flex";
@@ -1267,6 +1312,8 @@ def create_app() -> "Flask":
         present_model = request.form.get("present_model", "__new__")
         present_stop_loss_strategy_raw = request.form.get("present_stop_loss_strategy", StopLossStrategy.NONE.value).strip()
         present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", "2.0").strip()
+        present_take_profit_pct_raw = request.form.get("present_take_profit_pct", "").strip()
+        present_max_hold_bars_raw = request.form.get("present_max_hold_bars", "").strip()
         prediction_horizon_raw = request.form.get("prediction_horizon", "5").strip()
         split_style = request.form.get("split_style", "shuffled")
         evaluation_split_raw = request.form.get("evaluation_split", "").strip()
@@ -1293,6 +1340,8 @@ def create_app() -> "Flask":
                     present_fixed_stop_pct = 2.0
                     if present_stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         present_fixed_stop_pct = validate_fixed_stop_pct(float(present_fixed_stop_pct_raw or "2.0"))
+                    present_take_profit_pct = 0.0 if not present_take_profit_pct_raw else validate_take_profit_pct(float(present_take_profit_pct_raw))
+                    present_max_hold_bars = 0 if not present_max_hold_bars_raw else validate_max_hold_bars(int(present_max_hold_bars_raw))
                     dataset, provider_notice = fetch_market_rows(
                         ticker=present_ticker,
                         interval=present_interval,
@@ -1433,6 +1482,8 @@ def create_app() -> "Flask":
               <label>SELL threshold<input type="number" min="0" max="1" step="0.01" name="present_sell_threshold" value="{present_sell_raw}" placeholder="0.40" /></label>
               <label>Stop Loss Strategy<select name="present_stop_loss_strategy"><option value="none" {"selected" if present_stop_loss_strategy_raw == "none" else ""}>None</option><option value="atr" {"selected" if present_stop_loss_strategy_raw == "atr" else ""}>ATR</option><option value="model_invalidation" {"selected" if present_stop_loss_strategy_raw == "model_invalidation" else ""}>Model Invalidation</option><option value="time_decay" {"selected" if present_stop_loss_strategy_raw == "time_decay" else ""}>Time Decay</option><option value="fixed_percentage" {"selected" if present_stop_loss_strategy_raw == "fixed_percentage" else ""}>Fixed Percentage</option><option value="trailing_stop" {"selected" if present_stop_loss_strategy_raw == "trailing_stop" else ""}>Trailing Stop</option></select></label>
               <label>Fixed Stop %<input type="number" min="0.01" step="any" name="present_fixed_stop_pct" value="{present_fixed_stop_pct_raw}" /></label>
+              <label>Take Profit %<input type="number" min="0.01" step="0.1" name="present_take_profit_pct" value="{present_take_profit_pct_raw}" placeholder="1.5" /></label>
+              <label>Max Hold Bars<input type="number" min="1" step="1" name="present_max_hold_bars" value="{present_max_hold_bars_raw}" placeholder="10" /></label>
               <label>&nbsp;<button type="submit">Run Model</button></label>
             </div>
           </form>
@@ -1581,6 +1632,8 @@ def create_app() -> "Flask":
         model_name = request.form.get("model_name", "").strip()
         stop_loss_strategy_raw = request.form.get("stop_loss_strategy", StopLossStrategy.NONE.value).strip()
         fixed_stop_pct_raw = request.form.get("fixed_stop_pct", "2.0").strip()
+        take_profit_pct_raw = request.form.get("take_profit_pct", "").strip()
+        max_hold_bars_raw = request.form.get("max_hold_bars", "").strip()
         selected_model = request.form.get("selected_model", "__new__")
         use_manual_weights_raw = request.form.get("use_manual_weights", "no").strip().lower()
         manual_weights_json = request.form.get("manual_feature_weights", "").strip()
@@ -1598,6 +1651,8 @@ def create_app() -> "Flask":
         present_model = request.form.get("present_model", selected_model)
         present_stop_loss_strategy_raw = request.form.get("present_stop_loss_strategy", stop_loss_strategy_raw).strip()
         present_fixed_stop_pct_raw = request.form.get("present_fixed_stop_pct", fixed_stop_pct_raw).strip()
+        present_take_profit_pct_raw = request.form.get("present_take_profit_pct", take_profit_pct_raw).strip()
+        present_max_hold_bars_raw = request.form.get("present_max_hold_bars", max_hold_bars_raw).strip()
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
         evaluate_historical_only = train_action == "evaluate_historical"
@@ -1714,6 +1769,8 @@ def create_app() -> "Flask":
                             model_name = str(form_state.get("model_name", model_name))
                             stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                             fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                            take_profit_pct_raw = str(form_state.get("take_profit_pct", take_profit_pct_raw))
+                            max_hold_bars_raw = str(form_state.get("max_hold_bars", max_hold_bars_raw))
                             data_provider = str(form_state.get("data_provider", data_provider)).strip().lower()
                             dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
                             prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
@@ -1746,6 +1803,8 @@ def create_app() -> "Flask":
                         model_name = str(form_state.get("model_name", model_name))
                         stop_loss_strategy_raw = str(form_state.get("stop_loss_strategy", stop_loss_strategy_raw))
                         fixed_stop_pct_raw = str(form_state.get("fixed_stop_pct", fixed_stop_pct_raw))
+                        take_profit_pct_raw = str(form_state.get("take_profit_pct", take_profit_pct_raw))
+                        max_hold_bars_raw = str(form_state.get("max_hold_bars", max_hold_bars_raw))
                         dqn_episodes_raw = str(form_state.get("dqn_episodes", dqn_episodes_raw))
                         prediction_horizon_raw = str(form_state.get("prediction_horizon", prediction_horizon_raw))
                         use_manual_weights_raw = str(form_state.get("use_manual_weights", use_manual_weights_raw)).strip().lower()
@@ -1842,7 +1901,16 @@ def create_app() -> "Flask":
                     fixed_stop_pct = 2.0
                     if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
                         fixed_stop_pct = validate_fixed_stop_pct(float(fixed_stop_pct_raw or "2.0"))
-                    stop_loss_config = StopLossConfig(strategy=stop_loss_strategy, fixed_pct=fixed_stop_pct, model_mae=MODEL_MAE_DEFAULT, time_decay_bars=25)
+                    take_profit_pct = 0.0 if not take_profit_pct_raw else validate_take_profit_pct(float(take_profit_pct_raw))
+                    max_hold_bars = 0 if not max_hold_bars_raw else validate_max_hold_bars(int(max_hold_bars_raw))
+                    stop_loss_config = StopLossConfig(
+                        strategy=stop_loss_strategy,
+                        fixed_pct=fixed_stop_pct,
+                        take_profit_pct=take_profit_pct,
+                        max_hold_bars=max_hold_bars,
+                        model_mae=MODEL_MAE_DEFAULT,
+                        time_decay_bars=25,
+                    )
                     if split_style not in ("shuffled", "chronological"):
                         raise ValueError("Split style must be either shuffled (legacy) or chronological (time-aware).")
                     if evaluation_split_raw == "":
@@ -1931,6 +1999,8 @@ def create_app() -> "Flask":
                                         "sell_threshold": sell_threshold,
                                         "stop_loss_strategy": stop_loss_strategy.value,
                                         "fixed_stop_pct": fixed_stop_pct,
+                                        "take_profit_pct": take_profit_pct,
+                                        "max_hold_bars": max_hold_bars,
                                         "prediction_horizon": prediction_horizon,
                                     }
                                 multi_rows.append(
@@ -2096,6 +2166,8 @@ def create_app() -> "Flask":
                                     "sell_threshold": sell_threshold,
                                     "stop_loss_strategy": stop_loss_strategy.value,
                                     "fixed_stop_pct": fixed_stop_pct,
+                                    "take_profit_pct": take_profit_pct,
+                                    "max_hold_bars": max_hold_bars,
                                     "prediction_horizon": prediction_horizon,
                                 }
                                 save_model_configs(mode_key, model_configs)
@@ -2463,6 +2535,8 @@ def create_app() -> "Flask":
                                 "model_name": model_name,
                                 "stop_loss_strategy": stop_loss_strategy_raw,
                                 "fixed_stop_pct": fixed_stop_pct_raw,
+                                "take_profit_pct": take_profit_pct_raw,
+                                "max_hold_bars": max_hold_bars_raw,
                                 "data_provider": data_provider,
                                 "dqn_episodes": dqn_episodes_raw,
                                 "prediction_horizon": prediction_horizon_raw,
@@ -2971,6 +3045,12 @@ def create_app() -> "Flask":
               </label>
               <label id="fixedStopLossWrap">Fixed Stop Loss %:
                 <input type="number" min="0.01" step="any" name="fixed_stop_pct" value="{fixed_stop_pct_raw}" placeholder="2.0" />
+              </label>
+              <label>Take Profit %:
+                <input type="number" min="0.01" step="0.1" name="take_profit_pct" value="{take_profit_pct_raw}" placeholder="1.5" />
+              </label>
+              <label>Max Hold Bars:
+                <input type="number" min="1" step="1" name="max_hold_bars" value="{max_hold_bars_raw}" placeholder="10" />
               </label>
               <label>Monte Carlo:
                 <select name="monte_carlo_method">
