@@ -49,9 +49,11 @@ FeatureSet = Literal[
     "open15_orb_intraday",
     "open15_vwap_reclaim_intraday",
     "open15_trend_momentum_daytrade",
+    "open15_trend_momentum_daytrade_active",
     "open15_dual_breakout_daytrade",
     "open15_dual_breakout_daytrade_plus",
     "open15_dual_breakout_daytrade_scalp",
+    "adaptive_opening_range_momentum_daytrade",
     "vwap_momentum_trend_5m_conservative",
     "vwap_momentum_trend_5m_pullback",
     "hybrid_sharpe_core",
@@ -143,6 +145,14 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
     ):
         return "open15_trend_momentum_daytrade"
     if value in (
+        "open15_trend_momentum_daytrade_active",
+        "open15-trend-momentum-daytrade-active",
+        "open15_momentum_daytrade_active",
+        "open15_active",
+        "first15_trend_momentum_active",
+    ):
+        return "open15_trend_momentum_daytrade_active"
+    if value in (
         "open15_dual_breakout_daytrade",
         "open15-dual-breakout-daytrade",
         "open15_dual_breakout",
@@ -166,6 +176,14 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "first15_dual_breakout_scalp",
     ):
         return "open15_dual_breakout_daytrade_scalp"
+    if value in (
+        "adaptive_opening_range_momentum_daytrade",
+        "adaptive-opening-range-momentum-daytrade",
+        "adaptive_opening_range",
+        "open5_15_20_adaptive",
+        "adaptive_open_momentum",
+    ):
+        return "adaptive_opening_range_momentum_daytrade"
     if value in (
         "vwap_momentum_trend_5m_conservative",
         "vwap-momentum-trend-5m-conservative",
@@ -688,6 +706,44 @@ def build_open15_trend_momentum_daytrade_strategy_features() -> StrategyFeatureB
     return builder
 
 
+def build_open15_trend_momentum_daytrade_active_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    builder = StrategyFeatureBuilder()
+    # Keep the same open-15 structure but allow more intraday entries when momentum stays healthy.
+    builder.add("post_opening_range_window_15m", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("opening_range_breakout_up_15m", lambda r: g(r, "opening_range_breakout_up_15m"))
+    builder.add("opening_range_breakdown_15m", lambda r: g(r, "opening_range_breakdown_15m"))
+    builder.add("opening_range_width_pct_15m", lambda r: g(r, "opening_range_width_pct_15m"))
+    builder.add("price_vs_opening_range_high_15m", lambda r: g(r, "price_vs_opening_range_high_15m"))
+    builder.add("price_vs_opening_range_low_15m", lambda r: g(r, "price_vs_opening_range_low_15m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema3_slope", lambda r: g(r, "ema3_derivative_1"))
+    builder.add("ema9_slope", lambda r: g(r, "ema9_derivative_1"))
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("session_trend_pressure", lambda r: g(r, "ret_1") + g(r, "ret_3"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("bars_remaining_in_session_5m", lambda r: g(r, "bars_remaining_in_session_5m"))
+    builder.add("trade_count_today", lambda r: g(r, "trade_count_today"))
+    builder.add("trades_remaining_cap_4", lambda r: max(0.0, 4.0 - g(r, "trade_count_today")))
+    builder.add("third_plus_trade_requires_trend_health", lambda r: (1.0 if g(r, "trade_count_today") <= 2.0 else 0.0) * max(0.0, g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1")))
+    builder.add("avoid_overnight_bias", lambda r: 1.0 - min(1.0, g(r, "near_session_close_5m")))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    builder.add("open15_breakout_strength_atr", lambda r: max(0.0, g(r, "price_vs_opening_range_high_15m") / atr_guard(r)))
+    builder.add("open15_breakdown_strength_atr", lambda r: max(0.0, -g(r, "price_vs_opening_range_low_15m") / atr_guard(r)))
+    return builder
+
+
 def build_open15_dual_breakout_daytrade_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -857,6 +913,53 @@ def build_vwap_momentum_trend_5m_pullback_strategy_features() -> StrategyFeature
     builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
     builder.add("stoch_velocity", lambda r: g(r, "stoch_velocity"))
     builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
+def build_adaptive_opening_range_momentum_daytrade_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    def open5_ready(row: Row) -> float:
+        return 1.0 if g(row, "session_bar_index_5m") >= 1.0 else 0.0
+
+    def open20_ready(row: Row) -> float:
+        return 1.0 if g(row, "session_bar_index_5m") >= 4.0 else 0.0
+
+    builder = StrategyFeatureBuilder()
+    # Adaptive open window confidence proxy: early (5m), standard (15m), and delayed confirmation (20m).
+    builder.add("session_bar_index_5m", lambda r: g(r, "session_bar_index_5m"))
+    builder.add("open5_ready_flag", lambda r: open5_ready(r))
+    builder.add("open15_ready_flag", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("open20_ready_flag", lambda r: open20_ready(r))
+    builder.add("opening_range_breakout_up_15m", lambda r: g(r, "opening_range_breakout_up_15m"))
+    builder.add("opening_range_breakdown_15m", lambda r: g(r, "opening_range_breakdown_15m"))
+    builder.add("opening_range_width_pct_15m", lambda r: g(r, "opening_range_width_pct_15m"))
+    builder.add("opening_range_position_pct_15m", lambda r: g(r, "opening_range_position_pct_15m"))
+    builder.add("price_vs_opening_range_high_15m", lambda r: g(r, "price_vs_opening_range_high_15m"))
+    builder.add("price_vs_opening_range_low_15m", lambda r: g(r, "price_vs_opening_range_low_15m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_reversion_signal_5m"))
+    builder.add("vwap_reclaim_long_signal_5m", lambda r: g(r, "vwap_reclaim_long_signal_5m"))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("session_trend_pressure", lambda r: g(r, "ret_1") + g(r, "ret_3"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("bars_remaining_in_session_5m", lambda r: g(r, "bars_remaining_in_session_5m"))
+    builder.add("trade_count_today", lambda r: g(r, "trade_count_today"))
+    builder.add("trades_remaining_cap_3", lambda r: max(0.0, 3.0 - g(r, "trade_count_today")))
+    builder.add("avoid_overnight_bias", lambda r: 1.0 - min(1.0, g(r, "near_session_close_5m")))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    builder.add("breakout_strength_atr", lambda r: max(0.0, g(r, "price_vs_opening_range_high_15m") / atr_guard(r)))
+    builder.add("breakdown_strength_atr", lambda r: max(0.0, -g(r, "price_vs_opening_range_low_15m") / atr_guard(r)))
     return builder
 
 
@@ -1149,12 +1252,16 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_open15_vwap_reclaim_intraday_strategy_features()
     if normalized == "open15_trend_momentum_daytrade":
         return build_open15_trend_momentum_daytrade_strategy_features()
+    if normalized == "open15_trend_momentum_daytrade_active":
+        return build_open15_trend_momentum_daytrade_active_strategy_features()
     if normalized == "open15_dual_breakout_daytrade":
         return build_open15_dual_breakout_daytrade_strategy_features()
     if normalized == "open15_dual_breakout_daytrade_plus":
         return build_open15_dual_breakout_daytrade_plus_strategy_features()
     if normalized == "open15_dual_breakout_daytrade_scalp":
         return build_open15_dual_breakout_daytrade_scalp_strategy_features()
+    if normalized == "adaptive_opening_range_momentum_daytrade":
+        return build_adaptive_opening_range_momentum_daytrade_strategy_features()
     if normalized == "vwap_momentum_trend_5m_conservative":
         return build_vwap_momentum_trend_5m_conservative_strategy_features()
     if normalized == "vwap_momentum_trend_5m_pullback":
@@ -1219,6 +1326,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "open15_vwap_reclaim_intraday"
     if isinstance(names, list) and "trades_remaining_cap_2" in names and "open15_breakout_strength_atr" in names:
         return "open15_trend_momentum_daytrade"
+    if isinstance(names, list) and "trades_remaining_cap_4" in names and "third_plus_trade_requires_trend_health" in names:
+        return "open15_trend_momentum_daytrade_active"
     if isinstance(names, list) and "second_trade_only_if_trend_intact" in names and "momentum_alignment" in names:
         return "open15_dual_breakout_daytrade"
     if isinstance(names, list) and "third_trade_only_if_reclaim_valid" in names and "trades_remaining_cap_3" in names:
@@ -1229,6 +1338,8 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_momentum_trend_5m_conservative"
     if isinstance(names, list) and "trades_remaining_cap_3" in names and "vwap_reclaim_long_signal_5m" in names:
         return "vwap_momentum_trend_5m_pullback"
+    if isinstance(names, list) and "open5_ready_flag" in names and "open20_ready_flag" in names:
+        return "adaptive_opening_range_momentum_daytrade"
     if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:
         return "vwap_intraday_reversion"
     if isinstance(names, list) and "vwap_breakout_strength" in names and "vwap_breakdown_strength" in names:

@@ -297,6 +297,26 @@ def test_open15_trend_momentum_daytrade_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_open15_trend_momentum_daytrade_active_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open15_active") == "open15_trend_momentum_daytrade_active"
+    builder = get_strategy_feature_builder("open15_trend_momentum_daytrade_active")
+    names = builder.names()
+    expected = {
+        "post_opening_range_window_15m",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "price_vs_session_vwap_5m",
+        "session_vwap_delta_5m",
+        "ema_slope_alignment",
+        "trade_count_today",
+        "trades_remaining_cap_4",
+        "third_plus_trade_requires_trend_health",
+        "avoid_overnight_bias",
+        "open15_breakout_strength_atr",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_open15_dual_breakout_daytrade_feature_set_is_supported() -> None:
     assert normalize_feature_set("open15_breakout_followthrough") == "open15_dual_breakout_daytrade"
     builder = get_strategy_feature_builder("open15_dual_breakout_daytrade")
@@ -320,6 +340,26 @@ def test_open15_dual_breakout_daytrade_feature_set_is_supported() -> None:
         "trade_count_today",
         "second_trade_only_if_trend_intact",
         "avoid_overnight_bias",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_adaptive_opening_range_momentum_daytrade_feature_set_is_supported() -> None:
+    assert normalize_feature_set("open5_15_20_adaptive") == "adaptive_opening_range_momentum_daytrade"
+    builder = get_strategy_feature_builder("adaptive_opening_range_momentum_daytrade")
+    names = builder.names()
+    expected = {
+        "session_bar_index_5m",
+        "open5_ready_flag",
+        "open15_ready_flag",
+        "open20_ready_flag",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "session_vwap_reversion_signal_5m",
+        "vwap_reclaim_long_signal_5m",
+        "trades_remaining_cap_3",
+        "avoid_overnight_bias",
+        "breakout_strength_atr",
     }
     assert expected.issubset(set(names))
 
