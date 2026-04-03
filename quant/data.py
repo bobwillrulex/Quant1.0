@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+from math import ceil
 from datetime import datetime, timedelta, timezone
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -400,18 +401,16 @@ def compute_strategy_rows_from_prices(
 def fetch_yahoo_rows(ticker: str, interval: str, row_count: int, prediction_horizon: int = 5) -> List[Row]:
     import yfinance as yf
 
-    interval_periods = {"1d": ["1y", "5y", "10y", "max"], "1h": ["730d"], "15m": ["60d"], "5m": ["60d"]}
-    if interval not in interval_periods:
+    if interval not in ("1d", "1h", "15m", "5m"):
         raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
     if row_count < 50:
         raise ValueError("Please request at least 50 rows.")
     ticker_obj = yf.Ticker(ticker)
-    rows: List[Row] = []
-    best_rows: List[Row] = []
-    for period in interval_periods[interval]:
-        history = ticker_obj.history(period=period, interval=interval, auto_adjust=False)
+    target_candles = row_count + prediction_horizon + 60
+    if interval == "1d":
+        history = ticker_obj.history(period="max", interval=interval, auto_adjust=False)
         if history.empty:
-            continue
+            raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
         highs = [float(v) for v in history["High"].tolist()]
         lows = [float(v) for v in history["Low"].tolist()]
         closes = [float(v) for v in history["Close"].tolist()]
@@ -423,13 +422,45 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int, prediction_hori
             prediction_horizon=prediction_horizon,
             timestamps=timestamps,
         )
-        if len(rows) > len(best_rows):
-            best_rows = rows
-        if len(rows) >= row_count:
-            return rows[-row_count:]
-    if not best_rows:
+        return rows[-row_count:] if len(rows) >= row_count else rows
+    lookback_days = _target_lookback_days(interval=interval, row_count=target_candles)
+    chunk_days = {"1h": 365, "15m": 59, "5m": 59}[interval]
+    now = datetime.now(timezone.utc)
+    all_candles: dict[str, tuple[float, float, float]] = {}
+    for days_back in range(0, lookback_days + chunk_days, chunk_days):
+        end_dt = now - timedelta(days=days_back)
+        start_dt = max(now - timedelta(days=lookback_days), end_dt - timedelta(days=chunk_days))
+        if start_dt >= end_dt:
+            continue
+        history = ticker_obj.history(
+            start=start_dt.strftime("%Y-%m-%d"),
+            end=end_dt.strftime("%Y-%m-%d"),
+            interval=interval,
+            auto_adjust=False,
+        )
+        if history.empty:
+            continue
+        highs = [float(v) for v in history["High"].tolist()]
+        lows = [float(v) for v in history["Low"].tolist()]
+        closes = [float(v) for v in history["Close"].tolist()]
+        timestamps = [str(v) for v in history.index.tolist()]
+        for ts, high, low, close in zip(timestamps, highs, lows, closes):
+            all_candles[ts] = (high, low, close)
+    if not all_candles:
         raise ValueError(f"No Yahoo Finance data returned for ticker '{ticker}'.")
-    return best_rows
+    ordered = sorted(all_candles.items(), key=lambda item: item[0])
+    highs = [item[1][0] for item in ordered]
+    lows = [item[1][1] for item in ordered]
+    closes = [item[1][2] for item in ordered]
+    timestamps = [item[0] for item in ordered]
+    rows = compute_strategy_rows_from_prices(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        prediction_horizon=prediction_horizon,
+        timestamps=timestamps,
+    )
+    return rows[-row_count:] if len(rows) >= row_count else rows
 
 
 def _twelve_interval(interval: str) -> str:
@@ -450,32 +481,52 @@ def _ticker_is_unavailable_for_twelve_data(ticker: str) -> bool:
 def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: str, prediction_horizon: int = 5) -> List[Row]:
     if row_count < 50:
         raise ValueError("Please request at least 50 rows.")
-    query = urlencode(
-        {
+    per_page = 5000
+    target_candles = row_count + prediction_horizon + 60
+    values_by_timestamp: dict[str, dict[str, str]] = {}
+    end_at: datetime | None = None
+    for _ in range(12):
+        params = {
             "symbol": ticker,
             "interval": _twelve_interval(interval),
-            "outputsize": min(5000, max(50, row_count + 100)),
-            "order": "asc",
+            "outputsize": per_page,
+            "order": "desc",
             "timezone": "Exchange",
             "apikey": api_key,
         }
-    )
-    endpoint = f"https://api.twelvedata.com/time_series?{query}"
-    try:
-        with urlopen(endpoint, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except URLError as exc:
-        raise ValueError(f"Twelve Data request failed: {exc}") from exc
-    if payload.get("status") == "error":
-        message = str(payload.get("message", "Unknown Twelve Data API error"))
-        raise ValueError(message)
-    values = payload.get("values")
-    if not isinstance(values, list) or not values:
+        if end_at is not None:
+            params["end_date"] = end_at.strftime("%Y-%m-%d %H:%M:%S")
+        query = urlencode(params)
+        endpoint = f"https://api.twelvedata.com/time_series?{query}"
+        try:
+            with urlopen(endpoint, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except URLError as exc:
+            raise ValueError(f"Twelve Data request failed: {exc}") from exc
+        if payload.get("status") == "error":
+            message = str(payload.get("message", "Unknown Twelve Data API error"))
+            raise ValueError(message)
+        values = payload.get("values")
+        if not isinstance(values, list) or not values:
+            break
+        for item in values:
+            timestamp = str(item.get("datetime", "")).strip()
+            if timestamp:
+                values_by_timestamp[timestamp] = item
+        oldest = str(values[-1].get("datetime", "")).strip()
+        if len(values) < per_page or not oldest:
+            break
+        oldest_dt = _parse_vendor_datetime(oldest)
+        end_at = oldest_dt - timedelta(seconds=1)
+        if len(values_by_timestamp) >= target_candles:
+            break
+    if not values_by_timestamp:
         raise ValueError("Twelve Data returned no candles.")
-    highs = [float(item["high"]) for item in values]
-    lows = [float(item["low"]) for item in values]
-    closes = [float(item["close"]) for item in values]
-    timestamps = [str(point.get("datetime", "")) for point in values]
+    ordered_values = [values_by_timestamp[key] for key in sorted(values_by_timestamp)]
+    highs = [float(item["high"]) for item in ordered_values]
+    lows = [float(item["low"]) for item in ordered_values]
+    closes = [float(item["close"]) for item in ordered_values]
+    timestamps = [str(point.get("datetime", "")) for point in ordered_values]
     rows = compute_strategy_rows_from_prices(
         highs=highs,
         lows=lows,
@@ -497,31 +548,48 @@ def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str,
     if row_count < 50:
         raise ValueError("Please request at least 50 rows.")
     multiplier, timespan = _massive_interval(interval)
-    range_days = {"1d": 3650, "1h": 730, "15m": 90, "5m": 60}
+    range_days = {
+        "1d": max(3650, _target_lookback_days(interval="1d", row_count=row_count + prediction_horizon + 60)),
+        "1h": max(730, _target_lookback_days(interval="1h", row_count=row_count + prediction_horizon + 60)),
+        "15m": max(730, _target_lookback_days(interval="15m", row_count=row_count + prediction_horizon + 60)),
+        "5m": max(730, _target_lookback_days(interval="5m", row_count=row_count + prediction_horizon + 60)),
+    }
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=range_days[interval])
-    query = urlencode(
+    base_query = urlencode(
         {
             "adjusted": "true",
             "sort": "asc",
-            "limit": min(50000, max(500, row_count + 150)),
+            "limit": 50000,
             "apiKey": api_key,
         }
     )
     endpoint = (
         "https://api.polygon.io/v2/aggs/ticker/"
-        f"{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{now.date().isoformat()}?{query}"
+        f"{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{now.date().isoformat()}?{base_query}"
     )
-    try:
-        with urlopen(endpoint, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except URLError as exc:
-        raise ValueError(f"Massive request failed: {exc}") from exc
-    if payload.get("status") == "ERROR":
-        message = str(payload.get("error", "Unknown Massive API error"))
-        raise ValueError(message)
-    values = payload.get("results")
-    if not isinstance(values, list) or not values:
+    values: list[dict[str, object]] = []
+    next_url: str | None = endpoint
+    target_candles = row_count + prediction_horizon + 60
+    for _ in range(12):
+        if not next_url:
+            break
+        page_url = next_url if "apiKey=" in next_url else f"{next_url}&apiKey={api_key}"
+        try:
+            with urlopen(page_url, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except URLError as exc:
+            raise ValueError(f"Massive request failed: {exc}") from exc
+        if payload.get("status") == "ERROR":
+            message = str(payload.get("error", "Unknown Massive API error"))
+            raise ValueError(message)
+        page_values = payload.get("results")
+        if isinstance(page_values, list) and page_values:
+            values.extend(page_values)
+        next_url = payload.get("next_url")
+        if not page_values or len(values) >= target_candles:
+            break
+    if not values:
         raise ValueError("Massive returned no candles.")
     highs = [float(item["h"]) for item in values]
     lows = [float(item["l"]) for item in values]
@@ -535,6 +603,26 @@ def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str,
         timestamps=timestamps,
     )
     return rows[-row_count:] if len(rows) >= row_count else rows
+
+
+def _target_lookback_days(interval: str, row_count: int) -> int:
+    bars_per_trading_day = {"1d": 1, "1h": 7, "15m": 26, "5m": 78}
+    minimum_days = {"1d": 3650, "1h": 730, "15m": 730, "5m": 730}
+    if interval not in bars_per_trading_day:
+        raise ValueError("Interval must be one of: 1d, 1h, 15m, 5m")
+    trading_days = ceil(max(1, row_count) / bars_per_trading_day[interval])
+    estimated_calendar_days = int(trading_days * 1.6) + 30
+    return max(minimum_days[interval], estimated_calendar_days)
+
+
+def _parse_vendor_datetime(value: str) -> datetime:
+    normalized = value.strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unsupported vendor datetime format: {value}")
 
 
 def fetch_market_rows(
