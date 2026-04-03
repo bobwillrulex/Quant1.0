@@ -54,6 +54,8 @@ class StopLossUITests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn('id="cfgFixedStopPct"', html)
+        self.assertIn('id="cfgTakeProfitPct"', html)
+        self.assertIn('id="cfgMaxHoldBars"', html)
         self.assertIn("fixedStopInput.disabled = !isFixed;", html)
         self.assertIn("Edit all model presets", html)
         self.assertIn('value="save_all_configs"', html)
@@ -61,6 +63,8 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn("Leave fields blank to keep existing values unchanged.", html)
         self.assertIn('id="allTicker"', html)
         self.assertIn('id="allRows"', html)
+        self.assertIn('id="allTakeProfitPct"', html)
+        self.assertIn('id="allMaxHoldBars"', html)
         self.assertIn('option value="">No change</option>', html)
         self.assertIn('document.getElementById("allTicker").value = "";', html)
 

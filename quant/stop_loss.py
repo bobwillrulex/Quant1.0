@@ -20,6 +20,8 @@ MODEL_MAE_DEFAULT = 0.0547
 class StopLossConfig:
     strategy: StopLossStrategy = StopLossStrategy.NONE
     fixed_pct: float = 2.0
+    take_profit_pct: float = 0.0
+    max_hold_bars: int = 0
     atr_multiplier: float = 1.5
     model_mae: float = MODEL_MAE_DEFAULT
     time_decay_bars: int = 25
@@ -38,6 +40,20 @@ def validate_fixed_stop_pct(value: float) -> float:
     if pct <= 0:
         raise ValueError("Fixed stop-loss percent must be > 0.")
     return pct
+
+
+def validate_take_profit_pct(value: float) -> float:
+    pct = float(value)
+    if pct <= 0:
+        raise ValueError("Take-profit percent must be > 0.")
+    return pct
+
+
+def validate_max_hold_bars(value: int) -> int:
+    bars = int(value)
+    if bars <= 0:
+        raise ValueError("Max hold bars must be >= 1.")
+    return bars
 
 
 def stop_loss_price(

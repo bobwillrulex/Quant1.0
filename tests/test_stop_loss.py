@@ -260,6 +260,38 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(metrics["total_return"]), -0.003, places=6)
 
+    def test_take_profit_exit_triggers_when_target_is_hit(self):
+        returns = [0.0, 0.0, 0.03, 0.0]
+        probs = [0.9, 0.9, 0.9, 0.9]
+        expected = [0.01] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE, take_profit_pct=2.0),
+        )
+        self.assertGreaterEqual(metrics["take_profit_exits"], 1.0)
+
+    def test_max_hold_exit_triggers_when_bar_limit_reached(self):
+        returns = [0.0, 0.001, 0.001, 0.001, 0.001]
+        probs = [0.9] * len(returns)
+        expected = [0.01] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE, max_hold_bars=2),
+        )
+        self.assertGreaterEqual(metrics["max_hold_exits"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
