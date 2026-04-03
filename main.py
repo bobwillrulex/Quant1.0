@@ -654,6 +654,32 @@ def render_distribution_histogram(values: list[float], *, stroke: str = "#8ca0bf
     )
 
 
+MOBILE_USER_AGENT_TOKENS = (
+    "android",
+    "iphone",
+    "ipad",
+    "ipod",
+    "mobile",
+    "blackberry",
+    "opera mini",
+    "iemobile",
+    "windows phone",
+)
+
+
+def is_mobile_request(request: object) -> bool:
+    explicit_mode = getattr(request, "args", {}).get("ui", "").strip().lower()
+    if explicit_mode in {"mobile", "m"}:
+        return True
+    if explicit_mode in {"desktop", "d"}:
+        return False
+    ua = str(getattr(request, "headers", {}).get("User-Agent", "")).lower()
+    if any(token in ua for token in MOBILE_USER_AGENT_TOKENS):
+        return True
+    sec_mobile = str(getattr(request, "headers", {}).get("Sec-CH-UA-Mobile", "")).strip()
+    return sec_mobile == "?1"
+
+
 def create_app() -> "Flask":
     from flask import Flask, redirect, request, url_for
 
@@ -663,6 +689,7 @@ def create_app() -> "Flask":
     @app.route("/spot/manage-models", methods=["GET", "POST"])
     def manage_models() -> str:
         is_spot = request.path.startswith("/spot")
+        is_mobile_ui = is_mobile_request(request)
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
@@ -693,6 +720,7 @@ def create_app() -> "Flask":
         theme_link = "#e5c46a" if is_spot else "#d6d9df"
         theme_secondary_bg = "#312511" if is_spot else "#2a3342"
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
+        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
         message_html = ""
         error_html = ""
         model_configs = load_model_configs(mode_key)
@@ -869,8 +897,11 @@ def create_app() -> "Flask":
 
         return f"""
         <html>
-          <head><title>Manage Models</title></head>
-          <body>
+          <head>
+            <title>Manage Models</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+          </head>
+          <body class="{'mobile-ui' if is_mobile_ui else 'desktop-ui'}">
             <style>
               :root {{
                 --bg: {theme_bg};
@@ -889,6 +920,7 @@ def create_app() -> "Flask":
               .brand {{ font-weight: 700; color: {theme_brand}; text-decoration: none; margin-right: auto; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
+              .ui-mode-badge {{ margin-left: auto; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
               .models-toolbar {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
@@ -925,6 +957,16 @@ def create_app() -> "Flask":
               .row-actions button {{ border: none; border-radius: 10px; padding: 0.62rem 0.65rem; cursor: pointer; font-weight: 600; }}
               .primary {{ background: var(--accent); color: #ffffff; }}
               .secondary {{ background: {theme_secondary_bg}; color: {theme_secondary_text}; border: 1px solid var(--border); }}
+              body.mobile-ui .container {{ padding: 1rem 0.75rem; }}
+              body.mobile-ui .topbar-inner {{ padding: 0.7rem 0.75rem; gap: 0.5rem; flex-wrap: wrap; }}
+              body.mobile-ui .brand {{ width: 100%; margin-right: 0; }}
+              body.mobile-ui .tab-link {{ flex: 1 1 calc(50% - 0.5rem); text-align: center; }}
+              body.mobile-ui .models-toolbar {{ flex-direction: column; align-items: stretch; }}
+              body.mobile-ui .toolbar-right {{ align-items: stretch; }}
+              body.mobile-ui .models-table-wrap {{ overflow-x: auto; }}
+              body.mobile-ui .form-grid {{ grid-template-columns: 1fr; }}
+              body.mobile-ui .row-actions {{ grid-template-columns: 1fr; }}
+              body.mobile-ui #contextMenu {{ display: none !important; }}
             </style>
             <nav class="topbar">
               <div class="topbar-inner">
@@ -933,6 +975,7 @@ def create_app() -> "Flask":
                 <a href="{manage_href}" class="tab-link active">Manage Models</a>
                 <a href="{run_models_href}" class="tab-link">Run Models</a>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+                <span class="ui-mode-badge">{ui_mode_badge}</span>
               </div>
             </nav>
             <div class="container">
@@ -1035,6 +1078,10 @@ def create_app() -> "Flask":
                   <div class="row-actions">
                     <button class="primary" type="submit">Save Settings</button>
                     <button class="secondary" type="button" onclick="closeModals()">Cancel</button>
+                  </div>
+                  <div class="row-actions">
+                    <button class="secondary" type="button" onclick="openRenameFromSettings()">Rename Model</button>
+                    <button class="secondary" type="button" onclick="deleteFromSettings()">Delete Model</button>
                   </div>
                 </form>
               </div>
@@ -1175,6 +1222,13 @@ def create_app() -> "Flask":
                 menu.style.display = "none";
               }}
 
+              function openRenameFromSettings() {{
+                const activeModel = document.getElementById("cfgModelName").value || "";
+                if (!activeModel) return;
+                menuModelName = activeModel;
+                openRename();
+              }}
+
               function openAllSettings() {{
                 document.getElementById("allTicker").value = "";
                 document.getElementById("allInterval").value = "";
@@ -1207,6 +1261,13 @@ def create_app() -> "Flask":
                   document.getElementById("deleteModelName").value = menuModelName;
                   document.getElementById("deleteForm").submit();
                 }}
+              }}
+
+              function deleteFromSettings() {{
+                const activeModel = document.getElementById("cfgModelName").value || "";
+                if (!activeModel) return;
+                menuModelName = activeModel;
+                deleteModel();
               }}
 
               function deleteAllModels() {{
@@ -1271,6 +1332,7 @@ def create_app() -> "Flask":
     @app.route("/spot/run-models", methods=["GET", "POST"])
     def run_models_page() -> str:
         is_spot = request.path.startswith("/spot")
+        is_mobile_ui = is_mobile_request(request)
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
@@ -1298,6 +1360,7 @@ def create_app() -> "Flask":
         theme_surface = "#130f08" if is_spot else "#0f141e"
         theme_secondary_bg = "#312511" if is_spot else "#2a3342"
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
+        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
 
         message_html = ""
         error_html = ""
@@ -1442,7 +1505,7 @@ def create_app() -> "Flask":
             ) + "</ul></div>"
 
         return f"""
-        <html><head><title>Run Models</title></head><body>
+        <html><head><title>Run Models</title><meta name="viewport" content="width=device-width, initial-scale=1" /></head><body class="{'mobile-ui' if is_mobile_ui else 'desktop-ui'}">
         <style>
         :root {{--bg:{theme_bg};--panel:{theme_panel};--panel2:{theme_panel2};--border:{theme_border};--text:{theme_text};--muted:{theme_muted};--accent:{theme_accent};}}
         *{{box-sizing:border-box;}} body{{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;}}
@@ -1459,6 +1522,13 @@ def create_app() -> "Flask":
         .run-all-group-divider td{{padding:0;border-bottom:none;height:.35rem;}}
         details,summary{{color:var(--text);}}
         button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}} .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
+        .ui-mode-badge{{margin-left:auto;font-size:.78rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:.2rem .55rem;}}
+        body.mobile-ui .topbar-inner{{padding:.7rem .75rem;gap:.5rem;flex-wrap:wrap;}}
+        body.mobile-ui .brand{{width:100%;margin-right:0;}}
+        body.mobile-ui .tab-link{{flex:1 1 calc(50% - .5rem);text-align:center;}}
+        body.mobile-ui .container{{padding:1rem .75rem;}}
+        body.mobile-ui .form-grid{{grid-template-columns:1fr;}}
+        body.mobile-ui table{{display:block;overflow-x:auto;white-space:nowrap;}}
         </style>
         <nav class="topbar"><div class="topbar-inner">
             <a href="{home_href}" class="brand">{brand_label}</a>
@@ -1466,6 +1536,7 @@ def create_app() -> "Flask":
             <a href="{manage_href}" class="tab-link">Manage Models</a>
             <a href="{run_models_href}" class="tab-link active">Run Models</a>
             <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+            <span class="ui-mode-badge">{ui_mode_badge}</span>
         </div></nav>
         <div class="container">
           <h1>Run Models</h1>
@@ -1578,6 +1649,7 @@ def create_app() -> "Flask":
     @app.route("/spot", methods=["GET", "POST"])
     def index() -> str:
         is_spot = request.path.startswith("/spot")
+        is_mobile_ui = is_mobile_request(request)
         mode_key = SPOT_MODE if is_spot else OPTIONS_MODE
         allow_short = not is_spot
         home_href = "/spot" if is_spot else "/"
@@ -1617,6 +1689,7 @@ def create_app() -> "Flask":
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
         theme_progress_start = "#b38a2a" if is_spot else "#8f99aa"
         theme_progress_end = "#f0cf73" if is_spot else "#d4d8de"
+        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
         result_html = ""
         error_html = ""
         ticker = request.form.get("ticker", "AAPL").upper().strip()
@@ -2609,8 +2682,8 @@ def create_app() -> "Flask":
 
         return f"""
         <html>
-          <head><title>Quant Model Trainer</title></head>
-          <body>
+          <head><title>Quant Model Trainer</title><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+          <body class="{'mobile-ui' if is_mobile_ui else 'desktop-ui'}">
             <style>
               :root {{
                 --bg: {theme_bg};
@@ -2638,6 +2711,7 @@ def create_app() -> "Flask":
               .brand {{ font-weight: 700; color: {theme_brand}; text-decoration: none; margin-right: auto; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
+              .ui-mode-badge {{ margin-left: auto; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               h1, h2, h3 {{ margin-top: 0; }}
               .card {{
                 background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
@@ -2884,6 +2958,30 @@ def create_app() -> "Flask":
                 color: var(--muted);
                 font-size: 0.82rem;
               }}
+              body.mobile-ui .topbar-inner {{
+                padding: 0.7rem 0.75rem;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+              }}
+              body.mobile-ui .brand {{
+                width: 100%;
+                margin-right: 0;
+              }}
+              body.mobile-ui .tab-link {{
+                flex: 1 1 calc(50% - 0.5rem);
+                text-align: center;
+              }}
+              body.mobile-ui .container {{
+                padding: 1rem 0.75rem;
+              }}
+              body.mobile-ui .button-row {{
+                grid-template-columns: 1fr;
+              }}
+              body.mobile-ui table {{
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+              }}
               .context-menu {{
                 position: fixed;
                 z-index: 1100;
@@ -2933,6 +3031,7 @@ def create_app() -> "Flask":
                   <button type="submit" class="secondary provider-pill">Data: {provider_labels.get(data_provider, 'YFinance')}</button>
                 </form>
                 <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+                <span class="ui-mode-badge">{ui_mode_badge}</span>
               </div>
             </nav>
             <div class="container">
