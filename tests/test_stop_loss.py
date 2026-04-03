@@ -292,6 +292,24 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertGreaterEqual(metrics["max_hold_exits"], 1.0)
 
+    def test_hold_time_stats_use_closed_trades_not_position_streaks(self):
+        returns = [0.0] + [0.001] * 12
+        probs = [0.9] * len(returns)
+        expected = [0.01] * len(returns)
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE, max_hold_bars=2),
+        )
+        hold_stats = metrics["hold_time_stats"]
+        self.assertGreaterEqual(float(hold_stats["count"]), 2.0)
+        self.assertLessEqual(float(hold_stats["max"]), 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()
