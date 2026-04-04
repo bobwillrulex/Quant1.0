@@ -1806,6 +1806,8 @@ def create_app() -> "Flask":
                 "open15_dual_breakout_daytrade_scalp",
                 "vwap_momentum_trend_5m_conservative",
                 "vwap_momentum_trend_5m_pullback",
+                "vwap_volume_long_momentum_5m",
+                "vwap_volume_regime_adaptive_5m",
                 "close_hold_reversion",
                 "close_hold_momentum",
                 "new",
@@ -3141,6 +3143,8 @@ def create_app() -> "Flask":
                   <option value="open15_dual_breakout_daytrade_scalp" {"selected" if feature_set == "open15_dual_breakout_daytrade_scalp" else ""}>Open 15 Dual Breakout Scalp (up to 5/day)</option>
                   <option value="vwap_momentum_trend_5m_conservative" {"selected" if feature_set == "vwap_momentum_trend_5m_conservative" else ""}>VWAP Momentum Trend 5m (conservative, up to 4/day)</option>
                   <option value="vwap_momentum_trend_5m_pullback" {"selected" if feature_set == "vwap_momentum_trend_5m_pullback" else ""}>VWAP Momentum Trend 5m Pullback (up to 3/day)</option>
+                  <option value="vwap_volume_long_momentum_5m" {"selected" if feature_set == "vwap_volume_long_momentum_5m" else ""}>VWAP + Volume Long Momentum 5m (intraday-only long bias)</option>
+                  <option value="vwap_volume_regime_adaptive_5m" {"selected" if feature_set == "vwap_volume_regime_adaptive_5m" else ""}>VWAP + Volume Regime Adaptive 5m (trend vs mean-revert)</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
@@ -3421,6 +3425,8 @@ def create_app() -> "Flask":
                 open15_dual_breakout_daytrade_scalp: "Built for 5m day trading after first 15m: faster dual-breakout/reclaim entries with tighter momentum checks and higher turnover targeting ~1-5 trades/day.",
                 vwap_momentum_trend_5m_conservative: "Built for 5m trend continuation around VWAP: EMA slope/stack + MACD agreement, VWAP breakout strength, and daily trade cap features targeting ~0-4 trades/day.",
                 vwap_momentum_trend_5m_pullback: "Built for 5m trend pullbacks to VWAP: reclaim/reversion context + momentum re-acceleration, with strict intraday window and lower trade-frequency cap features.",
+                vwap_volume_long_momentum_5m: "Built for 5m long momentum day trades: VWAP breakout and EMA/MACD trend alignment gated by volume expansion, with explicit avoid-overnight controls.",
+                vwap_volume_regime_adaptive_5m: "Built for 5m adaptive trading: VWAP displacement + volume classify trend-vs-reversion day type, then apply regime-aware momentum/reversion context with intraday-only bias.",
               }};
 
               function parseSortValue(rawValue, sortType) {{
@@ -3740,6 +3746,8 @@ def parse_args() -> argparse.Namespace:
             "open15_dual_breakout_daytrade_scalp",
             "vwap_momentum_trend_5m_conservative",
             "vwap_momentum_trend_5m_pullback",
+            "vwap_volume_long_momentum_5m",
+            "vwap_volume_regime_adaptive_5m",
             "new",
             "legacy",
         ],

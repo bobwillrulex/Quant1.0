@@ -56,6 +56,8 @@ FeatureSet = Literal[
     "adaptive_opening_range_momentum_daytrade",
     "vwap_momentum_trend_5m_conservative",
     "vwap_momentum_trend_5m_pullback",
+    "vwap_volume_long_momentum_5m",
+    "vwap_volume_regime_adaptive_5m",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
@@ -198,6 +200,20 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "vwap_trend_pullback",
     ):
         return "vwap_momentum_trend_5m_pullback"
+    if value in (
+        "vwap_volume_long_momentum_5m",
+        "vwap-volume-long-momentum-5m",
+        "vwap_volume_long_momentum",
+        "vwap_long_momentum_5m",
+    ):
+        return "vwap_volume_long_momentum_5m"
+    if value in (
+        "vwap_volume_regime_adaptive_5m",
+        "vwap-volume-regime-adaptive-5m",
+        "vwap_volume_regime_adaptive",
+        "vwap_regime_adaptive_5m",
+    ):
+        return "vwap_volume_regime_adaptive_5m"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
     if value in (
@@ -916,6 +932,89 @@ def build_vwap_momentum_trend_5m_pullback_strategy_features() -> StrategyFeature
     return builder
 
 
+def build_vwap_volume_long_momentum_5m_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    def volume_guard(row: Row) -> float:
+        return max(1e-9, g(row, "volume_ma20", g(row, "volume", 1.0)))
+
+    builder = StrategyFeatureBuilder()
+    # Intraday-only bias and explicit same-day exit pressure.
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("bars_remaining_in_session_5m", lambda r: g(r, "bars_remaining_in_session_5m"))
+    builder.add("avoid_overnight_bias", lambda r: 1.0 - min(1.0, g(r, "near_session_close_5m")))
+    # Long-only trend context around VWAP + slope stack.
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("vwap_breakout_strength_atr", lambda r: max(0.0, (g(r, "close") - g(r, "vwap_anchor_high")) / atr_guard(r)))
+    builder.add("long_side_only_bias", lambda r: max(0.0, g(r, "close") - g(r, "session_vwap_5m")))
+    builder.add("ema3_9_spread", lambda r: g(r, "ema3") - g(r, "ema9"))
+    builder.add("ema9_21_spread", lambda r: g(r, "ema9") - g(r, "ema21"))
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    builder.add("macd_hist", lambda r: g(r, "macd_hist"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    # Volume participation filter to favor expansion moves.
+    builder.add("volume", lambda r: g(r, "volume"))
+    builder.add("volume_ma20", lambda r: g(r, "volume_ma20"))
+    builder.add("volume_spike_ratio", lambda r: g(r, "volume") / volume_guard(r))
+    builder.add("volume_trend_confirmation", lambda r: (g(r, "volume") / volume_guard(r)) * max(0.0, g(r, "ret_1")))
+    builder.add("trade_count_today", lambda r: g(r, "trade_count_today"))
+    builder.add("trades_remaining_cap_3", lambda r: max(0.0, 3.0 - g(r, "trade_count_today")))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
+def build_vwap_volume_regime_adaptive_5m_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    def volume_guard(row: Row) -> float:
+        return max(1e-9, g(row, "volume_ma20", g(row, "volume", 1.0)))
+
+    def breakout_pressure(row: Row) -> float:
+        up = max(0.0, (g(row, "close") - g(row, "vwap_anchor_high")) / atr_guard(row))
+        down = max(0.0, (g(row, "vwap_anchor_low") - g(row, "close")) / atr_guard(row))
+        return max(up, down)
+
+    def reversion_pressure(row: Row) -> float:
+        return abs(g(row, "close") - g(row, "session_vwap_5m")) / atr_guard(row)
+
+    builder = StrategyFeatureBuilder()
+    # Regime identification from VWAP displacement + participation.
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("vwap_breakout_strength", lambda r: max(0.0, (g(r, "close") - g(r, "vwap_anchor_high")) / atr_guard(r)))
+    builder.add("vwap_breakdown_strength", lambda r: max(0.0, (g(r, "vwap_anchor_low") - g(r, "close")) / atr_guard(r)))
+    builder.add("vwap_reversion_pressure", lambda r: reversion_pressure(r))
+    builder.add("breakout_pressure", lambda r: breakout_pressure(r))
+    builder.add("volume_spike_ratio", lambda r: g(r, "volume") / volume_guard(r))
+    builder.add("high_volume_regime", lambda r: 1.0 if g(r, "volume") > g(r, "volume_ma20", g(r, "volume")) else 0.0)
+    builder.add("low_volume_regime", lambda r: 1.0 if g(r, "volume") <= g(r, "volume_ma20", g(r, "volume")) else 0.0)
+    builder.add("trend_day_likelihood", lambda r: breakout_pressure(r) * (g(r, "volume") / volume_guard(r)))
+    builder.add("mean_reversion_day_likelihood", lambda r: reversion_pressure(r) * (1.0 if g(r, "volume") <= g(r, "volume_ma20", g(r, "volume")) else 0.5))
+    builder.add("regime_bias_signal", lambda r: (breakout_pressure(r) - reversion_pressure(r)) * (g(r, "volume") / volume_guard(r)))
+    # Regime-conditional momentum/reversion stack and intraday controls.
+    builder.add("ema_slope_alignment", lambda r: g(r, "ema3_derivative_1") - g(r, "ema21_derivative_1"))
+    builder.add("macd_hist_delta", lambda r: g(r, "macd_hist_delta", g(r, "macd_delta")))
+    builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_reversion_signal_5m"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("bars_remaining_in_session_5m", lambda r: g(r, "bars_remaining_in_session_5m"))
+    builder.add("avoid_overnight_bias", lambda r: 1.0 - min(1.0, g(r, "near_session_close_5m")))
+    builder.add("trade_count_today", lambda r: g(r, "trade_count_today"))
+    builder.add("trades_remaining_cap_4", lambda r: max(0.0, 4.0 - g(r, "trade_count_today")))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
 def build_adaptive_opening_range_momentum_daytrade_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -1266,6 +1365,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_momentum_trend_5m_conservative_strategy_features()
     if normalized == "vwap_momentum_trend_5m_pullback":
         return build_vwap_momentum_trend_5m_pullback_strategy_features()
+    if normalized == "vwap_volume_long_momentum_5m":
+        return build_vwap_volume_long_momentum_5m_strategy_features()
+    if normalized == "vwap_volume_regime_adaptive_5m":
+        return build_vwap_volume_regime_adaptive_5m_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
     if normalized == "hybrid_sharpe_core_no_stack":
@@ -1338,6 +1441,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_momentum_trend_5m_conservative"
     if isinstance(names, list) and "trades_remaining_cap_3" in names and "vwap_reclaim_long_signal_5m" in names:
         return "vwap_momentum_trend_5m_pullback"
+    if isinstance(names, list) and "long_side_only_bias" in names and "volume_trend_confirmation" in names:
+        return "vwap_volume_long_momentum_5m"
+    if isinstance(names, list) and "regime_bias_signal" in names and "trend_day_likelihood" in names:
+        return "vwap_volume_regime_adaptive_5m"
     if isinstance(names, list) and "open5_ready_flag" in names and "open20_ready_flag" in names:
         return "adaptive_opening_range_momentum_daytrade"
     if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:

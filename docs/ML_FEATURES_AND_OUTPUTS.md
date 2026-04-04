@@ -35,6 +35,10 @@ Supported canonical sets:
 - `open15_dual_breakout_daytrade_plus`
 - `open15_dual_breakout_daytrade_scalp`
 - `adaptive_opening_range_momentum_daytrade`
+- `vwap_momentum_trend_5m_conservative`
+- `vwap_momentum_trend_5m_pullback`
+- `vwap_volume_long_momentum_5m`
+- `vwap_volume_regime_adaptive_5m`
 - `hybrid_sharpe_core`
 - `hybrid_sharpe_core_no_stack`
 - `hybrid_sharpe_momentum`
