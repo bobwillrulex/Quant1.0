@@ -918,9 +918,12 @@ def create_app() -> "Flask":
               .topbar {{ position: sticky; top: 0; z-index: 50; background: {theme_topbar_bg}; border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }}
               .topbar-inner {{ max-width: 1100px; margin: 0 auto; padding: 0.9rem 2rem; display: flex; align-items: center; gap: 1rem; }}
               .brand {{ font-weight: 700; color: {theme_brand}; text-decoration: none; margin-right: auto; }}
+              .mobile-menu-toggle {{ display: none; border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 8px; padding: 0.35rem 0.55rem; font-size: 1rem; line-height: 1; cursor: pointer; }}
+              .mobile-menu-toggle:hover {{ background: {theme_tab_hover_bg}; }}
+              .nav-links {{ display: flex; align-items: center; gap: 1rem; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
-              .ui-mode-badge {{ margin-left: auto; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
+              .ui-mode-badge {{ font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
               .models-toolbar {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
@@ -959,8 +962,12 @@ def create_app() -> "Flask":
               .secondary {{ background: {theme_secondary_bg}; color: {theme_secondary_text}; border: 1px solid var(--border); }}
               body.mobile-ui .container {{ padding: 1rem 0.75rem; }}
               body.mobile-ui .topbar-inner {{ padding: 0.7rem 0.75rem; gap: 0.5rem; flex-wrap: wrap; }}
-              body.mobile-ui .brand {{ width: 100%; margin-right: 0; }}
-              body.mobile-ui .tab-link {{ flex: 1 1 calc(50% - 0.5rem); text-align: center; }}
+              body.mobile-ui .brand {{ margin-right: 0; }}
+              body.mobile-ui .mobile-menu-toggle {{ display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }}
+              body.mobile-ui .nav-links {{ display: none; width: 100%; flex-direction: column; align-items: stretch; gap: 0.4rem; }}
+              body.mobile-ui .nav-links.open {{ display: flex; }}
+              body.mobile-ui .tab-link {{ flex: 1 1 100%; text-align: left; }}
+              body.mobile-ui .ui-mode-badge {{ align-self: flex-start; margin-top: 0.2rem; }}
               body.mobile-ui .models-toolbar {{ flex-direction: column; align-items: stretch; }}
               body.mobile-ui .toolbar-right {{ align-items: stretch; }}
               body.mobile-ui .models-table-wrap {{ overflow-x: auto; }}
@@ -971,11 +978,14 @@ def create_app() -> "Flask":
             <nav class="topbar">
               <div class="topbar-inner">
                 <a href="{home_href}" class="brand">{brand_label}</a>
-                <a href="{home_href}" class="tab-link">Model</a>
-                <a href="{manage_href}" class="tab-link active">Manage Models</a>
-                <a href="{run_models_href}" class="tab-link">Run Models</a>
-                <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-                <span class="ui-mode-badge">{ui_mode_badge}</span>
+                <button type="button" id="mobileNavToggle" class="mobile-menu-toggle" aria-label="Toggle menu" aria-controls="primaryNavMenu" aria-expanded="false">&#9776;</button>
+                <div id="primaryNavMenu" class="nav-links">
+                  <a href="{home_href}" class="tab-link">Model</a>
+                  <a href="{manage_href}" class="tab-link active">Manage Models</a>
+                  <a href="{run_models_href}" class="tab-link">Run Models</a>
+                  <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+                  <span class="ui-mode-badge">{ui_mode_badge}</span>
+                </div>
               </div>
             </nav>
             <div class="container">
@@ -1176,7 +1186,16 @@ def create_app() -> "Flask":
               const renameModal = document.getElementById("renameModal");
               const allSettingsModal = document.getElementById("allSettingsModal");
               const menu = document.getElementById("contextMenu");
+              const mobileNavToggle = document.getElementById("mobileNavToggle");
+              const primaryNavMenu = document.getElementById("primaryNavMenu");
               let menuModelName = "";
+
+              if (mobileNavToggle && primaryNavMenu) {{
+                mobileNavToggle.addEventListener("click", () => {{
+                  const isOpen = primaryNavMenu.classList.toggle("open");
+                  mobileNavToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+                }});
+              }}
 
               function closeModals() {{
                 settingsModal.style.display = "none";
@@ -1510,7 +1529,7 @@ def create_app() -> "Flask":
         :root {{--bg:{theme_bg};--panel:{theme_panel};--panel2:{theme_panel2};--border:{theme_border};--text:{theme_text};--muted:{theme_muted};--accent:{theme_accent};}}
         *{{box-sizing:border-box;}} body{{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;}}
         .topbar{{position:sticky;top:0;z-index:50;background:{theme_topbar_bg};border-bottom:1px solid var(--border);}} .topbar-inner{{max-width:1100px;margin:0 auto;padding:0.9rem 2rem;display:flex;align-items:center;gap:1rem;}}
-        .brand{{font-weight:700;color:{theme_brand};text-decoration:none;margin-right:auto;}} .tab-link{{color:{theme_tab};text-decoration:none;padding:.4rem .65rem;border-radius:8px;border:1px solid transparent;}}
+        .brand{{font-weight:700;color:{theme_brand};text-decoration:none;margin-right:auto;}} .mobile-menu-toggle{{display:none;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:8px;padding:.35rem .55rem;font-size:1rem;line-height:1;cursor:pointer;}} .mobile-menu-toggle:hover{{background:{theme_tab_hover_bg};}} .nav-links{{display:flex;align-items:center;gap:1rem;}} .tab-link{{color:{theme_tab};text-decoration:none;padding:.4rem .65rem;border-radius:8px;border:1px solid transparent;}}
         .tab-link:hover,.tab-link.active{{color:{theme_tab_active};border-color:var(--border);background:{theme_tab_hover_bg};}} .container{{max-width:1100px;margin:0 auto;padding:2rem;}}
         .card{{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--border);border-radius:14px;padding:1rem 1.1rem;margin-bottom:1rem;}}
         .form-grid{{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:.8rem;}} label{{display:block;color:var(--muted);font-size:.92rem;}}
@@ -1522,21 +1541,28 @@ def create_app() -> "Flask":
         .run-all-group-divider td{{padding:0;border-bottom:none;height:.35rem;}}
         details,summary{{color:var(--text);}}
         button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}} .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
-        .ui-mode-badge{{margin-left:auto;font-size:.78rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:.2rem .55rem;}}
+        .ui-mode-badge{{font-size:.78rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:.2rem .55rem;}}
         body.mobile-ui .topbar-inner{{padding:.7rem .75rem;gap:.5rem;flex-wrap:wrap;}}
-        body.mobile-ui .brand{{width:100%;margin-right:0;}}
-        body.mobile-ui .tab-link{{flex:1 1 calc(50% - .5rem);text-align:center;}}
+        body.mobile-ui .brand{{margin-right:0;}}
+        body.mobile-ui .mobile-menu-toggle{{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;}}
+        body.mobile-ui .nav-links{{display:none;width:100%;flex-direction:column;align-items:stretch;gap:.4rem;}}
+        body.mobile-ui .nav-links.open{{display:flex;}}
+        body.mobile-ui .tab-link{{flex:1 1 100%;text-align:left;}}
+        body.mobile-ui .ui-mode-badge{{align-self:flex-start;margin-top:.2rem;}}
         body.mobile-ui .container{{padding:1rem .75rem;}}
         body.mobile-ui .form-grid{{grid-template-columns:1fr;}}
         body.mobile-ui table{{display:block;overflow-x:auto;white-space:nowrap;}}
         </style>
         <nav class="topbar"><div class="topbar-inner">
             <a href="{home_href}" class="brand">{brand_label}</a>
-            <a href="{home_href}" class="tab-link">Model</a>
-            <a href="{manage_href}" class="tab-link">Manage Models</a>
-            <a href="{run_models_href}" class="tab-link active">Run Models</a>
-            <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-            <span class="ui-mode-badge">{ui_mode_badge}</span>
+            <button type="button" id="mobileNavToggle" class="mobile-menu-toggle" aria-label="Toggle menu" aria-controls="primaryNavMenu" aria-expanded="false">&#9776;</button>
+            <div id="primaryNavMenu" class="nav-links">
+              <a href="{home_href}" class="tab-link">Model</a>
+              <a href="{manage_href}" class="tab-link">Manage Models</a>
+              <a href="{run_models_href}" class="tab-link active">Run Models</a>
+              <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+              <span class="ui-mode-badge">{ui_mode_badge}</span>
+            </div>
         </div></nav>
         <div class="container">
           <h1>Run Models</h1>
@@ -1582,7 +1608,16 @@ def create_app() -> "Flask":
         </div>
         <script>
           const runAllTable = document.getElementById("runAllTable");
+          const mobileNavToggle = document.getElementById("mobileNavToggle");
+          const primaryNavMenu = document.getElementById("primaryNavMenu");
           const sortDirections = {{}};
+
+          if (mobileNavToggle && primaryNavMenu) {{
+            mobileNavToggle.addEventListener("click", () => {{
+              const isOpen = primaryNavMenu.classList.toggle("open");
+              mobileNavToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            }});
+          }}
 
           function parseSortValue(rawValue, sortType) {{
             const textValue = (rawValue || "").trim();
@@ -2709,9 +2744,12 @@ def create_app() -> "Flask":
               .topbar {{ position: sticky; top: 0; z-index: 50; background: {theme_topbar_bg}; border-bottom: 1px solid var(--border); backdrop-filter: blur(6px); }}
               .topbar-inner {{ max-width: 1200px; margin: 0 auto; padding: 0.9rem 2rem; display: flex; align-items: center; gap: 1rem; }}
               .brand {{ font-weight: 700; color: {theme_brand}; text-decoration: none; margin-right: auto; }}
+              .mobile-menu-toggle {{ display: none; border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 8px; padding: 0.35rem 0.55rem; font-size: 1rem; line-height: 1; cursor: pointer; }}
+              .mobile-menu-toggle:hover {{ background: {theme_tab_hover_bg}; }}
+              .nav-links {{ display: flex; align-items: center; gap: 1rem; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
-              .ui-mode-badge {{ margin-left: auto; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
+              .ui-mode-badge {{ font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               h1, h2, h3 {{ margin-top: 0; }}
               .card {{
                 background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
@@ -2963,14 +3001,12 @@ def create_app() -> "Flask":
                 gap: 0.5rem;
                 flex-wrap: wrap;
               }}
-              body.mobile-ui .brand {{
-                width: 100%;
-                margin-right: 0;
-              }}
-              body.mobile-ui .tab-link {{
-                flex: 1 1 calc(50% - 0.5rem);
-                text-align: center;
-              }}
+              body.mobile-ui .brand {{ margin-right: 0; }}
+              body.mobile-ui .mobile-menu-toggle {{ display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }}
+              body.mobile-ui .nav-links {{ display: none; width: 100%; flex-direction: column; align-items: stretch; gap: 0.4rem; }}
+              body.mobile-ui .nav-links.open {{ display: flex; }}
+              body.mobile-ui .tab-link {{ flex: 1 1 100%; text-align: left; }}
+              body.mobile-ui .ui-mode-badge {{ align-self: flex-start; margin-top: 0.2rem; }}
               body.mobile-ui .container {{
                 padding: 1rem 0.75rem;
               }}
@@ -3020,18 +3056,21 @@ def create_app() -> "Flask":
             <nav class="topbar">
               <div class="topbar-inner">
                 <a href="{home_href}" class="brand">{brand_label}</a>
-                <a href="{home_href}" class="tab-link active">Model</a>
-                <a href="{manage_href}" class="tab-link">Manage Models</a>
-                <a href="{run_models_href}" class="tab-link">Run Models</a>
-                <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
-                <form method="post" style="margin:0;">
-                  <input type="hidden" name="mode" value="provider_toggle" />
-                  <input type="hidden" name="toggle_to" value="{next_provider}" />
-                  <input type="hidden" name="data_provider" value="{data_provider}" />
-                  <button type="submit" class="secondary provider-pill">Data: {provider_labels.get(data_provider, 'YFinance')}</button>
-                </form>
-                <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-                <span class="ui-mode-badge">{ui_mode_badge}</span>
+                <button type="button" id="mobileNavToggle" class="mobile-menu-toggle" aria-label="Toggle menu" aria-controls="primaryNavMenu" aria-expanded="false">&#9776;</button>
+                <div id="primaryNavMenu" class="nav-links">
+                  <a href="{home_href}" class="tab-link active">Model</a>
+                  <a href="{manage_href}" class="tab-link">Manage Models</a>
+                  <a href="{run_models_href}" class="tab-link">Run Models</a>
+                  <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
+                  <form method="post" style="margin:0;">
+                    <input type="hidden" name="mode" value="provider_toggle" />
+                    <input type="hidden" name="toggle_to" value="{next_provider}" />
+                    <input type="hidden" name="data_provider" value="{data_provider}" />
+                    <button type="submit" class="secondary provider-pill">Data: {provider_labels.get(data_provider, 'YFinance')}</button>
+                  </form>
+                  <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+                  <span class="ui-mode-badge">{ui_mode_badge}</span>
+                </div>
               </div>
             </nav>
             <div class="container">
@@ -3243,6 +3282,8 @@ def create_app() -> "Flask":
               const progressText = document.getElementById("progressText");
               const etaText = document.getElementById("etaText");
               const saveEvaluationBtn = document.getElementById("saveEvaluationBtn");
+              const mobileNavToggle = document.getElementById("mobileNavToggle");
+              const primaryNavMenu = document.getElementById("primaryNavMenu");
               const openEvaluationsBtn = document.getElementById("openEvaluationsBtn");
               const savedEvalsModal = document.getElementById("savedEvalsModal");
               const closeSavedEvalsBtn = document.getElementById("closeSavedEvalsBtn");
@@ -3259,6 +3300,13 @@ def create_app() -> "Flask":
               const savedEvaluations = {saved_eval_items_json};
               let loadingTimer = null;
               let contextTargetId = null;
+
+              if (mobileNavToggle && primaryNavMenu) {{
+                mobileNavToggle.addEventListener("click", () => {{
+                  const isOpen = primaryNavMenu.classList.toggle("open");
+                  mobileNavToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+                }});
+              }}
 
               function formatEta(seconds) {{
                 const sec = Math.max(0, Math.ceil(seconds));
