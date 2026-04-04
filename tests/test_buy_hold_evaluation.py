@@ -85,3 +85,36 @@ def test_buy_hold_falls_back_to_returns_when_not_chronological() -> None:
     buy_hold = float(metrics["strategy"]["buy_hold_total_return"])
     expected = (1.1 * 0.95) - 1.0
     assert abs(buy_hold - expected) < 1e-12
+
+
+def test_sharpe_annualization_respects_non_daily_interval() -> None:
+    bundle = _minimal_bundle()
+    bundle["logit_bias"] = 8.0  # keep strategy in long mode
+    x_test_raw = [[0.0], [0.0], [0.0], [0.0], [0.0], [0.0]]
+    y_test_ret = [0.02, -0.01, 0.015, -0.005, 0.01, -0.002]
+    y_test_dir = [1 if value > 0 else 0 for value in y_test_ret]
+
+    daily_metrics = evaluate_bundle(
+        bundle=bundle,
+        x_test_raw=x_test_raw,
+        y_test_ret=y_test_ret,
+        y_test_dir=y_test_dir,
+        split_style="shuffled",
+        allow_short=False,
+        interval="1d",
+    )
+    hourly_metrics = evaluate_bundle(
+        bundle=bundle,
+        x_test_raw=x_test_raw,
+        y_test_ret=y_test_ret,
+        y_test_dir=y_test_dir,
+        split_style="shuffled",
+        allow_short=False,
+        interval="1h",
+    )
+
+    daily_sharpe = float(daily_metrics["strategy"]["sharpe"])
+    hourly_sharpe = float(hourly_metrics["strategy"]["sharpe"])
+    expected_ratio = (6.5) ** 0.5
+    assert daily_sharpe != 0.0
+    assert abs((hourly_sharpe / daily_sharpe) - expected_ratio) < 1e-6

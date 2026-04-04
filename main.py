@@ -2051,6 +2051,7 @@ def create_app() -> "Flask":
                                     monte_carlo_n_sim=monte_carlo_n_sim,
                                     monte_carlo_block_size=monte_carlo_block_size,
                                     monte_carlo_seed=monte_carlo_seed,
+                                    interval=interval,
                                 )
                                 trained_model_name = ""
                                 if train_action == "train":
@@ -2167,6 +2168,7 @@ def create_app() -> "Flask":
                                 monte_carlo_n_sim=monte_carlo_n_sim,
                                 monte_carlo_block_size=monte_carlo_block_size,
                                 monte_carlo_seed=monte_carlo_seed,
+                                interval=interval,
                             )
                             metrics["train_size"] = "saved-model"
                             metrics["loaded_model"] = selected_model
@@ -2216,6 +2218,7 @@ def create_app() -> "Flask":
                                 monte_carlo_n_sim=monte_carlo_n_sim,
                                 monte_carlo_block_size=monte_carlo_block_size,
                                 monte_carlo_seed=monte_carlo_seed,
+                                interval=interval,
                             )
                             metrics["train_size"] = bundle["train_size"]
                             if use_manual_weights:
