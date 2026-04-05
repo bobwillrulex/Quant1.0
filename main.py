@@ -2229,7 +2229,7 @@ def create_app() -> "Flask":
                                 }
                                 x_test_raw = feature_builder.transform(eval_rows)
                             else:
-                                model_test_ratio = 0.25 if train_action in ("evaluate", "evaluate_historical") else evaluation_split
+                                model_test_ratio = 0.0 if train_action in ("evaluate", "evaluate_historical") else evaluation_split
                                 bundle = train_strategy_models(
                                     dataset,
                                     split_style=split_style,
@@ -2237,12 +2237,17 @@ def create_app() -> "Flask":
                                     dqn_episodes=dqn_episodes,
                                     test_ratio=model_test_ratio,
                                 )
-                                x_test_raw = bundle["x_test_raw"]
+                                if train_action in ("evaluate", "evaluate_historical"):
+                                    bundle_feature_set = infer_bundle_feature_set(bundle)
+                                    feature_builder = get_strategy_feature_builder(bundle_feature_set)
+                                    x_test_raw = feature_builder.transform(eval_rows)
+                                else:
+                                    x_test_raw = bundle["x_test_raw"]
                             metrics = evaluate_bundle(
                                 bundle,
                                 x_test_raw,
-                                y_test_ret if use_manual_weights else bundle["y_test_ret"],
-                                y_test_dir if use_manual_weights else bundle["y_test_dir"],
+                                y_test_ret if use_manual_weights or train_action in ("evaluate", "evaluate_historical") else bundle["y_test_ret"],
+                                y_test_dir if use_manual_weights or train_action in ("evaluate", "evaluate_historical") else bundle["y_test_dir"],
                                 eval_rows=dataset,
                                 split_style=split_style,
                                 buy_threshold=buy_threshold,
