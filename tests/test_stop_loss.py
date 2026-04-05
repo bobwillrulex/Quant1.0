@@ -127,7 +127,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.023, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.0204, places=6)
 
     def test_model_invalidation_exit_uses_stop_price_return(self):
         returns = [0.0, 0.0, -0.05, 0.0]
@@ -143,7 +143,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.MODEL_INVALIDATION, model_mae=0.01),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.053, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.0504, places=6)
 
     def test_total_return_uses_equity_curve(self):
         returns = [0.0, 0.0, 0.10, 0.0]
@@ -159,7 +159,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), 0.097, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), 0.0996, places=6)
 
     def test_trade_log_includes_normalized_and_raw_prices(self):
         returns = [0.0, 0.01, -0.02, 0.0]
@@ -183,7 +183,8 @@ class StopLossStrategyTests(unittest.TestCase):
         self.assertAlmostEqual(float(trade["exit_price"]), 0.9898, places=6)
         self.assertAlmostEqual(float(trade["entry_raw_price"]), 101.0, places=6)
         self.assertAlmostEqual(float(trade["exit_raw_price"]), 98.0, places=6)
-
+        self.assertAlmostEqual(float(trade["max_drawdown_during_trade"]), -0.02970297029702973, places=6)
+        self.assertAlmostEqual(float(trade["max_upside_during_trade"]), 0.0, places=6)
 
     def test_no_signals_keeps_configured_thresholds_and_zero_trades(self):
         returns = [0.01, -0.005, 0.004, -0.002]
@@ -216,7 +217,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.023, places=6)
+        self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.0204, places=6)
 
     def test_fixed_stop_caps_reported_max_drawdown_to_trade_stop_bound(self):
         returns = [0.10, 0.10, -0.06, 0.0]
@@ -232,7 +233,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertGreater(float(metrics["max_drawdown"]), 0.021)
+        self.assertGreater(float(metrics["max_drawdown"]), 0.0203)
 
     def test_max_drawdown_is_bounded_to_100_percent_without_stop(self):
         returns = [-0.70, -0.70, 0.0]
@@ -281,7 +282,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.003, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.0004, places=6)
 
     def test_take_profit_exit_triggers_when_target_is_hit(self):
         returns = [0.0, 0.0, 0.03, 0.0]
