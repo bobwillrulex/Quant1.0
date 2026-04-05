@@ -2384,6 +2384,8 @@ def create_app() -> "Flask":
                             "</tr>"
                             for item in metrics["pnl_by_regime"]
                         )
+                        def format_optional_price(value: object) -> str:
+                            return "n/a" if value is None else f"{float(value):.4f}"
                         trade_log_rows = "".join(
                             "<tr>"
                             f"<td>{idx + 1}</td>"
@@ -2391,7 +2393,9 @@ def create_app() -> "Flask":
                             f"<td>{escape(str(item.get('entry_label', 'n/a')))}</td>"
                             f"<td>{escape(str(item.get('exit_label', 'n/a')))}</td>"
                             f"<td>{float(item.get('entry_price', 0.0)):.4f}</td>"
+                            f"<td>{format_optional_price(item.get('entry_raw_price'))}</td>"
                             f"<td>{float(item.get('exit_price', 0.0)):.4f}</td>"
+                            f"<td>{format_optional_price(item.get('exit_raw_price'))}</td>"
                             f"<td>{float(item.get('bars_held', 0.0)):.0f}</td>"
                             f"<td>{float(item.get('gross_pnl', 0.0)):+.4%}</td>"
                             f"<td>{float(item.get('net_pnl', 0.0)):+.4%}</td>"
@@ -2671,10 +2675,10 @@ def create_app() -> "Flask":
                         <summary>Hidden: Trade-by-Trade Execution Log</summary>
                         <article class="card table-card">
                           <h3>Every Closed Trade</h3>
-                          <p class="muted">Includes entry/exit dates, prices, hold time, and P&amp;L after costs/slippage.</p>
+                          <p class="muted">Includes normalized model prices plus raw API prices for entry/exit, hold time, and P&amp;L after costs/slippage.</p>
                           <table>
-                            <tr><th>#</th><th>Side</th><th>Date Bought/Opened</th><th>Date Sold/Closed</th><th>Entry</th><th>Exit</th><th>Bars</th><th>Gross PnL</th><th>Net PnL</th><th>Exit Reason</th></tr>
-                            {trade_log_rows if trade_log_rows else "<tr><td colspan='10' class='muted'>No closed trades for this evaluation.</td></tr>"}
+                            <tr><th>#</th><th>Side</th><th>Date Bought/Opened</th><th>Date Sold/Closed</th><th>Entry (Normalized)</th><th>Entry (Raw API)</th><th>Exit (Normalized)</th><th>Exit (Raw API)</th><th>Bars</th><th>Gross PnL</th><th>Net PnL</th><th>Exit Reason</th></tr>
+                            {trade_log_rows if trade_log_rows else "<tr><td colspan='12' class='muted'>No closed trades for this evaluation.</td></tr>"}
                           </table>
                         </article>
                       </details>

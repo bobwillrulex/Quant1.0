@@ -153,6 +153,7 @@ def strategy_metrics(
     stop_loss: StopLossConfig | None = None,
     strict_validation: bool = False,
     row_labels: Sequence[str] | None = None,
+    raw_prices: Sequence[float] | None = None,
 ) -> Dict[str, object]:
     stop_cfg = stop_loss or StopLossConfig()
     if expected_returns is None:
@@ -200,6 +201,12 @@ def strategy_metrics(
     trades = 0
     closed_trade_pnls: List[float] = []
     trade_log: List[Dict[str, object]] = []
+    raw_price_series: List[float] | None = None
+    if raw_prices is not None:
+        candidate_raw_prices = [float(price) for price in raw_prices]
+        if len(candidate_raw_prices) == len(returns):
+            raw_price_series = candidate_raw_prices
+
     def close_position(
         idx: int,
         fill_price: float,
@@ -231,6 +238,16 @@ def strategy_metrics(
         exit_bar = int(idx)
         entry_label = row_labels[entry_bar] if row_labels and 0 <= entry_bar < len(row_labels) else str(entry_bar)
         exit_label = row_labels[exit_bar] if row_labels and 0 <= exit_bar < len(row_labels) else str(exit_bar)
+        entry_raw_price = (
+            float(raw_price_series[entry_bar])
+            if raw_price_series is not None and 0 <= entry_bar < len(raw_price_series)
+            else None
+        )
+        exit_raw_price = (
+            float(raw_price_series[exit_bar])
+            if raw_price_series is not None and 0 <= exit_bar < len(raw_price_series)
+            else None
+        )
         trade_log.append(
             {
                 "side": "LONG" if current_pos > 0 else "SHORT",
@@ -240,6 +257,8 @@ def strategy_metrics(
                 "exit_label": exit_label,
                 "entry_price": float(entry_price),
                 "exit_price": float(fill_price),
+                "entry_raw_price": entry_raw_price,
+                "exit_raw_price": exit_raw_price,
                 "bars_held": float(max(1, (exit_bar - entry_bar) + 1)),
                 "gross_pnl": float(gross),
                 "net_pnl": float(net),
@@ -655,6 +674,7 @@ def evaluate_bundle(
     buy_hold_total_return_override: float | None = None
     strategy_returns = list(y_test_ret)
     row_labels: List[str] = [str(i) for i in range(len(y_test_ret))]
+    raw_prices: List[float] | None = None
     if eval_rows and split_style == "chronological":
         test_rows = list(eval_rows)[-len(y_test_ret) :] if y_test_ret else []
         closes = [float(row["close"]) for row in test_rows if "close" in row]
@@ -676,6 +696,7 @@ def evaluate_bundle(
                 step_returns.append(((current_close / prev_close) - 1.0) if prev_close != 0.0 else 0.0)
             if len(step_returns) == len(y_test_ret):
                 strategy_returns = step_returns
+                raw_prices = closes
 
     strategy = strategy_metrics(
         strategy_returns,
@@ -689,6 +710,7 @@ def evaluate_bundle(
         allow_short=allow_short,
         stop_loss=stop_loss,
         row_labels=row_labels,
+        raw_prices=raw_prices,
     )
     monte_carlo: Dict[str, Any] | None = None
     if monte_carlo_method in {"bootstrap", "shuffle", "block"}:
