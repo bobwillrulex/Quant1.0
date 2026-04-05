@@ -169,14 +169,7 @@ def strategy_metrics(
     requested_long_threshold = long_threshold
     requested_short_threshold = short_threshold
     sell_threshold = short_threshold
-    has_long_signal = any(p > long_threshold for p in smoothed_probs)
-    has_short_signal = allow_short and any(p < short_threshold for p in smoothed_probs)
     threshold_mode = "configured"
-    if not has_long_signal and not has_short_signal:
-        long_threshold = 0.5
-        sell_threshold = 0.5
-        short_threshold = 0.5
-        threshold_mode = "auto_fallback_0_5"
     positions: List[int] = []
     current_pos = 0
     bars_in_position = 0
