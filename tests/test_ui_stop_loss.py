@@ -155,10 +155,10 @@ class StopLossUITests(unittest.TestCase):
     ):
         fetch_market_rows_mock.return_value = (
             [
-                {"return_next": 0.01},
-                {"return_next": -0.01},
-                {"return_next": 0.02},
-                {"return_next": 0.01},
+                {"return_next": 0.01, "timestamp": "2026-03-30"},
+                {"return_next": -0.01, "timestamp": "2026-03-31"},
+                {"return_next": 0.02, "timestamp": "2026-04-01"},
+                {"return_next": 0.01, "timestamp": "2026-04-02"},
             ],
             None,
         )
@@ -289,10 +289,10 @@ class StopLossUITests(unittest.TestCase):
     ):
         fetch_market_rows_mock.return_value = (
             [
-                {"return_next": 0.01},
-                {"return_next": -0.01},
-                {"return_next": 0.02},
-                {"return_next": 0.01},
+                {"return_next": 0.01, "timestamp": "2026-03-30"},
+                {"return_next": -0.01, "timestamp": "2026-03-31"},
+                {"return_next": 0.02, "timestamp": "2026-04-01"},
+                {"return_next": 0.01, "timestamp": "2026-04-02"},
             ],
             None,
         )
@@ -369,10 +369,10 @@ class StopLossUITests(unittest.TestCase):
     ):
         fetch_market_rows_mock.return_value = (
             [
-                {"return_next": 0.01},
-                {"return_next": -0.01},
-                {"return_next": 0.02},
-                {"return_next": 0.01},
+                {"return_next": 0.01, "timestamp": "2026-03-30"},
+                {"return_next": -0.01, "timestamp": "2026-03-31"},
+                {"return_next": 0.02, "timestamp": "2026-04-01"},
+                {"return_next": 0.01, "timestamp": "2026-04-02"},
             ],
             None,
         )
@@ -433,6 +433,8 @@ class StopLossUITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(train_mock.call_args.kwargs["test_ratio"], 0.0)
         self.assertEqual(len(eval_mock.call_args.args[1]), 4)
+        self.assertIn("Evaluation window: 2026-03-30", response.get_data(as_text=True))
+        self.assertIn("2026-04-02", response.get_data(as_text=True))
 
     @patch("main.list_saved_models")
     @patch("main.save_model_configs")

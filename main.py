@@ -95,6 +95,20 @@ def parse_csv_values(raw: str, *, uppercase: bool = False) -> list[str]:
     return values
 
 
+def extract_timestamp_range(rows: list[dict[str, object]]) -> tuple[str, str]:
+    if not rows:
+        return ("n/a", "n/a")
+
+    def _label(row: dict[str, object]) -> str:
+        timestamp = row.get("timestamp")
+        if timestamp is None:
+            return "n/a"
+        text = str(timestamp).strip()
+        return text if text else "n/a"
+
+    return (_label(rows[0]), _label(rows[-1]))
+
+
 def build_default_model_name(*, ticker: str, interval: str, row_count: int, feature_set: str, prediction_horizon: int) -> str:
     return sanitize_model_name(f"{ticker}_{interval}_{row_count}_{prediction_horizon}")
 
@@ -2207,6 +2221,7 @@ def create_app() -> "Flask":
                         else:
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
                             _, eval_rows = train_test_split(dataset, test_ratio=evaluation_split, split_style=split_style)
+                        eval_start_date, eval_end_date = extract_timestamp_range(eval_rows)
                         y_test_ret = [r["return_next"] for r in eval_rows]
                         y_test_dir = [1 if r > 0 else 0 for r in y_test_ret]
                         if selected_model != "__new__":
@@ -2589,6 +2604,7 @@ def create_app() -> "Flask":
                           <button type="button" id="saveEvaluationBtn" class="secondary save-eval-btn">Save</button>
                         </div>
                         <p class="muted">Rows: {row_count} | Train: {metrics['train_size']} | Test: {metrics['test_size']} | Split: {metrics['split_style']}</p>
+                        <p class="muted">Evaluation window: {eval_start_date} → {eval_end_date}</p>
                         <p class="muted">{rows_used_note or f"Using requested {row_count} frames."}</p>
                         {model_msg}
                       </div>
