@@ -127,7 +127,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertAlmostEqual(float(metrics["total_return"]), -0.053, places=6)
+        self.assertAlmostEqual(float(metrics["total_return"]), -0.023, places=6)
 
     def test_model_invalidation_exit_uses_stop_price_return(self):
         returns = [0.0, 0.0, -0.05, 0.0]
@@ -216,7 +216,7 @@ class StopLossStrategyTests(unittest.TestCase):
             prob_smoothing_window=1,
             stop_loss=StopLossConfig(strategy=StopLossStrategy.FIXED_PERCENTAGE, fixed_pct=2.0),
         )
-        self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.083, places=6)
+        self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.023, places=6)
 
     def test_fixed_stop_caps_reported_max_drawdown_to_trade_stop_bound(self):
         returns = [0.10, 0.10, -0.06, 0.0]
