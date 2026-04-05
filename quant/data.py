@@ -559,7 +559,7 @@ def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str,
     base_query = urlencode(
         {
             "adjusted": "true",
-            "sort": "asc",
+            "sort": "desc",
             "limit": 50000,
             "apiKey": api_key,
         }
@@ -591,10 +591,11 @@ def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str,
             break
     if not values:
         raise ValueError("Massive returned no candles.")
-    highs = [float(item["h"]) for item in values]
-    lows = [float(item["l"]) for item in values]
-    closes = [float(item["c"]) for item in values]
-    timestamps = [datetime.fromtimestamp(float(point["t"]) / 1000.0, tz=timezone.utc).isoformat() for point in values]
+    ordered_values = sorted(values, key=lambda item: float(item["t"]))
+    highs = [float(item["h"]) for item in ordered_values]
+    lows = [float(item["l"]) for item in ordered_values]
+    closes = [float(item["c"]) for item in ordered_values]
+    timestamps = [datetime.fromtimestamp(float(point["t"]) / 1000.0, tz=timezone.utc).isoformat() for point in ordered_values]
     rows = compute_strategy_rows_from_prices(
         highs=highs,
         lows=lows,
