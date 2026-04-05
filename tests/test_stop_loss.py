@@ -161,6 +161,29 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(metrics["total_return"]), 0.097, places=6)
 
+    def test_trade_log_includes_normalized_and_raw_prices(self):
+        returns = [0.0, 0.01, -0.02, 0.0]
+        probs = [0.9, 0.9, 0.9, 0.2]
+        expected = [0.01, 0.01, 0.01, 0.01]
+        raw_prices = [100.0, 101.0, 99.0, 98.0]
+        metrics = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
+            raw_prices=raw_prices,
+        )
+        self.assertEqual(len(metrics["trade_log"]), 1)
+        trade = metrics["trade_log"][0]
+        self.assertAlmostEqual(float(trade["entry_price"]), 1.01, places=6)
+        self.assertAlmostEqual(float(trade["exit_price"]), 0.9898, places=6)
+        self.assertAlmostEqual(float(trade["entry_raw_price"]), 101.0, places=6)
+        self.assertAlmostEqual(float(trade["exit_raw_price"]), 98.0, places=6)
+
 
     def test_no_signals_keeps_configured_thresholds_and_zero_trades(self):
         returns = [0.01, -0.005, 0.004, -0.002]
