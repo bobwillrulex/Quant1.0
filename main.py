@@ -2158,10 +2158,31 @@ def create_app() -> "Flask":
                     else:
                         ticker = tickers[0]
                     if len(tickers) == 1:
+                        fetch_row_count = row_count
+                        eval_tail_rows = row_count
+                        anchored_eval_note = ""
+                        if (
+                            selected_model != "__new__"
+                            and train_action in ("evaluate", "evaluate_historical")
+                            and split_style == "chronological"
+                        ):
+                            model_configs = load_model_configs(mode_key)
+                            model_cfg = get_model_config(selected_model, model_configs)
+                            configured_rows_raw = model_cfg.get("rows", row_count)
+                            try:
+                                configured_rows = int(configured_rows_raw)
+                            except (TypeError, ValueError):
+                                configured_rows = row_count
+                            if configured_rows >= row_count:
+                                fetch_row_count = configured_rows
+                                anchored_eval_note = (
+                                    f"Evaluation anchored to model training window ({configured_rows} rows) "
+                                    f"and scored on its latest {row_count} rows."
+                                )
                         dataset, provider_notice = fetch_market_rows(
                             ticker=ticker,
                             interval=interval,
-                            row_count=row_count,
+                            row_count=fetch_row_count,
                             provider=data_provider,
                             twelve_api_key=twelve_api_key,
                             massive_api_key=massive_api_key,
@@ -2170,13 +2191,19 @@ def create_app() -> "Flask":
                         if provider_notice:
                             provider_notices.append(provider_notice)
                         if train_action in ("evaluate", "evaluate_historical"):
-                            rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for evaluation."
+                            if anchored_eval_note:
+                                rows_used_note = anchored_eval_note
+                            else:
+                                rows_used_note = ""
+                            if len(dataset) < fetch_row_count:
+                                availability_note = f"Only {len(dataset)} frames were available and used for evaluation."
+                                rows_used_note = f"{rows_used_note} {availability_note}".strip() if rows_used_note else availability_note
                             if train_action == "evaluate_historical":
                                 rows_used_note = (
                                     "Historical evaluation mode: forcing chronological split on downloaded market history."
                                     + (f" {rows_used_note}" if rows_used_note else "")
                                 )
-                            eval_rows = dataset
+                            eval_rows = dataset[-eval_tail_rows:] if eval_tail_rows > 0 else dataset
                         else:
                             rows_used_note = "" if len(dataset) >= row_count else f"Only {len(dataset)} frames were available and used for training."
                             _, eval_rows = train_test_split(dataset, test_ratio=evaluation_split, split_style=split_style)
