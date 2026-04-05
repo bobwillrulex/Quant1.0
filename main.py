@@ -2229,7 +2229,7 @@ def create_app() -> "Flask":
                                 }
                                 x_test_raw = feature_builder.transform(eval_rows)
                             else:
-                                model_test_ratio = 0.25 if train_action in ("evaluate", "evaluate_historical") else evaluation_split
+                                model_test_ratio = evaluation_split
                                 bundle = train_strategy_models(
                                     dataset,
                                     split_style=split_style,
