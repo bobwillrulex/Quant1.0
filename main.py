@@ -2416,6 +2416,8 @@ def create_app() -> "Flask":
                             f"<td>{float(item.get('bars_held', 0.0)):.0f}</td>"
                             f"<td>{float(item.get('gross_pnl', 0.0)):+.4%}</td>"
                             f"<td>{float(item.get('net_pnl', 0.0)):+.4%}</td>"
+                            f"<td>{float(item.get('max_drawdown_during_trade', 0.0)):+.4%}</td>"
+                            f"<td>{float(item.get('max_upside_during_trade', 0.0)):+.4%}</td>"
                             f"<td>{escape(str(item.get('exit_reason', 'signal')))}</td>"
                             "</tr>"
                             for idx, item in enumerate(metrics["strategy"].get("trade_log", []))
@@ -2633,7 +2635,7 @@ def create_app() -> "Flask":
                         {model_cards_html}
                         <article class="card">
                           <h3>Decision Strategy</h3>
-                          <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Stop {metrics['strategy']['stop_loss_strategy']} · Cost 0.05%</p>
+                          <p class="muted">{strategy_mode_text} · BUY P&gt;{metrics['strategy']['long_threshold']:.2f} · SELL P&lt;{metrics['strategy']['short_threshold']:.2f} · Stop {metrics['strategy']['stop_loss_strategy']} · Fee 0.00% · Slippage 0.02%</p>
                           <p><span class="muted">Total Return</span> <strong>{metrics['strategy']['total_return']:+.2%}</strong></p>
                           <p><span class="muted">Buy &amp; Hold Return (test rows)</span> <strong>{metrics['strategy']['buy_hold_total_return']:+.2%}</strong></p>
                           <p><span class="muted">Alpha (vs Buy &amp; Hold)</span> <strong>{float(metrics['strategy'].get('alpha', metrics['strategy']['total_return'] - metrics['strategy'].get('buy_hold_total_return', 0.0))):+.2%}</strong></p>
@@ -2692,10 +2694,10 @@ def create_app() -> "Flask":
                         <summary>Hidden: Trade-by-Trade Execution Log</summary>
                         <article class="card table-card">
                           <h3>Every Closed Trade</h3>
-                          <p class="muted">Includes normalized model prices plus raw API prices for entry/exit, hold time, and P&amp;L after costs/slippage.</p>
+                          <p class="muted">Includes normalized model prices plus raw API prices for entry/exit, hold time, P&amp;L after costs/slippage, plus per-trade max drawdown/upside excursions.</p>
                           <table>
-                            <tr><th>#</th><th>Side</th><th>Date Bought/Opened</th><th>Date Sold/Closed</th><th>Entry (Normalized)</th><th>Entry (Raw API)</th><th>Exit (Normalized)</th><th>Exit (Raw API)</th><th>Bars</th><th>Gross PnL</th><th>Net PnL</th><th>Exit Reason</th></tr>
-                            {trade_log_rows if trade_log_rows else "<tr><td colspan='12' class='muted'>No closed trades for this evaluation.</td></tr>"}
+                            <tr><th>#</th><th>Side</th><th>Date Bought/Opened</th><th>Date Sold/Closed</th><th>Entry (Normalized)</th><th>Entry (Raw API)</th><th>Exit (Normalized)</th><th>Exit (Raw API)</th><th>Bars</th><th>Gross PnL</th><th>Net PnL</th><th>Max Drawdown (Trade)</th><th>Max Upside (Trade)</th><th>Exit Reason</th></tr>
+                            {trade_log_rows if trade_log_rows else "<tr><td colspan='14' class='muted'>No closed trades for this evaluation.</td></tr>"}
                           </table>
                         </article>
                       </details>

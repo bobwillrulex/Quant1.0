@@ -144,7 +144,7 @@ def strategy_metrics(
     expected_returns: Sequence[float] | None = None,
     long_threshold: float = 0.6,
     short_threshold: float = 0.4,
-    trade_cost: float = 0.0005,
+    trade_cost: float = 0.0,
     buy_hold_returns: Sequence[float] | None = None,
     buy_hold_total_return_override: float | None = None,
     allow_short: bool = True,
@@ -185,7 +185,7 @@ def strategy_metrics(
     time_decay_limit = max(1, int(stop_cfg.time_decay_bars))
     atr_window = 14
     atr_returns: List[float] = []
-    slippage = 0.001
+    slippage = 0.0002
     cooldown_bars = 3
     cooldown = 0
     effective_returns: List[float] = [0.0 for _ in returns]
@@ -248,6 +248,24 @@ def strategy_metrics(
             if raw_price_series is not None and 0 <= exit_bar < len(raw_price_series)
             else None
         )
+        excursion_price_series = raw_price_series if raw_price_series is not None else synthetic_prices
+        excursion_entry_price = (
+            float(excursion_price_series[entry_bar])
+            if 0 <= entry_bar < len(excursion_price_series)
+            else float(entry_price)
+        )
+        intra_trade_prices = [float(price) for price in excursion_price_series[entry_bar : exit_bar + 1]]
+        if not intra_trade_prices:
+            intra_trade_prices = [float(fill_price)]
+        lowest_price = min(intra_trade_prices)
+        highest_price = max(intra_trade_prices)
+        if current_pos > 0:
+            max_drawdown_during_trade = (lowest_price / excursion_entry_price) - 1.0 if excursion_entry_price != 0.0 else 0.0
+            max_upside_during_trade = (highest_price / excursion_entry_price) - 1.0 if excursion_entry_price != 0.0 else 0.0
+        else:
+            max_drawdown_during_trade = (excursion_entry_price / highest_price) - 1.0 if highest_price != 0.0 else 0.0
+            max_upside_during_trade = (excursion_entry_price / lowest_price) - 1.0 if lowest_price != 0.0 else 0.0
+
         trade_log.append(
             {
                 "side": "LONG" if current_pos > 0 else "SHORT",
@@ -262,6 +280,8 @@ def strategy_metrics(
                 "bars_held": float(max(1, (exit_bar - entry_bar) + 1)),
                 "gross_pnl": float(gross),
                 "net_pnl": float(net),
+                "max_drawdown_during_trade": float(max_drawdown_during_trade),
+                "max_upside_during_trade": float(max_upside_during_trade),
                 "exit_reason": (
                     "stop_loss"
                     if stop_exit
@@ -706,7 +726,7 @@ def evaluate_bundle(
         expected_returns=ret_pred,
         long_threshold=buy_threshold,
         short_threshold=sell_threshold,
-        trade_cost=0.0005,
+        trade_cost=0.0,
         buy_hold_returns=strategy_returns,
         buy_hold_total_return_override=buy_hold_total_return_override,
         allow_short=allow_short,
@@ -728,7 +748,7 @@ def evaluate_bundle(
             expected_returns=ret_pred,
             long_threshold=buy_threshold,
             short_threshold=sell_threshold,
-            trade_cost=0.0005,
+            trade_cost=0.0,
             buy_hold_returns=strategy_returns,
             buy_hold_total_return_override=buy_hold_total_return_override,
             allow_short=allow_short,
@@ -805,11 +825,11 @@ def evaluate_bundle(
         "strategy": strategy,
         "monte_carlo": monte_carlo,
         "forward_buy_now": forward_buy_now,
-        "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0005, allow_short=allow_short),
+        "pnl_by_signal_strength": pnl_signal_strength_breakdown(y_test_ret, up_prob, trade_cost=0.0, allow_short=allow_short),
         "pnl_by_regime": pnl_market_regime_breakdown(
             y_test_ret,
             up_prob,
-            trade_cost=0.0005,
+            trade_cost=0.0,
             allow_short=allow_short,
             long_threshold=float(strategy["long_threshold"]),
             short_threshold=float(strategy["short_threshold"]),
