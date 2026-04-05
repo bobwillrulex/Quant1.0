@@ -4,13 +4,17 @@ import csv
 import json
 import random
 from math import ceil
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from typing import List, Sequence
+from zoneinfo import ZoneInfo
 
 from .types import Row
+
+
+US_EASTERN = ZoneInfo("America/New_York")
 
 
 def load_csv(path: str) -> List[Row]:
@@ -453,6 +457,13 @@ def fetch_yahoo_rows(ticker: str, interval: str, row_count: int, prediction_hori
     lows = [item[1][1] for item in ordered]
     closes = [item[1][2] for item in ordered]
     timestamps = [item[0] for item in ordered]
+    highs, lows, closes, timestamps = _filter_regular_trading_hours(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        timestamps=timestamps,
+        interval=interval,
+    )
     rows = compute_strategy_rows_from_prices(
         highs=highs,
         lows=lows,
@@ -527,6 +538,13 @@ def fetch_twelve_data_rows(ticker: str, interval: str, row_count: int, api_key: 
     lows = [float(item["low"]) for item in ordered_values]
     closes = [float(item["close"]) for item in ordered_values]
     timestamps = [str(point.get("datetime", "")) for point in ordered_values]
+    highs, lows, closes, timestamps = _filter_regular_trading_hours(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        timestamps=timestamps,
+        interval=interval,
+    )
     rows = compute_strategy_rows_from_prices(
         highs=highs,
         lows=lows,
@@ -596,6 +614,13 @@ def fetch_massive_rows(ticker: str, interval: str, row_count: int, api_key: str,
     lows = [float(item["l"]) for item in ordered_values]
     closes = [float(item["c"]) for item in ordered_values]
     timestamps = [datetime.fromtimestamp(float(point["t"]) / 1000.0, tz=timezone.utc).isoformat() for point in ordered_values]
+    highs, lows, closes, timestamps = _filter_regular_trading_hours(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        timestamps=timestamps,
+        interval=interval,
+    )
     rows = compute_strategy_rows_from_prices(
         highs=highs,
         lows=lows,
@@ -614,6 +639,53 @@ def _target_lookback_days(interval: str, row_count: int) -> int:
     trading_days = ceil(max(1, row_count) / bars_per_trading_day[interval])
     estimated_calendar_days = int(trading_days * 1.6) + 30
     return max(minimum_days[interval], estimated_calendar_days)
+
+
+def _timestamp_to_eastern(ts: object) -> datetime:
+    if isinstance(ts, datetime):
+        parsed = ts
+    else:
+        value = str(ts).strip()
+        if not value:
+            raise ValueError("Empty timestamp.")
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=US_EASTERN)
+    return parsed.astimezone(US_EASTERN)
+
+
+def _is_regular_session_timestamp(ts: object) -> bool:
+    eastern_ts = _timestamp_to_eastern(ts)
+    if eastern_ts.weekday() >= 5:
+        return False
+    market_open = time(9, 30)
+    market_close = time(16, 0)
+    current_time = eastern_ts.timetz().replace(tzinfo=None)
+    return market_open <= current_time <= market_close
+
+
+def _filter_regular_trading_hours(
+    *,
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    timestamps: Sequence[object],
+    interval: str,
+) -> tuple[list[float], list[float], list[float], list[object]]:
+    if interval == "1d":
+        return list(highs), list(lows), list(closes), list(timestamps)
+    filtered_highs: list[float] = []
+    filtered_lows: list[float] = []
+    filtered_closes: list[float] = []
+    filtered_timestamps: list[object] = []
+    for high, low, close, ts in zip(highs, lows, closes, timestamps):
+        if _is_regular_session_timestamp(ts):
+            filtered_highs.append(float(high))
+            filtered_lows.append(float(low))
+            filtered_closes.append(float(close))
+            filtered_timestamps.append(ts)
+    return filtered_highs, filtered_lows, filtered_closes, filtered_timestamps
 
 
 def _parse_vendor_datetime(value: str) -> datetime:
