@@ -22,7 +22,7 @@ class _MockResponse:
 
 
 def test_fetch_massive_rows_prefers_latest_intraday_window() -> None:
-    newest = datetime(2026, 4, 4, 20, 0, tzinfo=timezone.utc)
+    newest = datetime(2026, 4, 3, 20, 0, tzinfo=timezone.utc)
     results = []
     # Polygon returns descending results when sort=desc.
     for offset in range(160):
@@ -51,5 +51,5 @@ def test_fetch_massive_rows_prefers_latest_intraday_window() -> None:
     assert "sort=desc" in requested_urls[0]
     # 50 rows should be recent bars from the provided descending payload,
     # not stale bars from the oldest edge of a long lookback window.
-    assert str(rows[-1]["timestamp"]).startswith("2026-04-04")
-    assert str(rows[0]["timestamp"]).startswith("2026-04-04")
+    assert str(rows[-1]["timestamp"]).startswith("2026-04-03")
+    assert str(rows[0]["timestamp"]).startswith("2026-04-03")
