@@ -63,6 +63,23 @@ from quant.storage import (
 if TYPE_CHECKING:
     from flask import Flask
 
+DISPLAY_TIMEZONE = ZoneInfo("America/Vancouver")
+
+
+def format_display_time(value: object) -> str:
+    text = str(value).strip()
+    if not text:
+        return "n/a"
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+    localized = parsed.astimezone(DISPLAY_TIMEZONE)
+    return localized.strftime("%Y-%m-%d %H:%M:%S %Z")
+
 
 def default_model_config() -> Dict[str, object]:
     return {
@@ -1522,7 +1539,7 @@ def create_app() -> "Flask":
         worker_state = escape(str(monitor_state.get("worker_state", "stopped")))
         monitor_running = bool(monitor_state.get("running"))
         monitor_last_error = escape(str(monitor_state.get("last_error", "")))
-        monitor_next_tick = escape(str(monitor_state.get("next_tick_at", "")))
+        monitor_next_tick = escape(format_display_time(monitor_state.get("next_tick_at", "")))
         monitor_rows = monitor_state.get("last_rows", [])
         monitor_rows_html = build_run_all_rows_from_results(monitor_rows) if isinstance(monitor_rows, list) else ""
         error_line = f"<br><span style='color:#ff7b7b;'><strong>Last error:</strong> {monitor_last_error}</span>" if monitor_last_error else ""
@@ -2728,8 +2745,8 @@ def create_app() -> "Flask":
         monitor_running = bool(monitor_state.get("running"))
         worker_alive = bool(monitor_state.get("worker_alive"))
         worker_state = escape(str(monitor_state.get("worker_state", "stopped")))
-        monitor_started_at = escape(str(monitor_state.get("started_at", "")))
-        monitor_last_tick = escape(str(monitor_state.get("last_tick", "")))
+        monitor_started_at = escape(format_display_time(monitor_state.get("started_at", "")))
+        monitor_last_tick = escape(format_display_time(monitor_state.get("last_tick", "")))
         monitor_last_error = escape(str(monitor_state.get("last_error", "")))
         monitor_market_state = str(monitor_state.get("last_market_state", "unknown")).strip().lower()
         if monitor_market_state == "open":
@@ -2758,9 +2775,9 @@ def create_app() -> "Flask":
                 "<button type='button' class='saved-eval-item' "
                 f"data-id='{int(item['id'])}' "
                 f"data-name='{escape(str(item['name']))}' "
-                f"data-updated-at='{escape(str(item['updated_at']))}'>"
+                f"data-updated-at='{escape(format_display_time(item['updated_at']))}'>"
                 f"<strong>{escape(str(item['name']))}</strong>"
-                f"<span>{escape(str(item['updated_at']))}</span>"
+                f"<span>{escape(format_display_time(item['updated_at']))}</span>"
                 "</button>"
             )
             for item in saved_evaluations
