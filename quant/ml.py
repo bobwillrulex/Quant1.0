@@ -303,8 +303,9 @@ def strategy_metrics(
             if time_decay_hit:
                 close_position(idx, current_price, time_decay_exit=True)
             elif fixed_or_atr_hit:
-                gap_price = current_price
-                stop_fill_price = min(stop_price if stop_price is not None else gap_price, gap_price)
+                # Assume idealized stop execution: fill exactly at the configured stop
+                # level once touched (no adverse gap/slippage beyond global trade costs).
+                stop_fill_price = stop_price if stop_price is not None else current_price
                 close_position(idx, stop_fill_price, stop_exit=True)
             elif model_invalidation_hit and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
@@ -334,8 +335,9 @@ def strategy_metrics(
             if time_decay_hit:
                 close_position(idx, current_price, time_decay_exit=True)
             elif fixed_or_atr_hit:
-                gap_price = current_price
-                stop_fill_price = max(stop_price if stop_price is not None else gap_price, gap_price)
+                # Assume idealized stop execution: fill exactly at the configured stop
+                # level once touched (no adverse gap/slippage beyond global trade costs).
+                stop_fill_price = stop_price if stop_price is not None else current_price
                 close_position(idx, stop_fill_price, stop_exit=True)
             elif model_invalidation_hit and entry_idx is not None:
                 threshold = expected_returns[entry_idx] - (2.0 * stop_cfg.model_mae)
