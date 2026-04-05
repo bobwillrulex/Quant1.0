@@ -279,7 +279,14 @@ class StopLossUITests(unittest.TestCase):
     @patch("main.fetch_market_rows")
     @patch("main.evaluate_bundle")
     @patch("main.train_strategy_models")
-    def test_evaluate_real_history_forces_chronological_split(self, train_mock, eval_mock, fetch_market_rows_mock):
+    @patch("main.get_strategy_feature_builder")
+    def test_evaluate_real_history_forces_chronological_split(
+        self,
+        feature_builder_mock,
+        train_mock,
+        eval_mock,
+        fetch_market_rows_mock,
+    ):
         fetch_market_rows_mock.return_value = (
             [
                 {"return_next": 0.01},
@@ -289,10 +296,12 @@ class StopLossUITests(unittest.TestCase):
             ],
             None,
         )
+        feature_builder_mock.return_value.transform.return_value = [[0.1], [0.2], [0.3], [0.4]]
         train_mock.return_value = {
             "x_test_raw": [[0.1], [0.2]],
             "y_test_ret": [0.01, -0.01],
             "y_test_dir": [1, 0],
+            "feature_set": "feature2",
             "train_size": 2,
             "test_size": 2,
             "split_style": "chronological",
@@ -343,13 +352,21 @@ class StopLossUITests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(train_mock.call_args.kwargs["split_style"], "chronological")
-        self.assertEqual(train_mock.call_args.kwargs["test_ratio"], 0.10)
+        self.assertEqual(train_mock.call_args.kwargs["test_ratio"], 0.0)
+        self.assertEqual(len(eval_mock.call_args.args[1]), 4)
         self.assertIn("Historical evaluation mode", response.get_data(as_text=True))
 
     @patch("main.fetch_market_rows")
     @patch("main.evaluate_bundle")
     @patch("main.train_strategy_models")
-    def test_evaluate_only_uses_selected_evaluation_split_for_new_model(self, train_mock, eval_mock, fetch_market_rows_mock):
+    @patch("main.get_strategy_feature_builder")
+    def test_evaluate_only_uses_selected_evaluation_split_for_new_model(
+        self,
+        feature_builder_mock,
+        train_mock,
+        eval_mock,
+        fetch_market_rows_mock,
+    ):
         fetch_market_rows_mock.return_value = (
             [
                 {"return_next": 0.01},
@@ -359,10 +376,12 @@ class StopLossUITests(unittest.TestCase):
             ],
             None,
         )
+        feature_builder_mock.return_value.transform.return_value = [[0.1], [0.2], [0.3], [0.4]]
         train_mock.return_value = {
             "x_test_raw": [[0.1], [0.2]],
             "y_test_ret": [0.01, -0.01],
             "y_test_dir": [1, 0],
+            "feature_set": "feature2",
             "train_size": 2,
             "test_size": 2,
             "split_style": "shuffled",
@@ -412,7 +431,8 @@ class StopLossUITests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(train_mock.call_args.kwargs["test_ratio"], 0.10)
+        self.assertEqual(train_mock.call_args.kwargs["test_ratio"], 0.0)
+        self.assertEqual(len(eval_mock.call_args.args[1]), 4)
 
     @patch("main.list_saved_models")
     @patch("main.save_model_configs")

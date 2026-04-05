@@ -32,8 +32,8 @@ SplitStyle = Literal["shuffled", "chronological"]
 
 
 def train_test_split(rows: Sequence[Row], test_ratio: float = 0.25, split_style: SplitStyle = "shuffled") -> Tuple[List[Row], List[Row]]:
-    if not (0.0 < test_ratio < 1.0):
-        raise ValueError("test_ratio must be between 0 and 1 (exclusive).")
+    if not (0.0 <= test_ratio < 1.0):
+        raise ValueError("test_ratio must be between 0 and 1 (1 excluded).")
     data = list(rows)
     if split_style == "shuffled":
         random.shuffle(data)
