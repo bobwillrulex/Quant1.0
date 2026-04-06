@@ -48,7 +48,38 @@ class MonteCarloBacktestTests(unittest.TestCase):
             self.assertIn("probability_of_loss", result["summary"])
             self.assertIn("probability_of_large_loss", result["summary"])
             self.assertIn("probability_of_ruin", result["summary"])
+            self.assertIn("median_sharpe", result["summary"])
             self.assertTrue(math.isfinite(float(result["summary"]["log_mean_return"])))
+
+    def test_run_monte_carlo_backtest_sharpe_annualizes_from_row_labels(self):
+        returns = [0.0, 0.002, -0.001, 0.003, -0.001]
+        probs = [0.5] * len(returns)
+        row_labels = [
+            "2026-03-06T14:40:00+00:00",
+            "2026-03-06T14:45:00+00:00",
+            "2026-03-06T14:50:00+00:00",
+            "2026-03-06T14:55:00+00:00",
+            "2026-03-06T15:00:00+00:00",
+        ]
+        strategy_fn = lambda mc_returns, _mc_probs, **_kwargs: {"bar_returns": list(mc_returns), "trade_returns": []}
+        result_with_labels = run_monte_carlo_backtest(
+            returns=returns,
+            probs=probs,
+            strategy_fn=strategy_fn,
+            n_sim=10,
+            method="shuffle",
+            seed=7,
+            row_labels=row_labels,
+        )
+        result_without_labels = run_monte_carlo_backtest(
+            returns=returns,
+            probs=probs,
+            strategy_fn=strategy_fn,
+            n_sim=10,
+            method="shuffle",
+            seed=7,
+        )
+        self.assertGreater(float(result_with_labels["summary"]["mean_sharpe"]), float(result_without_labels["summary"]["mean_sharpe"]))
 
     def test_evaluate_bundle_monte_carlo_uses_strategy_step_returns(self):
         bundle = {

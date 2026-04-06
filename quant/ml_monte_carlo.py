@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import math
 import random
 from typing import Any, Callable, Dict, List, Sequence, Tuple
@@ -76,6 +77,29 @@ def distribution_shape(values: List[float], mean_val: float, std_val: float) -> 
     return skew, kurtosis_excess
 
 
+def _infer_periods_per_year(
+    row_labels: Sequence[str] | None,
+    sample_count: int,
+    default_periods: float = 252.0,
+) -> float:
+    if not row_labels or sample_count < 2:
+        return default_periods
+    timestamps: List[datetime] = []
+    for label in row_labels:
+        try:
+            timestamps.append(datetime.fromisoformat(str(label)))
+        except (TypeError, ValueError):
+            continue
+    if len(timestamps) < 2:
+        return default_periods
+    span_seconds = (timestamps[-1] - timestamps[0]).total_seconds()
+    if span_seconds <= 0.0:
+        return default_periods
+    seconds_per_year = 365.25 * 24.0 * 60.0 * 60.0
+    periods_per_year = ((len(timestamps) - 1) / span_seconds) * seconds_per_year
+    return periods_per_year if periods_per_year > 1.0 else default_periods
+
+
 def run_monte_carlo_backtest(
     returns: List[float],
     probs: List[float],
@@ -116,6 +140,7 @@ def run_monte_carlo_backtest(
             "skewness": 0.0,
             "kurtosis": 0.0,
             "mean_sharpe": 0.0,
+            "median_sharpe": 0.0,
             "mean_drawdown": 0.0,
             "worst_drawdown": 0.0,
             "probability_of_loss": 0.0,
@@ -123,6 +148,8 @@ def run_monte_carlo_backtest(
             "probability_of_ruin": 0.0,
         }
         return {"raw_results": [], "summary": empty_summary}
+
+    periods_per_year = _infer_periods_per_year(strategy_kwargs.get("row_labels"), len(sampled_unit_returns))
 
     raw_results: List[Dict[str, float]] = []
     equity_curves: List[List[float]] = []
@@ -154,7 +181,7 @@ def run_monte_carlo_backtest(
         total_return = equity - 1.0
         mean_ret = (sum(sampled_returns) / len(sampled_returns)) if sampled_returns else 0.0
         sd_ret = stddev(sampled_returns)
-        sharpe = (mean_ret / sd_ret * math.sqrt(252.0)) if sd_ret > 1e-12 else 0.0
+        sharpe = (mean_ret / sd_ret * math.sqrt(periods_per_year)) if sd_ret > 1e-12 else 0.0
         win_rate = (sum(1 for value in sampled_returns if value > 0.0) / len(sampled_returns)) if sampled_returns else 0.0
         total_log_return = sum(math.log1p(value) if value > -1.0 else float("-inf") for value in sampled_returns)
         log_total_return = -1.0 if math.isinf(total_log_return) and total_log_return < 0 else (math.exp(total_log_return) - 1.0)
@@ -197,6 +224,7 @@ def run_monte_carlo_backtest(
         "skewness": skewness,
         "kurtosis": kurtosis,
         "mean_sharpe": (sum(sharpes) / len(sharpes)) if sharpes else 0.0,
+        "median_sharpe": quantile(sorted(sharpes), 0.5) if sharpes else 0.0,
         "mean_drawdown": (sum(drawdowns) / len(drawdowns)) if drawdowns else 0.0,
         "worst_drawdown": max(drawdowns) if drawdowns else 0.0,
         "probability_of_loss": (sum(1 for value in total_returns if value < 0.0) / len(total_returns)) if total_returns else 0.0,
