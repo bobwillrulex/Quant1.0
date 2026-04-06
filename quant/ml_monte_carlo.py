@@ -98,8 +98,10 @@ def run_monte_carlo_backtest(
 
     rng = random.Random(seed)
     base_metrics = strategy_fn(returns, probs, **strategy_kwargs)
-    trade_returns = [float(value) for value in base_metrics.get("trade_returns", [])]
-    if not trade_returns:
+    sampled_unit_returns = [float(value) for value in base_metrics.get("bar_returns", [])]
+    if not sampled_unit_returns:
+        sampled_unit_returns = [float(value) for value in base_metrics.get("trade_returns", [])]
+    if not sampled_unit_returns:
         empty_summary = {
             "mean_return": 0.0,
             "median_return": 0.0,
@@ -124,37 +126,37 @@ def run_monte_carlo_backtest(
 
     raw_results: List[Dict[str, float]] = []
     equity_curves: List[List[float]] = []
-    n = len(trade_returns)
+    n = len(sampled_unit_returns)
     log_total_returns: List[float] = []
 
     for _ in range(n_sim):
         if method == "bootstrap":
-            sampled_trades = [trade_returns[rng.randrange(n)] for _ in range(n)]
+            sampled_returns = [sampled_unit_returns[rng.randrange(n)] for _ in range(n)]
         elif method == "shuffle":
-            sampled_trades = list(trade_returns)
-            rng.shuffle(sampled_trades)
+            sampled_returns = list(sampled_unit_returns)
+            rng.shuffle(sampled_returns)
         else:
-            sampled_trades = []
-            while len(sampled_trades) < n:
+            sampled_returns = []
+            while len(sampled_returns) < n:
                 start = rng.randrange(n)
                 end = min(n, start + block_size)
-                sampled_trades.extend(trade_returns[start:end])
-            sampled_trades = sampled_trades[:n]
+                sampled_returns.extend(sampled_unit_returns[start:end])
+            sampled_returns = sampled_returns[:n]
 
         equity = 1.0
         peak = 1.0
         max_drawdown = 0.0
-        for trade_ret in sampled_trades:
+        for trade_ret in sampled_returns:
             equity *= 1.0 + trade_ret
             equity = max(equity, 0.0)
             peak = max(peak, equity)
             max_drawdown = max(max_drawdown, ((peak - equity) / peak) if peak > 0 else 0.0)
         total_return = equity - 1.0
-        mean_ret = (sum(sampled_trades) / len(sampled_trades)) if sampled_trades else 0.0
-        sd_ret = stddev(sampled_trades)
+        mean_ret = (sum(sampled_returns) / len(sampled_returns)) if sampled_returns else 0.0
+        sd_ret = stddev(sampled_returns)
         sharpe = (mean_ret / sd_ret * math.sqrt(252.0)) if sd_ret > 1e-12 else 0.0
-        win_rate = (sum(1 for value in sampled_trades if value > 0.0) / len(sampled_trades)) if sampled_trades else 0.0
-        total_log_return = sum(math.log1p(value) if value > -1.0 else float("-inf") for value in sampled_trades)
+        win_rate = (sum(1 for value in sampled_returns if value > 0.0) / len(sampled_returns)) if sampled_returns else 0.0
+        total_log_return = sum(math.log1p(value) if value > -1.0 else float("-inf") for value in sampled_returns)
         log_total_return = -1.0 if math.isinf(total_log_return) and total_log_return < 0 else (math.exp(total_log_return) - 1.0)
         log_total_returns.append(log_total_return)
         raw_results.append(
@@ -170,7 +172,7 @@ def run_monte_carlo_backtest(
         if len(equity_curves) < max(0, int(return_equity_curves)):
             curve: List[float] = []
             equity = 1.0
-            for ret in sampled_trades:
+            for ret in sampled_returns:
                 equity *= 1.0 + ret
                 curve.append(equity)
             equity_curves.append(curve)
