@@ -219,6 +219,40 @@ class StopLossStrategyTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(metrics["max_loss_per_trade"]), -0.0204, places=6)
 
+    def test_sharpe_annualizes_from_timestamped_rows(self):
+        returns = [0.0, 0.002, -0.001, 0.003, -0.001]
+        probs = [0.9, 0.9, 0.9, 0.9, 0.9]
+        expected = [0.01] * len(returns)
+        row_labels = [
+            "2026-03-06T14:40:00+00:00",
+            "2026-03-06T14:45:00+00:00",
+            "2026-03-06T14:50:00+00:00",
+            "2026-03-06T14:55:00+00:00",
+            "2026-03-06T15:00:00+00:00",
+        ]
+        metrics_with_labels = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
+            row_labels=row_labels,
+        )
+        metrics_without_labels = strategy_metrics(
+            returns,
+            probs,
+            expected_returns=expected,
+            long_threshold=0.6,
+            short_threshold=0.2,
+            allow_short=False,
+            prob_smoothing_window=1,
+            stop_loss=StopLossConfig(strategy=StopLossStrategy.NONE),
+        )
+        self.assertGreater(float(metrics_with_labels["sharpe"]), float(metrics_without_labels["sharpe"]))
+
     def test_fixed_stop_caps_reported_max_drawdown_to_trade_stop_bound(self):
         returns = [0.10, 0.10, -0.06, 0.0]
         probs = [0.9] * len(returns)
