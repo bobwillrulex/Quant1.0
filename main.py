@@ -2505,7 +2505,7 @@ def create_app() -> "Flask":
                                     f"<p><span class='muted'>CVaR 5%</span> <strong>{float(mc_summary.get('cvar_5_return', 0.0)):+.2%}</strong></p>"
                                     f"<p><span class='muted'>Log Mean / Median Return</span> {float(mc_summary.get('log_mean_return', 0.0)):+.2%} / {float(mc_summary.get('log_median_return', 0.0)):+.2%}</p>"
                                     f"<p><span class='muted'>Skewness / Kurtosis</span> {float(mc_summary.get('skewness', 0.0)):+.3f} / {float(mc_summary.get('kurtosis', 0.0)):+.3f}</p>"
-                                    f"<p><span class='muted'>Mean Sharpe</span> {float(mc_summary.get('mean_sharpe', 0.0)):.3f}</p>"
+                                    f"<p><span class='muted'>Mean / Median Sharpe</span> {float(mc_summary.get('mean_sharpe', 0.0)):.3f} / {float(mc_summary.get('median_sharpe', 0.0)):.3f}</p>"
                                     f"<p><span class='muted'>Mean / Worst Drawdown</span> {float(mc_summary.get('mean_drawdown', 0.0)):.2%} / {float(mc_summary.get('worst_drawdown', 0.0)):.2%}</p>"
                                     f"<p><span class='muted'>Probability of Loss</span> <strong>{float(mc_summary.get('probability_of_loss', 0.0)):.2%}</strong></p>"
                                     f"<p><span class='muted'>P(Return &lt; -50%)</span> {float(mc_summary.get('probability_of_large_loss', 0.0)):.2%}</p>"

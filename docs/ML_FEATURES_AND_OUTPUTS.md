@@ -132,7 +132,7 @@ Enabled when `monte_carlo_method` is one of `bootstrap`, `shuffle`, or `block`.
   - tails (`p5_return`, `p95_return`, `cvar_5_return`)
   - shape (`skewness`, `kurtosis`)
   - risk probabilities (`probability_of_loss`, `probability_of_large_loss`, `probability_of_ruin`)
-  - drawdown and Sharpe summaries (`mean_sharpe`, `mean_drawdown`, `worst_drawdown`)
+  - drawdown and Sharpe summaries (`mean_sharpe`, `median_sharpe`, `mean_drawdown`, `worst_drawdown`)
 - optional `equity_curves` sample paths.
 
 ### Additional diagnostics
