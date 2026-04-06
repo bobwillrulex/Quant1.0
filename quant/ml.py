@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import math
 import random
 from typing import Any, Dict, List, Literal, Sequence, Tuple
@@ -80,6 +81,25 @@ def parse_thresholds(buy_raw: str, sell_raw: str, *, default_buy: float = 0.6, d
     if not (0.0 <= sell_threshold < buy_threshold <= 1.0):
         raise ValueError("Thresholds must satisfy: 0.0 <= sell < buy <= 1.0.")
     return buy_threshold, sell_threshold
+
+
+def _infer_periods_per_year(row_labels: Sequence[str] | None, sample_count: int, default_periods: float = 252.0) -> float:
+    if not row_labels or sample_count < 2:
+        return default_periods
+    timestamps: List[datetime] = []
+    for label in row_labels:
+        try:
+            timestamps.append(datetime.fromisoformat(str(label)))
+        except (TypeError, ValueError):
+            continue
+    if len(timestamps) < 2:
+        return default_periods
+    span_seconds = (timestamps[-1] - timestamps[0]).total_seconds()
+    if span_seconds <= 0.0:
+        return default_periods
+    seconds_per_year = 365.25 * 24.0 * 60.0 * 60.0
+    periods_per_year = ((len(timestamps) - 1) / span_seconds) * seconds_per_year
+    return periods_per_year if periods_per_year > 1.0 else default_periods
 
 
 def train_strategy_models(
@@ -432,7 +452,8 @@ def strategy_metrics(
         "max": float(sorted_holds[-1]) if sorted_holds else 0.0,
     }
     sd = stddev(pnl)
-    sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(252.0)) if (sd > 1e-12 and pnl) else 0.0
+    periods_per_year = _infer_periods_per_year(row_labels, len(pnl))
+    sharpe = ((sum(pnl) / len(pnl)) / sd * math.sqrt(periods_per_year)) if (sd > 1e-12 and pnl) else 0.0
     buy_hold_source = buy_hold_returns if buy_hold_returns is not None else returns
     total_return = equity - 1.0
     buy_hold_total_return = (
