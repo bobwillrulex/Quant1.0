@@ -519,6 +519,7 @@ def strategy_metrics(
         "trade_count": float(trades),
         "avg_gain_per_trade": (sum(closed_trade_pnls) / len(closed_trade_pnls)) if closed_trade_pnls else 0.0,
         "max_loss_per_trade": max_trade_loss,
+        "bar_returns": pnl,
         "trade_returns": closed_trade_pnls,
         "trade_log": trade_log,
         "flag_unrealistic": 1.0 if flag_unrealistic else 0.0,
@@ -758,7 +759,7 @@ def evaluate_bundle(
     monte_carlo: Dict[str, Any] | None = None
     if monte_carlo_method in {"bootstrap", "shuffle", "block"}:
         monte_carlo = run_monte_carlo_backtest(
-            returns=list(y_test_ret),
+            returns=list(strategy_returns),
             probs=list(up_prob),
             strategy_fn=strategy_metrics,
             n_sim=monte_carlo_n_sim,
@@ -774,6 +775,8 @@ def evaluate_bundle(
             buy_hold_total_return_override=buy_hold_total_return_override,
             allow_short=allow_short,
             stop_loss=stop_loss,
+            row_labels=row_labels,
+            raw_prices=raw_prices,
         )
     preview = [{"expected_return": ret_pred[i], "p_up": up_prob[i], "actual_return": y_test_ret[i]} for i in range(min(5, len(x_test)))]
     latest_p_up = float(up_prob[-1]) if up_prob else 0.5
