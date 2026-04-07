@@ -57,7 +57,7 @@ def test_create_and_list_and_get_bot(client):
     assert created["name"] == "Alpha Bot"
     assert created["status"] == "stopped"
 
-    list_response = client.get("/bots")
+    list_response = client.get("/api/bots")
     assert list_response.status_code == 200
     bots = list_response.get_json()
     assert len(bots) == 1
@@ -109,3 +109,11 @@ def test_not_found_errors(client):
     assert start_response.status_code == 404
     stop_response = client.post("/bots/stop/not-real")
     assert stop_response.status_code == 404
+
+
+def test_bots_dashboard_page(client):
+    response = client.get("/bots")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Trading Bots Dashboard" in body
+    assert "/api/bots" in body

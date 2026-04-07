@@ -772,9 +772,239 @@ def create_app() -> "Flask":
             "take_profit": float(payload["take_profit"]),
         }
 
-    @app.route("/bots", methods=["GET"])
+    @app.route("/api/bots", methods=["GET"])
     def list_bots() -> object:
         return jsonify([_bot_payload(bot) for bot in get_all_bots()])
+
+    @app.route("/bots", methods=["GET"])
+    def bots_dashboard() -> str:
+        return """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Trading Bots Dashboard</title>
+          <style>
+            :root {
+              color-scheme: dark;
+              --bg: #0b1220;
+              --panel: #111a2b;
+              --panel-2: #162238;
+              --text: #e5e7eb;
+              --muted: #9ca3af;
+              --border: #2a3650;
+              --accent: #3b82f6;
+              --accent-2: #2563eb;
+              --success: #22c55e;
+              --danger: #ef4444;
+            }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              background: linear-gradient(180deg, #070d19 0%, var(--bg) 100%);
+              color: var(--text);
+            }
+            .container {
+              max-width: 1100px;
+              margin: 0 auto;
+              padding: 24px;
+            }
+            h1 {
+              margin: 0 0 18px 0;
+              font-size: 1.8rem;
+            }
+            .toolbar {
+              display: flex;
+              gap: 12px;
+              flex-wrap: wrap;
+              align-items: center;
+              margin-bottom: 16px;
+            }
+            .search-input {
+              flex: 1 1 300px;
+              border: 1px solid var(--border);
+              background: var(--panel);
+              color: var(--text);
+              border-radius: 10px;
+              padding: 10px 12px;
+              outline: none;
+            }
+            .search-input:focus {
+              border-color: var(--accent);
+              box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+            }
+            .btn {
+              border: 0;
+              border-radius: 10px;
+              padding: 10px 14px;
+              font-weight: 600;
+              cursor: pointer;
+            }
+            .btn-primary {
+              background: var(--accent);
+              color: white;
+            }
+            .btn-primary:hover { background: var(--accent-2); }
+            .table-wrap {
+              overflow-x: auto;
+              border: 1px solid var(--border);
+              border-radius: 12px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              background: var(--panel);
+            }
+            th, td {
+              text-align: left;
+              padding: 12px;
+              border-bottom: 1px solid var(--border);
+              white-space: nowrap;
+            }
+            th { background: var(--panel-2); font-weight: 600; }
+            .status-running { color: var(--success); font-weight: 600; }
+            .status-stopped { color: var(--danger); font-weight: 600; }
+            .btn-small { padding: 6px 10px; font-size: 0.86rem; margin-right: 6px; }
+            .btn-start { background: #166534; color: #dcfce7; }
+            .btn-stop { background: #991b1b; color: #fee2e2; }
+            .muted { color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Trading Bots Dashboard</h1>
+            <div class="toolbar">
+              <input id="searchInput" class="search-input" type="text" placeholder="Search bots by name..." />
+              <button id="createBotButton" class="btn btn-primary">Create New Bot</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Status (Running/Stopped)</th>
+                    <th>Day PnL</th>
+                    <th>Total PnL</th>
+                    <th>Position</th>
+                    <th>Cash</th>
+                    <th>Actions (Start/Stop)</th>
+                  </tr>
+                </thead>
+                <tbody id="botsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="muted">Auto-refreshes every 5 seconds.</div>
+          </div>
+          <script>
+            const tableBody = document.getElementById("botsTableBody");
+            const searchInput = document.getElementById("searchInput");
+            const createBotButton = document.getElementById("createBotButton");
+            let allBots = [];
+
+            const formatCurrency = (value) => {
+              const number = Number(value || 0);
+              return number.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+            };
+
+            const renderRows = () => {
+              const search = searchInput.value.trim().toLowerCase();
+              const filtered = allBots.filter((bot) => String(bot.name || "").toLowerCase().includes(search));
+              tableBody.innerHTML = "";
+              filtered.forEach((bot) => {
+                const status = String(bot.status || "stopped").toLowerCase();
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                  <td></td>
+                  <td class="${status === "running" ? "status-running" : "status-stopped"}"></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                `;
+                row.children[0].textContent = String(bot.name || "");
+                row.children[1].textContent = status === "running" ? "Running" : "Stopped";
+                row.children[2].textContent = formatCurrency(bot.day_pnl);
+                row.children[3].textContent = formatCurrency(bot.total_pnl);
+                row.children[4].textContent = Number(bot.position || 0).toFixed(2);
+                row.children[5].textContent = formatCurrency(bot.cash);
+
+                const actionsCell = row.children[6];
+                const startBtn = document.createElement("button");
+                startBtn.className = "btn btn-small btn-start";
+                startBtn.textContent = "Start";
+                startBtn.disabled = status === "running";
+                startBtn.addEventListener("click", () => botAction(`/bots/start/${bot.id}`));
+
+                const stopBtn = document.createElement("button");
+                stopBtn.className = "btn btn-small btn-stop";
+                stopBtn.textContent = "Stop";
+                stopBtn.disabled = status !== "running";
+                stopBtn.addEventListener("click", () => botAction(`/bots/stop/${bot.id}`));
+
+                actionsCell.appendChild(startBtn);
+                actionsCell.appendChild(stopBtn);
+                tableBody.appendChild(row);
+              });
+            };
+
+            const loadBots = async () => {
+              const response = await fetch("/api/bots");
+              if (!response.ok) {
+                throw new Error("Failed to load bots");
+              }
+              allBots = await response.json();
+              renderRows();
+            };
+
+            const botAction = async (url) => {
+              const response = await fetch(url, { method: "POST" });
+              if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                alert(payload.error || "Action failed.");
+                return;
+              }
+              await loadBots();
+            };
+
+            createBotButton.addEventListener("click", async () => {
+              const name = window.prompt("Bot name:");
+              if (!name) return;
+              const payload = {
+                model: "demo-model",
+                ticker: "AAPL",
+                timeframe: "1m",
+                starting_money: 10000,
+                buy_threshold: 0.6,
+                sell_threshold: 0.4,
+                stop_loss: 0.02,
+                take_profit: 0.05,
+                name,
+              };
+              const response = await fetch("/bots/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              if (!response.ok) {
+                const payloadErr = await response.json().catch(() => ({}));
+                alert(payloadErr.error || "Failed to create bot.");
+                return;
+              }
+              await loadBots();
+            });
+
+            searchInput.addEventListener("input", renderRows);
+            loadBots().catch((err) => {
+              tableBody.innerHTML = `<tr><td colspan="7">${String(err.message || err)}</td></tr>`;
+            });
+            setInterval(() => { loadBots().catch(() => {}); }, 5000);
+          </script>
+        </body>
+        </html>
+        """
 
     @app.route("/bots/create", methods=["POST"])
     def create_bot_endpoint() -> object:
