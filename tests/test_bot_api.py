@@ -146,3 +146,13 @@ def test_bots_dashboard_page(client):
     assert 'id="searchInput"' in body
     assert "searchInput.addEventListener(\"input\", renderRows)" in body
     assert "search_name: String(bot.name || \"\").toLowerCase()" in body
+
+
+def test_spot_bots_dashboard_page(client):
+    response = client.get("/spot/bots")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Trading Bots Dashboard" in body
+    assert 'href="/spot"' in body
+    assert 'href="/spot/manage-models"' in body
+    assert 'href="/spot/run-models"' in body

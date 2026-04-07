@@ -782,8 +782,17 @@ def create_app() -> "Flask":
         return jsonify([_bot_payload(bot) for bot in get_all_bots()])
 
     @app.route("/bots", methods=["GET"])
+    @app.route("/spot/bots", methods=["GET"])
     def bots_dashboard() -> str:
-        return """
+        is_spot = request.path.startswith("/spot")
+        home_href = "/spot" if is_spot else "/"
+        manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        run_models_href = "/spot/run-models" if is_spot else "/run-models"
+        bots_href = "/spot/bots" if is_spot else "/bots"
+        mode_switch_href = "/" if is_spot else "/spot"
+        mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
+        brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        template = """
         <!doctype html>
         <html lang="en">
         <head>
@@ -915,12 +924,13 @@ def create_app() -> "Flask":
         <body>
           <nav class="topbar">
             <div class="topbar-inner">
-              <a href="/" class="brand">Quant 1.0</a>
+              <a href="__HOME_HREF__" class="brand">__BRAND_LABEL__</a>
               <div class="nav-links">
-                <a href="/" class="tab-link">Model</a>
-                <a href="/manage-models" class="tab-link">Manage Models</a>
-                <a href="/run-models" class="tab-link">Run Models</a>
-                <a href="/bots" class="tab-link active">Bots</a>
+                <a href="__HOME_HREF__" class="tab-link">Model</a>
+                <a href="__MANAGE_HREF__" class="tab-link">Manage Models</a>
+                <a href="__RUN_MODELS_HREF__" class="tab-link">Run Models</a>
+                <a href="__BOTS_HREF__" class="tab-link active">Bots</a>
+                <a href="__MODE_SWITCH_HREF__" class="tab-link">__MODE_SWITCH_LABEL__</a>
               </div>
             </div>
           </nav>
@@ -1063,6 +1073,15 @@ def create_app() -> "Flask":
         </body>
         </html>
         """
+        return (
+            template.replace("__HOME_HREF__", home_href)
+            .replace("__MANAGE_HREF__", manage_href)
+            .replace("__RUN_MODELS_HREF__", run_models_href)
+            .replace("__BOTS_HREF__", bots_href)
+            .replace("__MODE_SWITCH_HREF__", mode_switch_href)
+            .replace("__MODE_SWITCH_LABEL__", mode_switch_label)
+            .replace("__BRAND_LABEL__", brand_label)
+        )
 
     @app.route("/bots/create", methods=["POST"])
     def create_bot_endpoint() -> object:
@@ -1105,6 +1124,7 @@ def create_app() -> "Flask":
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
+        bots_href = "/spot/bots" if is_spot else "/bots"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -1394,6 +1414,7 @@ def create_app() -> "Flask":
                   <a href="{home_href}" class="tab-link">Model</a>
                   <a href="{manage_href}" class="tab-link active">Manage Models</a>
                   <a href="{run_models_href}" class="tab-link">Run Models</a>
+                  <a href="{bots_href}" class="tab-link">Bots</a>
                   <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
                   <span class="ui-mode-badge">{ui_mode_badge}</span>
                 </div>
@@ -1767,6 +1788,7 @@ def create_app() -> "Flask":
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
+        bots_href = "/spot/bots" if is_spot else "/bots"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -1971,6 +1993,7 @@ def create_app() -> "Flask":
               <a href="{home_href}" class="tab-link">Model</a>
               <a href="{manage_href}" class="tab-link">Manage Models</a>
               <a href="{run_models_href}" class="tab-link active">Run Models</a>
+              <a href="{bots_href}" class="tab-link">Bots</a>
               <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
               <span class="ui-mode-badge">{ui_mode_badge}</span>
             </div>
@@ -2101,6 +2124,7 @@ def create_app() -> "Flask":
         home_href = "/spot" if is_spot else "/"
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
+        bots_href = "/spot/bots" if is_spot else "/bots"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -3514,6 +3538,7 @@ def create_app() -> "Flask":
                   <a href="{home_href}" class="tab-link active">Model</a>
                   <a href="{manage_href}" class="tab-link">Manage Models</a>
                   <a href="{run_models_href}" class="tab-link">Run Models</a>
+                  <a href="{bots_href}" class="tab-link">Bots</a>
                   <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                   <form method="post" style="margin:0;">
                     <input type="hidden" name="mode" value="provider_toggle" />
