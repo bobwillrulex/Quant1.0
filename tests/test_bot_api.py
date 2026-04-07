@@ -102,6 +102,32 @@ def test_create_bot_validation_error(client):
     assert "error" in payload
 
 
+def test_create_bot_accepts_execution_settings(client):
+    response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "name": "Settings Bot",
+            "execution_settings": {
+                "enable_latency_simulation": True,
+                "min_latency_ms": 50.0,
+                "max_latency_ms": 200.0,
+                "enable_spread_widening": True,
+                "volatility_threshold": 0.02,
+                "spread_widening_factor": 2.0,
+            },
+        },
+    )
+    assert response.status_code == 201
+
+
 def test_not_found_errors(client):
     get_response = client.get("/bots/not-real")
     assert get_response.status_code == 404

@@ -77,3 +77,27 @@ def test_create_get_start_stop_bot(monkeypatch):
 def test_start_missing_bot_raises():
     with pytest.raises(KeyError):
         bot_manager.start_bot("does-not-exist")
+
+
+def test_create_bot_applies_execution_settings():
+    def fetcher(_):
+        return None
+
+    bot = bot_manager.create_bot(
+        {
+            **_config("bot-settings", fetcher),
+            "execution_settings": {
+                "enable_latency_simulation": True,
+                "min_latency_ms": 50.0,
+                "max_latency_ms": 200.0,
+                "enable_spread_widening": True,
+                "volatility_threshold": 0.02,
+                "spread_widening_factor": 2.0,
+            },
+        }
+    )
+
+    assert bot.execution_engine.enable_latency_simulation is True
+    assert bot.execution_engine.min_latency_ms == 50.0
+    assert bot.execution_engine.max_latency_ms == 200.0
+    assert bot.execution_engine.enable_spread_widening is True
