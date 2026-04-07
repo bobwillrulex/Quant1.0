@@ -65,7 +65,82 @@ def test_create_and_list_and_get_bot(client):
 
     get_response = client.get(f"/bots/{created['id']}")
     assert get_response.status_code == 200
-    assert get_response.get_json()["id"] == created["id"]
+    detail_payload = get_response.get_json()
+    assert detail_payload["id"] == created["id"]
+    assert "metrics" in detail_payload
+    assert "trades" in detail_payload
+
+
+def test_get_bot_details_includes_trade_metrics(client):
+    create_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "name": "Metrics Bot",
+        },
+    )
+    bot_id = create_response.get_json()["id"]
+    bot = bot_manager.get_bot(bot_id)
+    assert bot is not None
+    bot.trades.extend(
+        [
+            {"timestamp": "2026-04-06T15:30:00+00:00", "side": "BUY", "price": 100.0, "size": 1.0, "pnl": -20.0},
+            {"timestamp": "2026-04-07T15:30:00+00:00", "side": "SELL", "price": 102.0, "size": 1.0, "pnl": 5.0},
+        ]
+    )
+
+    response = client.get(f"/bots/{bot_id}")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["metrics"]["trade_count"] == 2
+    assert payload["metrics"]["max_drawdown"] >= 0.0
+    assert isinstance(payload["trades"], list)
+
+
+def test_update_bot_settings(client):
+    create_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "name": "Editable Bot",
+        },
+    )
+    bot_id = create_response.get_json()["id"]
+    response = client.patch(
+        f"/bots/{bot_id}/settings",
+        json={
+            "name": "Edited Bot",
+            "ticker": "MSFT",
+            "timeframe": "5m",
+            "buy_threshold": 0.7,
+            "sell_threshold": 0.3,
+            "trade_size": 2,
+            "fixed_stop_pct": 1.5,
+            "take_profit": 0.08,
+            "stop_loss_strategy": "fixed_percentage",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["name"] == "Edited Bot"
+    updated_bot = bot_manager.get_bot(bot_id)
+    assert updated_bot is not None
+    assert updated_bot.ticker == "MSFT"
+    assert updated_bot.stop_loss == pytest.approx(0.015)
 
 
 def test_start_and_stop_bot(client, monkeypatch):
@@ -170,8 +245,14 @@ def test_bots_dashboard_page(client):
     assert 'id="searchInput"' in body
     assert 'id="botStopLossStrategy"' in body
     assert 'id="botFixedStopPctWrap"' in body
+    assert "Right-click a bot row to edit settings" in body
+    assert 'id="botDetailModal"' in body
+    assert 'id="editBotModal"' in body
+    assert 'id="botContextMenu"' in body
     assert "searchInput.addEventListener(\"input\", renderRows)" in body
     assert "search_name: String(bot.name || \"\").toLowerCase()" in body
+    assert "row.addEventListener(\"contextmenu\"" in body
+    assert "fetch(`/bots/${selectedBotId}/settings`" in body
     assert "syncBotStopLossFields" in body
 
 
