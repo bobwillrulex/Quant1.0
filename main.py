@@ -729,6 +729,86 @@ def create_app() -> "Flask":
             "cash": float(getattr(bot, "cash", 0.0)),
         }
 
+    def _parse_trade_timestamp(value: object) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=ZoneInfo("UTC"))
+        return parsed.astimezone(ZoneInfo("UTC"))
+
+    def _build_bot_metrics(bot: object) -> dict[str, object]:
+        trades = getattr(bot, "trades", [])
+        if not isinstance(trades, list):
+            trades = []
+        now = datetime.now(tz=ZoneInfo("UTC"))
+        day_cutoff = now - timedelta(days=1)
+        week_cutoff = now - timedelta(days=7)
+        month_cutoff = now - timedelta(days=30)
+
+        pnl_day = 0.0
+        pnl_week = 0.0
+        pnl_month = 0.0
+        curve = [0.0]
+        cumulative = 0.0
+
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            trade_pnl = float(trade.get("pnl", 0.0))
+            cumulative += trade_pnl
+            curve.append(cumulative)
+            ts = _parse_trade_timestamp(trade.get("timestamp"))
+            if ts is None:
+                continue
+            if ts >= day_cutoff:
+                pnl_day += trade_pnl
+            if ts >= week_cutoff:
+                pnl_week += trade_pnl
+            if ts >= month_cutoff:
+                pnl_month += trade_pnl
+
+        peak = curve[0]
+        drawdowns: list[float] = []
+        for point in curve:
+            peak = max(peak, point)
+            drawdown = peak - point
+            drawdowns.append(drawdown)
+        max_drawdown = max(drawdowns) if drawdowns else 0.0
+        non_zero_drawdowns = [value for value in drawdowns if value > 0.0]
+        avg_drawdown = sum(non_zero_drawdowns) / len(non_zero_drawdowns) if non_zero_drawdowns else 0.0
+
+        return {
+            "max_drawdown": max_drawdown,
+            "avg_drawdown": avg_drawdown,
+            "pnl_day": pnl_day,
+            "pnl_week": pnl_week,
+            "pnl_month": pnl_month,
+            "trade_count": len(trades),
+        }
+
+    def _bot_details_payload(bot: object) -> dict[str, object]:
+        raw_trades = getattr(bot, "trades", [])
+        trades = raw_trades if isinstance(raw_trades, list) else []
+        return {
+            **_bot_payload(bot),
+            "model_name": str(getattr(bot, "model_name", "")),
+            "ticker": str(getattr(bot, "ticker", "")),
+            "timeframe": str(getattr(bot, "timeframe", "")),
+            "buy_threshold": float(getattr(bot, "buy_threshold", 0.6)),
+            "sell_threshold": float(getattr(bot, "sell_threshold", 0.4)),
+            "stop_loss": float(getattr(bot, "stop_loss", 0.0)),
+            "take_profit": float(getattr(bot, "take_profit", 0.0)),
+            "trade_size": float(getattr(bot, "trade_size", 0.0)),
+            "metrics": _build_bot_metrics(bot),
+            "trades": trades,
+        }
+
     def _parse_bot_create_payload(payload: object) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise ValueError("JSON body must be an object.")
@@ -783,6 +863,51 @@ def create_app() -> "Flask":
             "take_profit": float(payload["take_profit"]),
             "execution_settings": execution_settings,
         }
+
+    def _parse_bot_update_payload(payload: object, *, existing_bot: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object.")
+        updated: dict[str, object] = {}
+        if "name" in payload:
+            name = str(payload.get("name", "")).strip()
+            if not name:
+                raise ValueError("name cannot be empty.")
+            updated["name"] = name
+        if "ticker" in payload:
+            ticker = str(payload.get("ticker", "")).strip().upper()
+            if not ticker:
+                raise ValueError("ticker cannot be empty.")
+            updated["ticker"] = ticker
+        if "timeframe" in payload:
+            timeframe = str(payload.get("timeframe", "")).strip()
+            if not timeframe:
+                raise ValueError("timeframe cannot be empty.")
+            updated["timeframe"] = timeframe
+
+        for field in ("buy_threshold", "sell_threshold", "take_profit", "trade_size"):
+            if field in payload:
+                updated[field] = float(payload[field])
+
+        if "buy_threshold" in updated and not (0.0 <= float(updated["buy_threshold"]) <= 1.0):
+            raise ValueError("buy_threshold must be between 0 and 1.")
+        if "sell_threshold" in updated and not (0.0 <= float(updated["sell_threshold"]) <= 1.0):
+            raise ValueError("sell_threshold must be between 0 and 1.")
+        if "take_profit" in updated and float(updated["take_profit"]) < 0.0:
+            raise ValueError("take_profit must be non-negative.")
+        if "trade_size" in updated and float(updated["trade_size"]) <= 0.0:
+            raise ValueError("trade_size must be positive.")
+
+        if "stop_loss_strategy" in payload or "fixed_stop_pct" in payload or "stop_loss" in payload:
+            strategy_raw = payload.get("stop_loss_strategy", "fixed_percentage")
+            stop_loss_strategy = parse_stop_loss_strategy(str(strategy_raw))
+            fixed_stop_pct_value = float(payload.get("fixed_stop_pct", payload.get("stop_loss", getattr(existing_bot, "stop_loss", 0.02) * 100.0)))
+            if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
+                validated_fixed_stop_pct = validate_fixed_stop_pct(fixed_stop_pct_value)
+                updated["stop_loss"] = validated_fixed_stop_pct / 100.0
+            else:
+                updated["stop_loss"] = float(payload.get("stop_loss", getattr(existing_bot, "stop_loss", 0.02)))
+
+        return updated
 
     @app.route("/api/bots/form-options", methods=["GET"])
     def bot_form_options() -> object:
@@ -957,6 +1082,8 @@ def create_app() -> "Flask":
             .btn-start { background: #1f5533; color: #dcfce7; }
             .btn-stop { background: #6f2121; color: #fee2e2; }
             .muted { color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+            .clickable-row { cursor: pointer; }
+            .clickable-row:hover { background: rgba(255,255,255,0.04); }
             .modal-backdrop {
               display: none;
               position: fixed;
@@ -988,6 +1115,49 @@ def create_app() -> "Flask":
               gap: 10px;
               margin-top: 14px;
             }
+            .metrics-grid {
+              display: grid;
+              grid-template-columns: repeat(3, minmax(160px, 1fr));
+              gap: 8px;
+              margin: 12px 0 14px;
+            }
+            .metric-card {
+              border: 1px solid var(--border);
+              border-radius: 10px;
+              padding: 8px 10px;
+              background: var(--surface);
+            }
+            .metric-label { font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+            .metric-value { font-size: 0.96rem; font-weight: 600; }
+            .trades-table-wrap {
+              max-height: 240px;
+              overflow: auto;
+              border: 1px solid var(--border);
+              border-radius: 10px;
+            }
+            .context-menu {
+              display: none;
+              position: fixed;
+              z-index: 90;
+              background: var(--panel-2);
+              border: 1px solid var(--border);
+              border-radius: 10px;
+              min-width: 150px;
+              box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+              padding: 6px;
+            }
+            .context-item {
+              display: block;
+              width: 100%;
+              text-align: left;
+              border: 0;
+              border-radius: 8px;
+              background: transparent;
+              color: var(--text);
+              padding: 8px 10px;
+              cursor: pointer;
+            }
+            .context-item:hover { background: var(--surface); }
           </style>
         </head>
         <body>
@@ -1026,7 +1196,7 @@ def create_app() -> "Flask":
               </table>
             </div>
             <p id="botsEmptyState" class="muted" style="display:none;">No bots match that search.</p>
-            <div class="muted">Auto-refreshes every 5 seconds.</div>
+            <div class="muted">Click a bot row for details. Right-click a bot row to edit settings. Auto-refreshes every 5 seconds.</div>
           </div>
           <div id="createBotModal" class="modal-backdrop">
             <div class="modal-panel">
@@ -1060,6 +1230,45 @@ def create_app() -> "Flask":
               </div>
             </div>
           </div>
+          <div id="botDetailModal" class="modal-backdrop">
+            <div class="modal-panel">
+              <h2 id="botDetailTitle" style="margin:0;">Bot Details</h2>
+              <p id="botDetailMeta" class="muted" style="margin:6px 0 0;"></p>
+              <div id="botMetricsGrid" class="metrics-grid"></div>
+              <h3 style="margin:8px 0;">Trade History</h3>
+              <div class="trades-table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>Size</th><th>PnL</th></tr></thead>
+                  <tbody id="botTradeHistoryBody"></tbody>
+                </table>
+              </div>
+              <div class="modal-actions" style="margin-top:12px;">
+                <button id="closeBotDetail" class="btn btn-secondary">Close</button>
+              </div>
+            </div>
+          </div>
+          <div id="editBotModal" class="modal-backdrop">
+            <div class="modal-panel">
+              <h2 style="margin:0 0 10px 0;">Edit Bot Settings</h2>
+              <div class="modal-grid">
+                <label class="field-label">Bot Name<input id="editBotName" class="search-input" /></label>
+                <label class="field-label">Ticker<input id="editBotTicker" class="search-input" /></label>
+                <label class="field-label">Candle Time<input id="editBotTimeframe" class="search-input" /></label>
+                <label class="field-label">Trade Size<input id="editBotTradeSize" class="search-input" type="number" min="0.01" step="0.01" /></label>
+                <label class="field-label">BUY if P(Up) &gt;<input id="editBotBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" /></label>
+                <label class="field-label">SELL if P(Up) &lt;<input id="editBotSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" /></label>
+                <label class="field-label">Fixed Stop Loss %<input id="editBotFixedStopPct" class="search-input" type="number" min="0.01" step="0.1" /></label>
+                <label class="field-label">Take Profit %<input id="editBotTakeProfit" class="search-input" type="number" min="0" step="0.001" /></label>
+              </div>
+              <div class="modal-actions">
+                <button id="submitEditBot" class="btn btn-primary">Save Changes</button>
+                <button id="cancelEditBot" class="btn btn-secondary">Cancel</button>
+              </div>
+            </div>
+          </div>
+          <div id="botContextMenu" class="context-menu">
+            <button id="contextEditBot" class="context-item">Edit settings</button>
+          </div>
           <script>
             const tableBody = document.getElementById("botsTableBody");
             const searchInput = document.getElementById("searchInput");
@@ -1068,11 +1277,70 @@ def create_app() -> "Flask":
             const createBotModal = document.getElementById("createBotModal");
             const cancelCreateBot = document.getElementById("cancelCreateBot");
             const submitCreateBot = document.getElementById("submitCreateBot");
+            const botDetailModal = document.getElementById("botDetailModal");
+            const botDetailTitle = document.getElementById("botDetailTitle");
+            const botDetailMeta = document.getElementById("botDetailMeta");
+            const botMetricsGrid = document.getElementById("botMetricsGrid");
+            const botTradeHistoryBody = document.getElementById("botTradeHistoryBody");
+            const closeBotDetail = document.getElementById("closeBotDetail");
+            const editBotModal = document.getElementById("editBotModal");
+            const submitEditBot = document.getElementById("submitEditBot");
+            const cancelEditBot = document.getElementById("cancelEditBot");
+            const botContextMenu = document.getElementById("botContextMenu");
+            const contextEditBot = document.getElementById("contextEditBot");
             let allBots = [];
+            let selectedBotId = null;
 
             const formatCurrency = (value) => {
               const number = Number(value || 0);
               return number.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+            };
+            const hideContextMenu = () => { botContextMenu.style.display = "none"; };
+            const showContextMenu = (x, y) => {
+              botContextMenu.style.left = `${x}px`;
+              botContextMenu.style.top = `${y}px`;
+              botContextMenu.style.display = "block";
+            };
+            const metricCard = (label, value) => `
+              <div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>
+            `;
+            const openBotDetails = async (botId) => {
+              hideContextMenu();
+              const response = await fetch(`/bots/${botId}`);
+              if (!response.ok) {
+                alert("Failed to load bot details.");
+                return;
+              }
+              const bot = await response.json();
+              const metrics = bot.metrics || {};
+              botDetailTitle.textContent = `Bot Details: ${String(bot.name || "")}`;
+              botDetailMeta.textContent = `Model ${String(bot.model_name || "")} • ${String(bot.ticker || "")} • ${String(bot.timeframe || "")}`;
+              botMetricsGrid.innerHTML = [
+                metricCard("Max Drawdown", formatCurrency(metrics.max_drawdown)),
+                metricCard("Avg Drawdown", formatCurrency(metrics.avg_drawdown)),
+                metricCard("PnL (24h)", formatCurrency(metrics.pnl_day)),
+                metricCard("PnL (7d)", formatCurrency(metrics.pnl_week)),
+                metricCard("PnL (30d)", formatCurrency(metrics.pnl_month)),
+                metricCard("Trades", String(metrics.trade_count || 0)),
+              ].join("");
+              const trades = Array.isArray(bot.trades) ? bot.trades : [];
+              botTradeHistoryBody.innerHTML = "";
+              if (!trades.length) {
+                botTradeHistoryBody.innerHTML = "<tr><td colspan='5' class='muted'>No trades yet.</td></tr>";
+              } else {
+                trades.slice().reverse().forEach((trade) => {
+                  const tr = document.createElement("tr");
+                  tr.innerHTML = `
+                    <td>${String(trade.timestamp || "")}</td>
+                    <td>${String(trade.side || "")}</td>
+                    <td>${Number(trade.price || 0).toFixed(4)}</td>
+                    <td>${Number(trade.size || 0).toFixed(2)}</td>
+                    <td>${formatCurrency(trade.pnl || 0)}</td>
+                  `;
+                  botTradeHistoryBody.appendChild(tr);
+                });
+              }
+              botDetailModal.style.display = "flex";
             };
 
             const renderRows = () => {
@@ -1082,6 +1350,7 @@ def create_app() -> "Flask":
               filtered.forEach((bot) => {
                 const status = String(bot.status || "stopped").toLowerCase();
                 const row = document.createElement("tr");
+                row.className = "clickable-row";
                 row.innerHTML = `
                   <td></td>
                   <td class="${status === "running" ? "status-running" : "status-stopped"}"></td>
@@ -1097,19 +1366,31 @@ def create_app() -> "Flask":
                 row.children[3].textContent = formatCurrency(bot.total_pnl);
                 row.children[4].textContent = Number(bot.position || 0).toFixed(2);
                 row.children[5].textContent = formatCurrency(bot.cash);
+                row.addEventListener("click", () => openBotDetails(bot.id));
+                row.addEventListener("contextmenu", (event) => {
+                  event.preventDefault();
+                  selectedBotId = bot.id;
+                  showContextMenu(event.clientX, event.clientY);
+                });
 
                 const actionsCell = row.children[6];
                 const startBtn = document.createElement("button");
                 startBtn.className = "btn btn-small btn-start";
                 startBtn.textContent = "Start";
                 startBtn.disabled = status === "running";
-                startBtn.addEventListener("click", () => botAction(`/bots/start/${bot.id}`));
+                startBtn.addEventListener("click", (event) => {
+                  event.stopPropagation();
+                  botAction(`/bots/start/${bot.id}`);
+                });
 
                 const stopBtn = document.createElement("button");
                 stopBtn.className = "btn btn-small btn-stop";
                 stopBtn.textContent = "Stop";
                 stopBtn.disabled = status !== "running";
-                stopBtn.addEventListener("click", () => botAction(`/bots/stop/${bot.id}`));
+                stopBtn.addEventListener("click", (event) => {
+                  event.stopPropagation();
+                  botAction(`/bots/stop/${bot.id}`);
+                });
 
                 actionsCell.appendChild(startBtn);
                 actionsCell.appendChild(stopBtn);
@@ -1187,12 +1468,43 @@ def create_app() -> "Flask":
               botTicker.value = options.default_ticker || "AAPL";
             };
 
+            const openEditModal = async (botId) => {
+              hideContextMenu();
+              const response = await fetch(`/bots/${botId}`);
+              if (!response.ok) {
+                alert("Failed to load bot settings.");
+                return;
+              }
+              const bot = await response.json();
+              selectedBotId = botId;
+              document.getElementById("editBotName").value = String(bot.name || "");
+              document.getElementById("editBotTicker").value = String(bot.ticker || "");
+              document.getElementById("editBotTimeframe").value = String(bot.timeframe || "");
+              document.getElementById("editBotTradeSize").value = Number(bot.trade_size || 1).toString();
+              document.getElementById("editBotBuyThreshold").value = Number(bot.buy_threshold || 0.6).toString();
+              document.getElementById("editBotSellThreshold").value = Number(bot.sell_threshold || 0.4).toString();
+              document.getElementById("editBotFixedStopPct").value = (Number(bot.stop_loss || 0.02) * 100).toString();
+              document.getElementById("editBotTakeProfit").value = Number(bot.take_profit || 0.05).toString();
+              editBotModal.style.display = "flex";
+            };
+
             createBotButton.addEventListener("click", async () => {
               await loadBotFormOptions();
               syncBotStopLossFields();
               createBotModal.style.display = "flex";
             });
             cancelCreateBot.addEventListener("click", () => { createBotModal.style.display = "none"; });
+            closeBotDetail.addEventListener("click", () => { botDetailModal.style.display = "none"; });
+            cancelEditBot.addEventListener("click", () => { editBotModal.style.display = "none"; });
+            contextEditBot.addEventListener("click", () => {
+              if (selectedBotId) openEditModal(selectedBotId);
+            });
+            document.addEventListener("click", (event) => {
+              if (!botContextMenu.contains(event.target)) {
+                hideContextMenu();
+              }
+            });
+            document.addEventListener("scroll", hideContextMenu, true);
             if (botStopLossStrategy) {
               botStopLossStrategy.addEventListener("change", syncBotStopLossFields);
             }
@@ -1222,6 +1534,33 @@ def create_app() -> "Flask":
               }
               createBotModal.style.display = "none";
               botName.value = "";
+              await loadBots();
+            });
+
+            submitEditBot.addEventListener("click", async () => {
+              if (!selectedBotId) return;
+              const payload = {
+                name: document.getElementById("editBotName").value,
+                ticker: document.getElementById("editBotTicker").value,
+                timeframe: document.getElementById("editBotTimeframe").value,
+                trade_size: Number(document.getElementById("editBotTradeSize").value),
+                buy_threshold: Number(document.getElementById("editBotBuyThreshold").value),
+                sell_threshold: Number(document.getElementById("editBotSellThreshold").value),
+                fixed_stop_pct: Number(document.getElementById("editBotFixedStopPct").value),
+                take_profit: Number(document.getElementById("editBotTakeProfit").value),
+                stop_loss_strategy: "fixed_percentage",
+              };
+              const response = await fetch(`/bots/${selectedBotId}/settings`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              if (!response.ok) {
+                const payloadErr = await response.json().catch(() => ({}));
+                alert(payloadErr.error || "Failed to update bot.");
+                return;
+              }
+              editBotModal.style.display = "none";
               await loadBots();
             });
 
@@ -1289,7 +1628,20 @@ def create_app() -> "Flask":
         bot = get_bot(bot_id)
         if bot is None:
             return jsonify({"error": f"Bot '{bot_id}' not found"}), 404
-        return jsonify(_bot_payload(bot))
+        return jsonify(_bot_details_payload(bot))
+
+    @app.route("/bots/<bot_id>/settings", methods=["PATCH"])
+    def update_bot_settings_endpoint(bot_id: str) -> object:
+        bot = get_bot(bot_id)
+        if bot is None:
+            return jsonify({"error": f"Bot '{bot_id}' not found"}), 404
+        try:
+            updates = _parse_bot_update_payload(request.get_json(silent=True), existing_bot=bot)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        for field, value in updates.items():
+            setattr(bot, field, value)
+        return jsonify(_bot_details_payload(bot))
 
     @app.route("/manage-models", methods=["GET", "POST"])
     @app.route("/spot/manage-models", methods=["GET", "POST"])
