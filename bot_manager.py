@@ -6,6 +6,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from bot import TradingBot
+from quant.execution_engine import ExecutionEngine
 
 
 MarketDataFetcher = Callable[[TradingBot], dict[str, Any] | None]
@@ -34,6 +35,11 @@ def create_bot(config: dict[str, Any]) -> TradingBot:
     runtime_config = dict(config)
     market_data_fetcher = runtime_config.pop("market_data_fetcher", None)
     poll_interval = runtime_config.pop("poll_interval", _DEFAULT_POLL_SECONDS)
+    execution_settings = runtime_config.pop("execution_settings", None)
+    if execution_settings is not None:
+        if not isinstance(execution_settings, dict):
+            raise ValueError("execution_settings must be an object.")
+        runtime_config["execution_engine"] = ExecutionEngine(**execution_settings)
 
     bot = TradingBot(**runtime_config)
     if market_data_fetcher is not None:

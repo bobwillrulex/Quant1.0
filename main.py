@@ -759,6 +759,10 @@ def create_app() -> "Flask":
         if not (0.0 <= buy_threshold <= 1.0 and 0.0 <= sell_threshold <= 1.0):
             raise ValueError("buy_threshold and sell_threshold must be between 0 and 1.")
 
+        execution_settings = payload.get("execution_settings")
+        if execution_settings is not None and not isinstance(execution_settings, dict):
+            raise ValueError("execution_settings must be an object when provided.")
+
         return {
             "id": str(uuid.uuid4()),
             "name": name,
@@ -770,6 +774,7 @@ def create_app() -> "Flask":
             "sell_threshold": sell_threshold,
             "stop_loss": float(payload["stop_loss"]),
             "take_profit": float(payload["take_profit"]),
+            "execution_settings": execution_settings,
         }
 
     @app.route("/api/bots", methods=["GET"])

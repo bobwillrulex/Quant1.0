@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,16 +9,43 @@ from typing import Any
 class ExecutionEngine:
     """Simple market execution simulator with optional slippage."""
 
-    def __init__(self, *, enable_slippage: bool = False, max_slippage_pct: float = 0.0002, rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        enable_slippage: bool = False,
+        max_slippage_pct: float = 0.0002,
+        enable_latency_simulation: bool = False,
+        min_latency_ms: float = 50.0,
+        max_latency_ms: float = 200.0,
+        enable_spread_widening: bool = False,
+        volatility_threshold: float = 0.02,
+        spread_widening_factor: float = 2.0,
+        rng: random.Random | None = None,
+    ) -> None:
         if max_slippage_pct < 0:
             raise ValueError("max_slippage_pct must be non-negative.")
+        if min_latency_ms < 0 or max_latency_ms < 0:
+            raise ValueError("min_latency_ms and max_latency_ms must be non-negative.")
+        if min_latency_ms > max_latency_ms:
+            raise ValueError("min_latency_ms cannot be greater than max_latency_ms.")
+        if volatility_threshold < 0:
+            raise ValueError("volatility_threshold must be non-negative.")
+        if spread_widening_factor < 1.0:
+            raise ValueError("spread_widening_factor must be >= 1.0.")
         self.enable_slippage = enable_slippage
         self.max_slippage_pct = max_slippage_pct
+        self.enable_latency_simulation = enable_latency_simulation
+        self.min_latency_ms = min_latency_ms
+        self.max_latency_ms = max_latency_ms
+        self.enable_spread_widening = enable_spread_widening
+        self.volatility_threshold = volatility_threshold
+        self.spread_widening_factor = spread_widening_factor
         self._rng = rng or random.Random(0)
 
     def execute_market_buy(self, bot: Any, quote: dict[str, Any]) -> dict[str, Any]:
         """Execute a market buy at ask with optional positive slippage."""
-        ask = float(quote["ask"])
+        self._simulate_latency()
+        _, ask = self._effective_bid_ask(quote)
         size = self._get_trade_size(bot)
         fill_price = ask * (1.0 + self._slippage())
         pnl = self._apply_buy(bot, size=size, fill_price=fill_price)
@@ -26,7 +54,8 @@ class ExecutionEngine:
 
     def execute_market_sell(self, bot: Any, quote: dict[str, Any]) -> dict[str, Any]:
         """Execute a market sell at bid with optional negative slippage."""
-        bid = float(quote["bid"])
+        self._simulate_latency()
+        bid, _ = self._effective_bid_ask(quote)
         size = self._get_trade_size(bot)
         fill_price = bid * (1.0 - self._slippage())
         pnl = self._apply_sell(bot, size=size, fill_price=fill_price)
@@ -37,6 +66,40 @@ class ExecutionEngine:
         if not self.enable_slippage or self.max_slippage_pct == 0:
             return 0.0
         return self._rng.uniform(0.0, self.max_slippage_pct)
+
+    def _simulate_latency(self) -> None:
+        if not self.enable_latency_simulation:
+            return
+        if self.max_latency_ms == 0:
+            return
+        latency_seconds = self._rng.uniform(self.min_latency_ms, self.max_latency_ms) / 1000.0
+        if latency_seconds > 0:
+            time.sleep(latency_seconds)
+
+    def _effective_bid_ask(self, quote: dict[str, Any]) -> tuple[float, float]:
+        bid = float(quote["bid"])
+        ask = float(quote["ask"])
+        if not self.enable_spread_widening:
+            return bid, ask
+
+        volatility = self._extract_volatility(quote)
+        if volatility < self.volatility_threshold:
+            return bid, ask
+
+        spread = max(0.0, ask - bid)
+        widened_spread = spread * self.spread_widening_factor
+        midpoint = (bid + ask) / 2.0
+        return midpoint - (widened_spread / 2.0), midpoint + (widened_spread / 2.0)
+
+    @staticmethod
+    def _extract_volatility(quote: dict[str, Any]) -> float:
+        for key in ("volatility", "realized_volatility", "atr_pct", "volatility_score"):
+            if key in quote:
+                try:
+                    return max(0.0, float(quote[key]))
+                except (TypeError, ValueError):
+                    return 0.0
+        return 0.0
 
     @staticmethod
     def _get_trade_size(bot: Any) -> float:
