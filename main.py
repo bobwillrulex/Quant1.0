@@ -816,6 +816,41 @@ def create_app() -> "Flask":
               margin: 0 auto;
               padding: 24px;
             }
+            .topbar {
+              position: sticky;
+              top: 0;
+              z-index: 50;
+              background: rgba(9, 12, 18, 0.94);
+              border-bottom: 1px solid var(--border);
+              backdrop-filter: blur(6px);
+            }
+            .topbar-inner {
+              max-width: 1100px;
+              margin: 0 auto;
+              padding: 0.9rem 2rem;
+              display: flex;
+              align-items: center;
+              gap: 1rem;
+            }
+            .brand {
+              font-weight: 700;
+              color: #60a5fa;
+              text-decoration: none;
+              margin-right: auto;
+            }
+            .nav-links { display: flex; align-items: center; gap: 1rem; }
+            .tab-link {
+              color: #93c5fd;
+              text-decoration: none;
+              padding: 0.4rem 0.65rem;
+              border-radius: 8px;
+              border: 1px solid transparent;
+            }
+            .tab-link:hover, .tab-link.active {
+              color: #eff6ff;
+              border-color: var(--border);
+              background: rgba(30, 58, 138, 0.35);
+            }
             h1 {
               margin: 0 0 18px 0;
               font-size: 1.8rem;
@@ -878,6 +913,17 @@ def create_app() -> "Flask":
           </style>
         </head>
         <body>
+          <nav class="topbar">
+            <div class="topbar-inner">
+              <a href="/" class="brand">Quant 1.0</a>
+              <div class="nav-links">
+                <a href="/" class="tab-link">Model</a>
+                <a href="/manage-models" class="tab-link">Manage Models</a>
+                <a href="/run-models" class="tab-link">Run Models</a>
+                <a href="/bots" class="tab-link active">Bots</a>
+              </div>
+            </div>
+          </nav>
           <div class="container">
             <h1>Trading Bots Dashboard</h1>
             <div class="toolbar">
