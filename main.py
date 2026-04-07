@@ -13,6 +13,7 @@ import random
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Dict
@@ -59,6 +60,7 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
+from bot_manager import create_bot, get_all_bots, get_bot, start_bot, stop_bot
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -712,9 +714,99 @@ def is_mobile_request(request: object) -> bool:
 
 
 def create_app() -> "Flask":
-    from flask import Flask, redirect, request, url_for
+    from flask import Flask, jsonify, redirect, request, url_for
 
     app = Flask(__name__)
+
+    def _bot_payload(bot: object) -> dict[str, object]:
+        return {
+            "id": str(getattr(bot, "id", "")),
+            "name": str(getattr(bot, "name", "")),
+            "status": str(getattr(bot, "status", "stopped")),
+            "day_pnl": float(getattr(bot, "day_pnl", 0.0)),
+            "total_pnl": float(getattr(bot, "total_pnl", 0.0)),
+            "position": float(getattr(bot, "position", 0.0)),
+            "cash": float(getattr(bot, "cash", 0.0)),
+        }
+
+    def _parse_bot_create_payload(payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object.")
+        required_fields = (
+            "model",
+            "ticker",
+            "timeframe",
+            "starting_money",
+            "buy_threshold",
+            "sell_threshold",
+            "stop_loss",
+            "take_profit",
+            "name",
+        )
+        missing = [field for field in required_fields if field not in payload]
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}.")
+
+        model_name = str(payload["model"]).strip()
+        ticker = str(payload["ticker"]).strip().upper()
+        timeframe = str(payload["timeframe"]).strip()
+        name = str(payload["name"]).strip()
+        if not model_name or not ticker or not timeframe or not name:
+            raise ValueError("Fields model, ticker, timeframe, and name cannot be empty.")
+
+        buy_threshold = float(payload["buy_threshold"])
+        sell_threshold = float(payload["sell_threshold"])
+        if not (0.0 <= buy_threshold <= 1.0 and 0.0 <= sell_threshold <= 1.0):
+            raise ValueError("buy_threshold and sell_threshold must be between 0 and 1.")
+
+        return {
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "model_name": model_name,
+            "ticker": ticker,
+            "timeframe": timeframe,
+            "cash": float(payload["starting_money"]),
+            "buy_threshold": buy_threshold,
+            "sell_threshold": sell_threshold,
+            "stop_loss": float(payload["stop_loss"]),
+            "take_profit": float(payload["take_profit"]),
+        }
+
+    @app.route("/bots", methods=["GET"])
+    def list_bots() -> object:
+        return jsonify([_bot_payload(bot) for bot in get_all_bots()])
+
+    @app.route("/bots/create", methods=["POST"])
+    def create_bot_endpoint() -> object:
+        try:
+            config = _parse_bot_create_payload(request.get_json(silent=True))
+            bot = create_bot(config)
+            return jsonify(_bot_payload(bot)), 201
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+
+    @app.route("/bots/start/<bot_id>", methods=["POST"])
+    def start_bot_endpoint(bot_id: str) -> object:
+        try:
+            return jsonify(_bot_payload(start_bot(bot_id)))
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+
+    @app.route("/bots/stop/<bot_id>", methods=["POST"])
+    def stop_bot_endpoint(bot_id: str) -> object:
+        try:
+            return jsonify(_bot_payload(stop_bot(bot_id)))
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+
+    @app.route("/bots/<bot_id>", methods=["GET"])
+    def get_bot_endpoint(bot_id: str) -> object:
+        bot = get_bot(bot_id)
+        if bot is None:
+            return jsonify({"error": f"Bot '{bot_id}' not found"}), 404
+        return jsonify(_bot_payload(bot))
 
     @app.route("/manage-models", methods=["GET", "POST"])
     @app.route("/spot/manage-models", methods=["GET", "POST"])
