@@ -128,6 +128,30 @@ def test_create_bot_accepts_execution_settings(client):
     assert response.status_code == 201
 
 
+def test_create_bot_accepts_fixed_or_trailing_stop_strategy(client):
+    trailing_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss_strategy": "trailing_stop",
+            "fixed_stop_pct": 2.5,
+            "take_profit": 0.05,
+            "name": "Trailing Bot",
+        },
+    )
+    assert trailing_response.status_code == 201
+    trailing_payload = trailing_response.get_json()
+    assert trailing_payload["id"]
+    created_bot = bot_manager.get_bot(trailing_payload["id"])
+    assert created_bot is not None
+    assert created_bot.stop_loss == pytest.approx(0.025)
+
+
 def test_not_found_errors(client):
     get_response = client.get("/bots/not-real")
     assert get_response.status_code == 404
@@ -144,8 +168,11 @@ def test_bots_dashboard_page(client):
     assert "Trading Bots Dashboard" in body
     assert "/api/bots" in body
     assert 'id="searchInput"' in body
+    assert 'id="botStopLossStrategy"' in body
+    assert 'id="botFixedStopPctWrap"' in body
     assert "searchInput.addEventListener(\"input\", renderRows)" in body
     assert "search_name: String(bot.name || \"\").toLowerCase()" in body
+    assert "syncBotStopLossFields" in body
 
 
 def test_spot_bots_dashboard_page(client):
