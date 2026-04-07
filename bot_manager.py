@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from bot import TradingBot
 from quant.execution_engine import ExecutionEngine
+from quant.live_trading.market import get_quote
 
 
 MarketDataFetcher = Callable[[TradingBot], dict[str, Any] | None]
@@ -34,6 +35,8 @@ def create_bot(config: dict[str, Any]) -> TradingBot:
     """
     runtime_config = dict(config)
     market_data_fetcher = runtime_config.pop("market_data_fetcher", None)
+    if market_data_fetcher is None:
+        market_data_fetcher = _build_default_fetcher(runtime_config)
     poll_interval = runtime_config.pop("poll_interval", _DEFAULT_POLL_SECONDS)
     execution_settings = runtime_config.pop("execution_settings", None)
     if execution_settings is not None:
@@ -50,6 +53,27 @@ def create_bot(config: dict[str, Any]) -> TradingBot:
             raise ValueError(f"Bot with id '{bot.id}' already exists")
         bots[bot.id] = bot
     return bot
+
+
+def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
+    ticker = str(config.get("ticker", "")).strip().upper()
+    if not ticker:
+        return lambda _bot: None
+
+    def _fetch_quote(_: TradingBot) -> dict[str, Any] | None:
+        quote = get_quote(ticker)
+        bid = quote.get("bidPrice", quote.get("bid"))
+        ask = quote.get("askPrice", quote.get("ask"))
+        if bid is None or ask is None:
+            return None
+        return {
+            "bid": float(bid),
+            "ask": float(ask),
+            "timestamp": str(quote.get("lastTradeTime") or datetime.now(tz=timezone.utc).isoformat()),
+            "last": float(quote.get("lastTradePrice") or quote.get("last") or (float(bid) + float(ask)) / 2.0),
+        }
+
+    return _fetch_quote
 
 
 def start_bot(bot_id: str) -> TradingBot:

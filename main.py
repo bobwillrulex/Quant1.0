@@ -741,18 +741,19 @@ def create_app() -> "Flask":
             "sell_threshold",
             "stop_loss",
             "take_profit",
-            "name",
         )
         missing = [field for field in required_fields if field not in payload]
+        if "timeframe" in missing and "candle_time" in payload:
+            missing.remove("timeframe")
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}.")
 
         model_name = str(payload["model"]).strip()
         ticker = str(payload["ticker"]).strip().upper()
-        timeframe = str(payload["timeframe"]).strip()
-        name = str(payload["name"]).strip()
-        if not model_name or not ticker or not timeframe or not name:
-            raise ValueError("Fields model, ticker, timeframe, and name cannot be empty.")
+        timeframe = str(payload.get("timeframe", payload.get("candle_time", ""))).strip()
+        name = str(payload.get("name", "")).strip() or model_name
+        if not model_name or not ticker or not timeframe:
+            raise ValueError("Fields model, ticker, and timeframe cannot be empty.")
 
         buy_threshold = float(payload["buy_threshold"])
         sell_threshold = float(payload["sell_threshold"])
@@ -776,6 +777,17 @@ def create_app() -> "Flask":
             "take_profit": float(payload["take_profit"]),
             "execution_settings": execution_settings,
         }
+
+    @app.route("/api/bots/form-options", methods=["GET"])
+    def bot_form_options() -> object:
+        mode_key = SPOT_MODE if request.args.get("mode", "").strip().lower() == "spot" else OPTIONS_MODE
+        return jsonify(
+            {
+                "models": list_saved_models(mode_key),
+                "timeframes": ["1m", "5m", "15m", "30m", "1h", "1d"],
+                "default_ticker": "AAPL",
+            }
+        )
 
     @app.route("/api/bots", methods=["GET"])
     def list_bots() -> object:
@@ -959,11 +971,35 @@ def create_app() -> "Flask":
             <p id="botsEmptyState" class="muted" style="display:none;">No bots match that search.</p>
             <div class="muted">Auto-refreshes every 5 seconds.</div>
           </div>
+          <div id="createBotModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60; align-items:center; justify-content:center; padding:18px;">
+            <div style="width:min(840px, 100%); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px;">
+              <h2 style="margin:0 0 10px 0;">Create Paper Trading Bot</h2>
+              <div style="display:grid; grid-template-columns:repeat(2,minmax(160px,1fr)); gap:10px;">
+                <label>Model<select id="botModel" class="search-input"></select></label>
+                <label>Ticker<input id="botTicker" class="search-input" value="AAPL" /></label>
+                <label>Candle Time<select id="botTimeframe" class="search-input"></select></label>
+                <label>Starting Money<input id="botStartingMoney" class="search-input" type="number" min="100" step="100" value="10000" /></label>
+                <label>Buy Threshold<input id="botBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.60" /></label>
+                <label>Sell Threshold<input id="botSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.40" /></label>
+                <label>Stop Loss (SL)<input id="botStopLoss" class="search-input" type="number" min="0" max="1" step="0.001" value="0.02" /></label>
+                <label>Take Profit (TP)<input id="botTakeProfit" class="search-input" type="number" min="0" max="1" step="0.001" value="0.05" /></label>
+                <label style="grid-column:1 / span 2;">Bot Name (optional)<input id="botName" class="search-input" /></label>
+              </div>
+              <p class="muted" style="margin:10px 0 14px;">Paper mode uses real bid/ask quotes (Questrade API) with zero commissions and places simulated orders only during U.S. market hours.</p>
+              <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button id="cancelCreateBot" class="btn">Cancel</button>
+                <button id="submitCreateBot" class="btn btn-primary">Start Bot</button>
+              </div>
+            </div>
+          </div>
           <script>
             const tableBody = document.getElementById("botsTableBody");
             const searchInput = document.getElementById("searchInput");
             const botsEmptyState = document.getElementById("botsEmptyState");
             const createBotButton = document.getElementById("createBotButton");
+            const createBotModal = document.getElementById("createBotModal");
+            const cancelCreateBot = document.getElementById("cancelCreateBot");
+            const submitCreateBot = document.getElementById("submitCreateBot");
             let allBots = [];
 
             const formatCurrency = (value) => {
@@ -1037,19 +1073,61 @@ def create_app() -> "Flask":
               await loadBots();
             };
 
+            const botModel = document.getElementById("botModel");
+            const botTicker = document.getElementById("botTicker");
+            const botTimeframe = document.getElementById("botTimeframe");
+            const botStartingMoney = document.getElementById("botStartingMoney");
+            const botBuyThreshold = document.getElementById("botBuyThreshold");
+            const botSellThreshold = document.getElementById("botSellThreshold");
+            const botStopLoss = document.getElementById("botStopLoss");
+            const botTakeProfit = document.getElementById("botTakeProfit");
+            const botName = document.getElementById("botName");
+
+            const loadBotFormOptions = async () => {
+              const mode = location.pathname.startsWith("/spot") ? "spot" : "options";
+              const response = await fetch(`/api/bots/form-options?mode=${mode}`);
+              if (!response.ok) throw new Error("Failed to load bot options.");
+              const options = await response.json();
+              botModel.innerHTML = "";
+              (options.models || []).forEach((name) => {
+                const opt = document.createElement("option");
+                opt.value = name;
+                opt.textContent = name;
+                botModel.appendChild(opt);
+              });
+              if (!botModel.options.length) {
+                const opt = document.createElement("option");
+                opt.value = "demo-model";
+                opt.textContent = "demo-model";
+                botModel.appendChild(opt);
+              }
+              botTimeframe.innerHTML = "";
+              (options.timeframes || ["1m"]).forEach((tf) => {
+                const opt = document.createElement("option");
+                opt.value = tf;
+                opt.textContent = tf;
+                botTimeframe.appendChild(opt);
+              });
+              botTicker.value = options.default_ticker || "AAPL";
+            };
+
             createBotButton.addEventListener("click", async () => {
-              const name = window.prompt("Bot name:");
-              if (!name) return;
+              await loadBotFormOptions();
+              createBotModal.style.display = "flex";
+            });
+            cancelCreateBot.addEventListener("click", () => { createBotModal.style.display = "none"; });
+
+            submitCreateBot.addEventListener("click", async () => {
               const payload = {
-                model: "demo-model",
-                ticker: "AAPL",
-                timeframe: "1m",
-                starting_money: 10000,
-                buy_threshold: 0.6,
-                sell_threshold: 0.4,
-                stop_loss: 0.02,
-                take_profit: 0.05,
-                name,
+                model: botModel.value,
+                ticker: botTicker.value,
+                timeframe: botTimeframe.value,
+                starting_money: Number(botStartingMoney.value),
+                buy_threshold: Number(botBuyThreshold.value),
+                sell_threshold: Number(botSellThreshold.value),
+                stop_loss: Number(botStopLoss.value),
+                take_profit: Number(botTakeProfit.value),
+                name: botName.value,
               };
               const response = await fetch("/bots/create", {
                 method: "POST",
@@ -1061,6 +1139,8 @@ def create_app() -> "Flask":
                 alert(payloadErr.error || "Failed to create bot.");
                 return;
               }
+              createBotModal.style.display = "none";
+              botName.value = "";
               await loadBots();
             });
 
