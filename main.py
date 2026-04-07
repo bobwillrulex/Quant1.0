@@ -739,7 +739,6 @@ def create_app() -> "Flask":
             "starting_money",
             "buy_threshold",
             "sell_threshold",
-            "stop_loss",
             "take_profit",
         )
         missing = [field for field in required_fields if field not in payload]
@@ -759,6 +758,13 @@ def create_app() -> "Flask":
         sell_threshold = float(payload["sell_threshold"])
         if not (0.0 <= buy_threshold <= 1.0 and 0.0 <= sell_threshold <= 1.0):
             raise ValueError("buy_threshold and sell_threshold must be between 0 and 1.")
+        stop_loss_strategy = parse_stop_loss_strategy(str(payload.get("stop_loss_strategy", StopLossStrategy.NONE.value)))
+        fixed_stop_pct_value = float(payload.get("fixed_stop_pct", payload.get("stop_loss", 0.02) * 100.0))
+        if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
+            validated_fixed_stop_pct = validate_fixed_stop_pct(fixed_stop_pct_value)
+            stop_loss_value = validated_fixed_stop_pct / 100.0
+        else:
+            stop_loss_value = float(payload.get("stop_loss", 0.02))
 
         execution_settings = payload.get("execution_settings")
         if execution_settings is not None and not isinstance(execution_settings, dict):
@@ -773,7 +779,7 @@ def create_app() -> "Flask":
             "cash": float(payload["starting_money"]),
             "buy_threshold": buy_threshold,
             "sell_threshold": sell_threshold,
-            "stop_loss": float(payload["stop_loss"]),
+            "stop_loss": stop_loss_value,
             "take_profit": float(payload["take_profit"]),
             "execution_settings": execution_settings,
         }
@@ -1033,7 +1039,17 @@ def create_app() -> "Flask":
                 <label class="field-label">Starting Money<input id="botStartingMoney" class="search-input" type="number" min="100" step="100" value="10000" /></label>
                 <label class="field-label">BUY if P(Up) &gt;<input id="botBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.60" /></label>
                 <label class="field-label">SELL if P(Up) &lt;<input id="botSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.40" /></label>
-                <label class="field-label">Fixed Stop Loss %<input id="botStopLoss" class="search-input" type="number" min="0" max="1" step="0.001" value="0.02" /></label>
+                <label class="field-label">Stop Loss Strategy
+                  <select id="botStopLossStrategy" class="search-input">
+                    <option value="none">None</option>
+                    <option value="atr">Volatility Buffer (ATR-Based)</option>
+                    <option value="model_invalidation">Model Invalidation (MAE-Linked)</option>
+                    <option value="time_decay">Time-Decay (Temporal Exit)</option>
+                    <option value="fixed_percentage">Fixed Percentage</option>
+                    <option value="trailing_stop">Trailing Stop Loss</option>
+                  </select>
+                </label>
+                <label class="field-label" id="botFixedStopPctWrap">Fixed Stop Loss %<input id="botFixedStopPct" class="search-input" type="number" min="0.01" step="0.1" value="2.0" /></label>
                 <label class="field-label">Take Profit %<input id="botTakeProfit" class="search-input" type="number" min="0" max="1" step="0.001" value="0.05" /></label>
                 <label class="field-label full-width">Bot Name (optional)<input id="botName" class="search-input" /></label>
               </div>
@@ -1131,9 +1147,17 @@ def create_app() -> "Flask":
             const botStartingMoney = document.getElementById("botStartingMoney");
             const botBuyThreshold = document.getElementById("botBuyThreshold");
             const botSellThreshold = document.getElementById("botSellThreshold");
-            const botStopLoss = document.getElementById("botStopLoss");
+            const botStopLossStrategy = document.getElementById("botStopLossStrategy");
+            const botFixedStopPctWrap = document.getElementById("botFixedStopPctWrap");
+            const botFixedStopPct = document.getElementById("botFixedStopPct");
             const botTakeProfit = document.getElementById("botTakeProfit");
             const botName = document.getElementById("botName");
+            const syncBotStopLossFields = () => {
+              const strategy = botStopLossStrategy ? botStopLossStrategy.value : "none";
+              const showFixed = strategy === "fixed_percentage" || strategy === "trailing_stop";
+              if (botFixedStopPctWrap) botFixedStopPctWrap.style.display = showFixed ? "block" : "none";
+              if (botFixedStopPct) botFixedStopPct.disabled = !showFixed;
+            };
 
             const loadBotFormOptions = async () => {
               const mode = location.pathname.startsWith("/spot") ? "spot" : "options";
@@ -1165,9 +1189,13 @@ def create_app() -> "Flask":
 
             createBotButton.addEventListener("click", async () => {
               await loadBotFormOptions();
+              syncBotStopLossFields();
               createBotModal.style.display = "flex";
             });
             cancelCreateBot.addEventListener("click", () => { createBotModal.style.display = "none"; });
+            if (botStopLossStrategy) {
+              botStopLossStrategy.addEventListener("change", syncBotStopLossFields);
+            }
 
             submitCreateBot.addEventListener("click", async () => {
               const payload = {
@@ -1177,7 +1205,8 @@ def create_app() -> "Flask":
                 starting_money: Number(botStartingMoney.value),
                 buy_threshold: Number(botBuyThreshold.value),
                 sell_threshold: Number(botSellThreshold.value),
-                stop_loss: Number(botStopLoss.value),
+                stop_loss_strategy: botStopLossStrategy.value,
+                fixed_stop_pct: Number(botFixedStopPct.value),
                 take_profit: Number(botTakeProfit.value),
                 name: botName.value,
               };
