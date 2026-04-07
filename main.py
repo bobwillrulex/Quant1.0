@@ -895,11 +895,13 @@ def create_app() -> "Flask":
                 <tbody id="botsTableBody"></tbody>
               </table>
             </div>
+            <p id="botsEmptyState" class="muted" style="display:none;">No bots match that search.</p>
             <div class="muted">Auto-refreshes every 5 seconds.</div>
           </div>
           <script>
             const tableBody = document.getElementById("botsTableBody");
             const searchInput = document.getElementById("searchInput");
+            const botsEmptyState = document.getElementById("botsEmptyState");
             const createBotButton = document.getElementById("createBotButton");
             let allBots = [];
 
@@ -910,7 +912,7 @@ def create_app() -> "Flask":
 
             const renderRows = () => {
               const search = searchInput.value.trim().toLowerCase();
-              const filtered = allBots.filter((bot) => String(bot.name || "").toLowerCase().includes(search));
+              const filtered = allBots.filter((bot) => bot.search_name.includes(search));
               tableBody.innerHTML = "";
               filtered.forEach((bot) => {
                 const status = String(bot.status || "stopped").toLowerCase();
@@ -948,6 +950,7 @@ def create_app() -> "Flask":
                 actionsCell.appendChild(stopBtn);
                 tableBody.appendChild(row);
               });
+              botsEmptyState.style.display = filtered.length ? "none" : "block";
             };
 
             const loadBots = async () => {
@@ -955,7 +958,11 @@ def create_app() -> "Flask":
               if (!response.ok) {
                 throw new Error("Failed to load bots");
               }
-              allBots = await response.json();
+              const payload = await response.json();
+              allBots = payload.map((bot) => ({
+                ...bot,
+                search_name: String(bot.name || "").toLowerCase(),
+              }));
               renderRows();
             };
 
