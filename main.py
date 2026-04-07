@@ -804,6 +804,21 @@ def create_app() -> "Flask":
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        theme_bg = "#100d07" if is_spot else "#090c12"
+        theme_text = "#efe0be" if is_spot else "#c6ccd7"
+        theme_panel = "#19130b" if is_spot else "#121722"
+        theme_panel2 = "#221b10" if is_spot else "#1a202c"
+        theme_border = "#4a3a20" if is_spot else "#3a4455"
+        theme_muted = "#b79f66" if is_spot else "#98a2b3"
+        theme_accent = "#d4af37" if is_spot else "#c0c0c0"
+        theme_topbar_bg = "rgba(16, 13, 7, 0.94)" if is_spot else "rgba(9, 12, 18, 0.94)"
+        theme_brand = "#f2dd9f" if is_spot else "#d8dde6"
+        theme_tab = "#c8ac60" if is_spot else "#aab3c2"
+        theme_tab_active = "#f3e2b5" if is_spot else "#e5e7eb"
+        theme_tab_hover_bg = "#2a210f" if is_spot else "#1a212f"
+        theme_surface = "#130f08" if is_spot else "#0f141e"
+        theme_secondary_bg = "#312511" if is_spot else "#2a3342"
+        theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
         template = """
         <!doctype html>
         <html lang="en">
@@ -813,23 +828,24 @@ def create_app() -> "Flask":
           <title>Trading Bots Dashboard</title>
           <style>
             :root {
-              color-scheme: dark;
-              --bg: #0b1220;
-              --panel: #111a2b;
-              --panel-2: #162238;
-              --text: #e5e7eb;
-              --muted: #9ca3af;
-              --border: #2a3650;
-              --accent: #3b82f6;
-              --accent-2: #2563eb;
-              --success: #22c55e;
-              --danger: #ef4444;
+              --bg: __THEME_BG__;
+              --panel: __THEME_PANEL__;
+              --panel-2: __THEME_PANEL2__;
+              --text: __THEME_TEXT__;
+              --muted: __THEME_MUTED__;
+              --border: __THEME_BORDER__;
+              --accent: __THEME_ACCENT__;
+              --surface: __THEME_SURFACE__;
+              --secondary-bg: __THEME_SECONDARY_BG__;
+              --secondary-text: __THEME_SECONDARY_TEXT__;
+              --success: #82d995;
+              --danger: #ff9b9b;
             }
             * { box-sizing: border-box; }
             body {
               margin: 0;
               font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-              background: linear-gradient(180deg, #070d19 0%, var(--bg) 100%);
+              background: radial-gradient(circle at 8% -10%, rgba(95,69,20,0.25) 0%, transparent 42%), radial-gradient(circle at 92% -20%, rgba(63,46,13,0.28) 0%, transparent 48%), var(--bg);
               color: var(--text);
             }
             .container {
@@ -841,7 +857,7 @@ def create_app() -> "Flask":
               position: sticky;
               top: 0;
               z-index: 50;
-              background: rgba(9, 12, 18, 0.94);
+              background: __THEME_TOPBAR_BG__;
               border-bottom: 1px solid var(--border);
               backdrop-filter: blur(6px);
             }
@@ -855,22 +871,22 @@ def create_app() -> "Flask":
             }
             .brand {
               font-weight: 700;
-              color: #60a5fa;
+              color: __THEME_BRAND__;
               text-decoration: none;
               margin-right: auto;
             }
             .nav-links { display: flex; align-items: center; gap: 1rem; }
             .tab-link {
-              color: #93c5fd;
+              color: __THEME_TAB__;
               text-decoration: none;
               padding: 0.4rem 0.65rem;
               border-radius: 8px;
               border: 1px solid transparent;
             }
             .tab-link:hover, .tab-link.active {
-              color: #eff6ff;
+              color: __THEME_TAB_ACTIVE__;
               border-color: var(--border);
-              background: rgba(30, 58, 138, 0.35);
+              background: __THEME_TAB_HOVER_BG__;
             }
             h1 {
               margin: 0 0 18px 0;
@@ -886,7 +902,7 @@ def create_app() -> "Flask":
             .search-input {
               flex: 1 1 300px;
               border: 1px solid var(--border);
-              background: var(--panel);
+              background: var(--surface);
               color: var(--text);
               border-radius: 10px;
               padding: 10px 12px;
@@ -894,10 +910,10 @@ def create_app() -> "Flask":
             }
             .search-input:focus {
               border-color: var(--accent);
-              box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+              box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.2);
             }
             .btn {
-              border: 0;
+              border: 1px solid var(--border);
               border-radius: 10px;
               padding: 10px 14px;
               font-weight: 600;
@@ -905,9 +921,13 @@ def create_app() -> "Flask":
             }
             .btn-primary {
               background: var(--accent);
-              color: white;
+              color: #111;
             }
-            .btn-primary:hover { background: var(--accent-2); }
+            .btn-primary:hover { filter: brightness(1.06); }
+            .btn-secondary {
+              background: var(--secondary-bg);
+              color: var(--secondary-text);
+            }
             .table-wrap {
               overflow-x: auto;
               border: 1px solid var(--border);
@@ -928,9 +948,40 @@ def create_app() -> "Flask":
             .status-running { color: var(--success); font-weight: 600; }
             .status-stopped { color: var(--danger); font-weight: 600; }
             .btn-small { padding: 6px 10px; font-size: 0.86rem; margin-right: 6px; }
-            .btn-start { background: #166534; color: #dcfce7; }
-            .btn-stop { background: #991b1b; color: #fee2e2; }
+            .btn-start { background: #1f5533; color: #dcfce7; }
+            .btn-stop { background: #6f2121; color: #fee2e2; }
             .muted { color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+            .modal-backdrop {
+              display: none;
+              position: fixed;
+              inset: 0;
+              background: rgba(0,0,0,0.6);
+              z-index: 60;
+              align-items: center;
+              justify-content: center;
+              padding: 18px;
+            }
+            .modal-panel {
+              width: min(980px, 100%);
+              background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+              border: 1px solid var(--border);
+              border-radius: 16px;
+              padding: 20px;
+            }
+            .modal-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(220px,1fr));
+              gap: 12px 16px;
+            }
+            .field-label { display: block; color: var(--muted); font-size: 0.95rem; }
+            .field-label .search-input { margin-top: 6px; width: 100%; }
+            .full-width { grid-column: 1 / span 2; }
+            .modal-actions {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+              margin-top: 14px;
+            }
           </style>
         </head>
         <body>
@@ -971,24 +1022,25 @@ def create_app() -> "Flask":
             <p id="botsEmptyState" class="muted" style="display:none;">No bots match that search.</p>
             <div class="muted">Auto-refreshes every 5 seconds.</div>
           </div>
-          <div id="createBotModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60; align-items:center; justify-content:center; padding:18px;">
-            <div style="width:min(840px, 100%); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px;">
+          <div id="createBotModal" class="modal-backdrop">
+            <div class="modal-panel">
               <h2 style="margin:0 0 10px 0;">Create Paper Trading Bot</h2>
-              <div style="display:grid; grid-template-columns:repeat(2,minmax(160px,1fr)); gap:10px;">
-                <label>Model<select id="botModel" class="search-input"></select></label>
-                <label>Ticker<input id="botTicker" class="search-input" value="AAPL" /></label>
-                <label>Candle Time<select id="botTimeframe" class="search-input"></select></label>
-                <label>Starting Money<input id="botStartingMoney" class="search-input" type="number" min="100" step="100" value="10000" /></label>
-                <label>Buy Threshold<input id="botBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.60" /></label>
-                <label>Sell Threshold<input id="botSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.40" /></label>
-                <label>Stop Loss (SL)<input id="botStopLoss" class="search-input" type="number" min="0" max="1" step="0.001" value="0.02" /></label>
-                <label>Take Profit (TP)<input id="botTakeProfit" class="search-input" type="number" min="0" max="1" step="0.001" value="0.05" /></label>
-                <label style="grid-column:1 / span 2;">Bot Name (optional)<input id="botName" class="search-input" /></label>
+              <p class="muted" style="margin:0 0 12px;">Preset-style bot configuration using the same app theme.</p>
+              <div class="modal-grid">
+                <label class="field-label">Model<select id="botModel" class="search-input"></select></label>
+                <label class="field-label">Ticker<input id="botTicker" class="search-input" value="AAPL" /></label>
+                <label class="field-label">Candle Time<select id="botTimeframe" class="search-input"></select></label>
+                <label class="field-label">Starting Money<input id="botStartingMoney" class="search-input" type="number" min="100" step="100" value="10000" /></label>
+                <label class="field-label">BUY if P(Up) &gt;<input id="botBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.60" /></label>
+                <label class="field-label">SELL if P(Up) &lt;<input id="botSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.40" /></label>
+                <label class="field-label">Fixed Stop Loss %<input id="botStopLoss" class="search-input" type="number" min="0" max="1" step="0.001" value="0.02" /></label>
+                <label class="field-label">Take Profit %<input id="botTakeProfit" class="search-input" type="number" min="0" max="1" step="0.001" value="0.05" /></label>
+                <label class="field-label full-width">Bot Name (optional)<input id="botName" class="search-input" /></label>
               </div>
               <p class="muted" style="margin:10px 0 14px;">Paper mode uses real bid/ask quotes (Questrade API) with zero commissions and places simulated orders only during U.S. market hours.</p>
-              <div style="display:flex; gap:8px; justify-content:flex-end;">
-                <button id="cancelCreateBot" class="btn">Cancel</button>
+              <div class="modal-actions">
                 <button id="submitCreateBot" class="btn btn-primary">Start Bot</button>
+                <button id="cancelCreateBot" class="btn btn-secondary">Cancel</button>
               </div>
             </div>
           </div>
@@ -1161,6 +1213,21 @@ def create_app() -> "Flask":
             .replace("__MODE_SWITCH_HREF__", mode_switch_href)
             .replace("__MODE_SWITCH_LABEL__", mode_switch_label)
             .replace("__BRAND_LABEL__", brand_label)
+            .replace("__THEME_BG__", theme_bg)
+            .replace("__THEME_TEXT__", theme_text)
+            .replace("__THEME_PANEL__", theme_panel)
+            .replace("__THEME_PANEL2__", theme_panel2)
+            .replace("__THEME_BORDER__", theme_border)
+            .replace("__THEME_MUTED__", theme_muted)
+            .replace("__THEME_ACCENT__", theme_accent)
+            .replace("__THEME_TOPBAR_BG__", theme_topbar_bg)
+            .replace("__THEME_BRAND__", theme_brand)
+            .replace("__THEME_TAB__", theme_tab)
+            .replace("__THEME_TAB_ACTIVE__", theme_tab_active)
+            .replace("__THEME_TAB_HOVER_BG__", theme_tab_hover_bg)
+            .replace("__THEME_SURFACE__", theme_surface)
+            .replace("__THEME_SECONDARY_BG__", theme_secondary_bg)
+            .replace("__THEME_SECONDARY_TEXT__", theme_secondary_text)
         )
 
     @app.route("/bots/create", methods=["POST"])
@@ -1231,7 +1298,6 @@ def create_app() -> "Flask":
         theme_link = "#e5c46a" if is_spot else "#d6d9df"
         theme_secondary_bg = "#312511" if is_spot else "#2a3342"
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
-        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
         message_html = ""
         error_html = ""
         model_configs = load_model_configs(mode_key)
@@ -1434,7 +1500,6 @@ def create_app() -> "Flask":
               .nav-links {{ display: flex; align-items: center; gap: 1rem; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
-              .ui-mode-badge {{ font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               .card {{ background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
               .muted {{ color: var(--muted); }}
               .models-toolbar {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }}
@@ -1478,7 +1543,6 @@ def create_app() -> "Flask":
               body.mobile-ui .nav-links {{ display: none; width: 100%; flex-direction: column; align-items: stretch; gap: 0.4rem; }}
               body.mobile-ui .nav-links.open {{ display: flex; }}
               body.mobile-ui .tab-link {{ flex: 1 1 100%; text-align: left; }}
-              body.mobile-ui .ui-mode-badge {{ align-self: flex-start; margin-top: 0.2rem; }}
               body.mobile-ui .models-toolbar {{ flex-direction: column; align-items: stretch; }}
               body.mobile-ui .toolbar-right {{ align-items: stretch; }}
               body.mobile-ui .models-table-wrap {{ overflow-x: auto; }}
@@ -1496,7 +1560,6 @@ def create_app() -> "Flask":
                   <a href="{run_models_href}" class="tab-link">Run Models</a>
                   <a href="{bots_href}" class="tab-link">Bots</a>
                   <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-                  <span class="ui-mode-badge">{ui_mode_badge}</span>
                 </div>
               </div>
             </nav>
@@ -1892,7 +1955,6 @@ def create_app() -> "Flask":
         theme_surface = "#130f08" if is_spot else "#0f141e"
         theme_secondary_bg = "#312511" if is_spot else "#2a3342"
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
-        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
 
         message_html = ""
         error_html = ""
@@ -2054,14 +2116,12 @@ def create_app() -> "Flask":
         .run-all-group-divider td{{padding:0;border-bottom:none;height:.35rem;}}
         details,summary{{color:var(--text);}}
         button{{border:none;border-radius:10px;padding:.62rem .8rem;cursor:pointer;background:{theme_accent};color:#111;font-weight:700;}} .secondary{{background:{theme_secondary_bg};color:{theme_secondary_text};border:1px solid var(--border);}}
-        .ui-mode-badge{{font-size:.78rem;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:.2rem .55rem;}}
         body.mobile-ui .topbar-inner{{padding:.7rem .75rem;gap:.5rem;flex-wrap:wrap;}}
         body.mobile-ui .brand{{margin-right:0;}}
         body.mobile-ui .mobile-menu-toggle{{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;}}
         body.mobile-ui .nav-links{{display:none;width:100%;flex-direction:column;align-items:stretch;gap:.4rem;}}
         body.mobile-ui .nav-links.open{{display:flex;}}
         body.mobile-ui .tab-link{{flex:1 1 100%;text-align:left;}}
-        body.mobile-ui .ui-mode-badge{{align-self:flex-start;margin-top:.2rem;}}
         body.mobile-ui .container{{padding:1rem .75rem;}}
         body.mobile-ui .form-grid{{grid-template-columns:1fr;}}
         body.mobile-ui table{{display:block;overflow-x:auto;white-space:nowrap;}}
@@ -2075,7 +2135,6 @@ def create_app() -> "Flask":
               <a href="{run_models_href}" class="tab-link active">Run Models</a>
               <a href="{bots_href}" class="tab-link">Bots</a>
               <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-              <span class="ui-mode-badge">{ui_mode_badge}</span>
             </div>
         </div></nav>
         <div class="container">
@@ -2239,7 +2298,6 @@ def create_app() -> "Flask":
         theme_secondary_text = "#f3e2b6" if is_spot else "#e5e7eb"
         theme_progress_start = "#b38a2a" if is_spot else "#8f99aa"
         theme_progress_end = "#f0cf73" if is_spot else "#d4d8de"
-        ui_mode_badge = "Mobile UI" if is_mobile_ui else "Desktop UI"
         result_html = ""
         error_html = ""
         ticker = request.form.get("ticker", "AAPL").upper().strip()
@@ -3306,7 +3364,6 @@ def create_app() -> "Flask":
               .nav-links {{ display: flex; align-items: center; gap: 1rem; }}
               .tab-link {{ color: {theme_tab}; text-decoration: none; padding: 0.4rem 0.65rem; border-radius: 8px; border: 1px solid transparent; }}
               .tab-link:hover, .tab-link.active {{ color: {theme_tab_active}; border-color: var(--border); background: {theme_tab_hover_bg}; }}
-              .ui-mode-badge {{ font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; }}
               h1, h2, h3 {{ margin-top: 0; }}
               .card {{
                 background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
@@ -3563,7 +3620,6 @@ def create_app() -> "Flask":
               body.mobile-ui .nav-links {{ display: none; width: 100%; flex-direction: column; align-items: stretch; gap: 0.4rem; }}
               body.mobile-ui .nav-links.open {{ display: flex; }}
               body.mobile-ui .tab-link {{ flex: 1 1 100%; text-align: left; }}
-              body.mobile-ui .ui-mode-badge {{ align-self: flex-start; margin-top: 0.2rem; }}
               body.mobile-ui .container {{
                 padding: 1rem 0.75rem;
               }}
@@ -3627,7 +3683,6 @@ def create_app() -> "Flask":
                     <button type="submit" class="secondary provider-pill">Data: {provider_labels.get(data_provider, 'YFinance')}</button>
                   </form>
                   <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
-                  <span class="ui-mode-badge">{ui_mode_badge}</span>
                 </div>
               </div>
             </nav>
