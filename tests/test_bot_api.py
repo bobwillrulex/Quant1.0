@@ -117,3 +117,6 @@ def test_bots_dashboard_page(client):
     body = response.get_data(as_text=True)
     assert "Trading Bots Dashboard" in body
     assert "/api/bots" in body
+    assert 'id="searchInput"' in body
+    assert "searchInput.addEventListener(\"input\", renderRows)" in body
+    assert "search_name: String(bot.name || \"\").toLowerCase()" in body
