@@ -18,6 +18,14 @@ class QuestradeApiError(RuntimeError):
     """Raised when a Questrade API call fails."""
 
 
+_TERMINAL_AUTH_ERROR_MARKER = "questrade authentication failed (403/1010)"
+
+
+def is_terminal_auth_failure(exc: Exception) -> bool:
+    """Return True when an error requires manual Questrade re-authentication."""
+    return _TERMINAL_AUTH_ERROR_MARKER in str(exc).lower()
+
+
 @dataclass
 class TokenState:
     access_token: str
@@ -118,6 +126,11 @@ class QuestradeAuthClient:
             except HTTPError as exc:
                 status = exc.code
                 body = exc.read().decode("utf-8", errors="ignore")
+                if status == 403 and "1010" in body:
+                    raise QuestradeApiError(
+                        "Questrade authentication failed (403/1010): refresh token is invalid or expired. "
+                        "Generate a new token and update QUESTRADE_REFRESH_TOKEN."
+                    ) from exc
                 if retry_on_auth and status == 401 and attempt == 1:
                     # Access token expired/revoked; refresh then retry once.
                     self._token_state = self.refresh_access_token()
