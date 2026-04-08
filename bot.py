@@ -59,6 +59,10 @@ class TradingBot:
 
     def on_new_candle(self, data: dict[str, Any]) -> dict[str, Any]:
         """Process a new candle/quote, place trades, and refresh PnL."""
+        return self.on_market_data(data, allow_trades=True)
+
+    def on_market_data(self, data: dict[str, Any], *, allow_trades: bool) -> dict[str, Any]:
+        """Process market data and optionally allow order execution."""
         if self.status != "running":
             return {"status": self.status, "action": "HOLD", "trade": None}
 
@@ -73,6 +77,10 @@ class TradingBot:
 
         signal = self._predict_signal(data)
         self.last_p_up = float(signal)
+        if not allow_trades:
+            self.update_pnl(quote)
+            return {"status": self.status, "action": "HOLD", "trade": None, "signal": signal}
+
         action = self.decide_action(signal)
         if action == "BUY" and not self._allow_buy_now(data):
             action = "HOLD"

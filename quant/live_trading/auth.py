@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 TOKEN_FILE = Path(os.environ.get("QUESTRADE_TOKEN_FILE", Path.home() / ".quant1_data" / "questrade_tokens.json"))
+_ENV_FILES = (Path(".env"), Path(".env.example"))
 
 
 class QuestradeApiError(RuntimeError):
@@ -95,6 +96,10 @@ class QuestradeAuthClient:
         env_refresh = os.environ.get("QUESTRADE_REFRESH_TOKEN", "").strip()
         if env_refresh:
             return env_refresh
+        _load_env_tokens_from_files()
+        env_refresh = os.environ.get("QUESTRADE_REFRESH_TOKEN", "").strip()
+        if env_refresh:
+            return env_refresh
         if self._token_state and self._token_state.refresh_token:
             return self._token_state.refresh_token
         raise QuestradeApiError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN in environment.")
@@ -158,3 +163,18 @@ class QuestradeAuthClient:
             ),
             encoding="utf-8",
         )
+
+
+def _load_env_tokens_from_files() -> None:
+    for env_file in _ENV_FILES:
+        if not env_file.exists():
+            continue
+        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            clean_key = key.strip()
+            if not clean_key or clean_key in os.environ:
+                continue
+            os.environ[clean_key] = value.strip().strip("'\"")
