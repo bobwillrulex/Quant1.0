@@ -1318,6 +1318,7 @@ def create_app() -> "Flask":
                   <tr>
                     <th>Name</th>
                     <th>Status (Running/Stopped)</th>
+                    <th>Bid/Ask</th>
                     <th>Day PnL</th>
                     <th>Total PnL</th>
                     <th>Position</th>
@@ -1462,6 +1463,14 @@ def create_app() -> "Flask":
               const number = Number(value || 0);
               return number.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
             };
+            const formatBidAsk = (bid, ask) => {
+              const hasBid = Number.isFinite(Number(bid));
+              const hasAsk = Number.isFinite(Number(ask));
+              if (!hasBid && !hasAsk) return "—";
+              if (!hasBid) return `— / ${Number(ask).toFixed(2)}`;
+              if (!hasAsk) return `${Number(bid).toFixed(2)} / —`;
+              return `${Number(bid).toFixed(2)} / ${Number(ask).toFixed(2)}`;
+            };
             const formatPercent = (value) => `${(Number(value || 0) * 100).toFixed(2)}%`;
             const hideContextMenu = () => { botContextMenu.style.display = "none"; };
             const showContextMenu = (x, y) => {
@@ -1567,14 +1576,16 @@ def create_app() -> "Flask":
                   <td></td>
                   <td class="p-up-cell"></td>
                   <td></td>
+                  <td></td>
                 `;
                 row.children[0].textContent = String(bot.name || "");
                 row.children[1].textContent = status === "running" ? "Running" : "Stopped";
-                row.children[2].textContent = formatCurrency(bot.day_pnl);
-                row.children[3].textContent = formatCurrency(bot.total_pnl);
-                row.children[4].textContent = Number(bot.position || 0).toFixed(2);
-                row.children[5].textContent = formatCurrency(bot.cash);
-                const pUpCell = row.children[6];
+                row.children[2].textContent = formatBidAsk(bot.last_polled_bid, bot.last_polled_ask);
+                row.children[3].textContent = formatCurrency(bot.day_pnl);
+                row.children[4].textContent = formatCurrency(bot.total_pnl);
+                row.children[5].textContent = Number(bot.position || 0).toFixed(2);
+                row.children[6].textContent = formatCurrency(bot.cash);
+                const pUpCell = row.children[7];
                 const currentPUp = Number(bot.p_up || 0);
                 pUpCell.textContent = formatPercent(currentPUp);
                 const prevPUp = previousPUpByBotId[bot.id];
@@ -1592,7 +1603,7 @@ def create_app() -> "Flask":
                   showContextMenu(event.clientX, event.clientY);
                 });
 
-                const actionsCell = row.children[7];
+                const actionsCell = row.children[8];
                 const startBtn = document.createElement("button");
                 startBtn.className = "btn btn-small btn-start";
                 startBtn.textContent = "Start";
@@ -1854,7 +1865,7 @@ def create_app() -> "Flask":
 
             searchInput.addEventListener("input", renderRows);
             loadBots().catch((err) => {
-              tableBody.innerHTML = `<tr><td colspan="7">${String(err.message || err)}</td></tr>`;
+              tableBody.innerHTML = `<tr><td colspan="9">${String(err.message || err)}</td></tr>`;
             });
             setInterval(() => { loadBots().catch(() => {}); }, 5000);
           </script>
