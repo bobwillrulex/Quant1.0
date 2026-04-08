@@ -55,6 +55,24 @@ def test_market_hours_window():
     assert not bot_manager.is_market_open(closed_time)
 
 
+def test_seconds_until_next_aligned_poll_tick_anchors_to_five_second_boundaries():
+    ts = datetime.fromisoformat("2026-04-06T14:00:02+00:00")
+    assert bot_manager._seconds_until_next_aligned_poll_tick(5.0, now=ts) == pytest.approx(3.0)
+
+    ts_on_boundary = datetime.fromisoformat("2026-04-06T14:00:05+00:00")
+    assert bot_manager._seconds_until_next_aligned_poll_tick(5.0, now=ts_on_boundary) == pytest.approx(5.0)
+
+
+def test_seconds_until_market_wakeup_targets_five_seconds_before_open():
+    monday_pre_open = datetime.fromisoformat("2026-04-06T09:00:00-04:00")
+    wait = bot_manager._seconds_until_market_wakeup(now=monday_pre_open)
+    assert wait == pytest.approx((29 * 60) + 55)
+
+    monday_after_close = datetime.fromisoformat("2026-04-06T16:01:00-04:00")
+    wait_after_close = bot_manager._seconds_until_market_wakeup(now=monday_after_close)
+    assert wait_after_close == pytest.approx((17 * 3600) + (28 * 60) + 55)
+
+
 def test_create_get_start_stop_bot(monkeypatch):
     calls = {"n": 0}
 
@@ -63,6 +81,7 @@ def test_create_get_start_stop_bot(monkeypatch):
         return {"bid": 100.0, "ask": 100.2, "timestamp": "2026-04-06T14:00:00Z"}
 
     monkeypatch.setattr(bot_manager, "is_market_open", lambda now=None: True)
+    monkeypatch.setattr(bot_manager, "_seconds_until_next_aligned_poll_tick", lambda *_args, **_kwargs: 0.01)
 
     created = bot_manager.create_bot(_config("bot-1", fetcher))
     assert bot_manager.get_bot("bot-1") is created

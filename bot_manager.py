@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,8 @@ _LOCK = threading.RLock()
 _BOT_THREADS: dict[str, threading.Thread] = {}
 _BOT_STOP_EVENTS: dict[str, threading.Event] = {}
 _DEFAULT_POLL_SECONDS = 5.0
+_POLL_ALIGNMENT_SECONDS = 5.0
+_PRE_OPEN_WAKE_BUFFER_SECONDS = 5.0
 _EST_TZ = ZoneInfo("America/New_York")
 
 
@@ -173,8 +175,10 @@ def _bot_loop(bot: TradingBot, stop_event: threading.Event) -> None:
             if payload is not None:
                 bot.on_new_candle(payload)
                 _save_bot_state(bot)
-
-        stop_event.wait(timeout=poll_interval)
+            wait_seconds = _seconds_until_next_aligned_poll_tick(poll_interval)
+        else:
+            wait_seconds = _seconds_until_market_wakeup()
+        stop_event.wait(timeout=wait_seconds)
 
 
 def _extract_fetcher(bot: TradingBot) -> MarketDataFetcher:
@@ -194,7 +198,36 @@ def _extract_poll_interval(bot: TradingBot) -> float:
         interval = float(raw)
     except (TypeError, ValueError):
         interval = _DEFAULT_POLL_SECONDS
-    return max(0.1, interval)
+    return max(_POLL_ALIGNMENT_SECONDS, interval)
+
+
+def _seconds_until_next_aligned_poll_tick(poll_interval: float, now: datetime | None = None) -> float:
+    current = now or datetime.now(tz=timezone.utc)
+    aligned_interval = max(_POLL_ALIGNMENT_SECONDS, float(poll_interval))
+    epoch = current.timestamp()
+    remainder = epoch % aligned_interval
+    wait_seconds = aligned_interval - remainder
+    if wait_seconds <= 1e-9:
+        wait_seconds = aligned_interval
+    return wait_seconds
+
+
+def _seconds_until_market_wakeup(now: datetime | None = None) -> float:
+    current = now or datetime.now(tz=_EST_TZ)
+    et_now = current.astimezone(_EST_TZ)
+
+    market_open_today = datetime.combine(et_now.date(), time(hour=9, minute=30), tzinfo=_EST_TZ)
+    wake_target = market_open_today - timedelta(seconds=_PRE_OPEN_WAKE_BUFFER_SECONDS)
+
+    if et_now < wake_target:
+        return max(1.0, (wake_target - et_now).total_seconds())
+
+    next_day = et_now.date() + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    next_open = datetime.combine(next_day, time(hour=9, minute=30), tzinfo=_EST_TZ)
+    next_wake = next_open - timedelta(seconds=_PRE_OPEN_WAKE_BUFFER_SECONDS)
+    return max(1.0, (next_wake - et_now).total_seconds())
 
 
 def _require_bot(bot_id: str) -> TradingBot:
