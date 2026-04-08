@@ -47,3 +47,25 @@ def test_daily_buy_timing_blocks_midday_buys():
     eod_result = bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-07T19:59:00+00:00"})
     assert eod_result["action"] == "BUY"
     assert bot.position_size > 0.0
+
+
+def test_intraday_trade_interval_enforces_anchored_10_minute_boundaries():
+    bot = TradingBot(
+        id="intraday-gate",
+        name="IntradayGate",
+        model_name="noop",
+        ticker="AAPL",
+        timeframe="1m",
+        cash=1000,
+        intraday_trade_interval="10m",
+    )
+    bot.status = "running"
+    bot.model = lambda _row: 0.9
+
+    blocked = bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-07T14:12:00+00:00"})
+    assert blocked["action"] == "HOLD"
+    assert bot.position_size == 0.0
+
+    allowed = bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-07T14:10:00+00:00"})
+    assert allowed["action"] == "BUY"
+    assert bot.position_size > 0.0

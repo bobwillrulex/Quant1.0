@@ -804,6 +804,7 @@ def create_app() -> "Flask":
             "sell_threshold": float(getattr(bot, "sell_threshold", 0.4)),
             "long_only": bool(getattr(bot, "long_only", False)),
             "daily_buy_timing": str(getattr(bot, "daily_buy_timing", "start_of_day")),
+            "intraday_trade_interval": str(getattr(bot, "intraday_trade_interval", "unlimited")),
             "stop_loss": float(getattr(bot, "stop_loss", 0.0)),
             "take_profit": float(getattr(bot, "take_profit", 0.0)),
             "trade_size": float(getattr(bot, "trade_size", 0.0)),
@@ -845,6 +846,9 @@ def create_app() -> "Flask":
         daily_buy_timing = str(payload.get("daily_buy_timing", "start_of_day")).strip().lower()
         if daily_buy_timing not in {"start_of_day", "end_of_day"}:
             raise ValueError("daily_buy_timing must be start_of_day or end_of_day.")
+        intraday_trade_interval = str(payload.get("intraday_trade_interval", "unlimited")).strip().lower()
+        if intraday_trade_interval not in {"unlimited", "5m", "10m", "15m", "1h"}:
+            raise ValueError("intraday_trade_interval must be one of: unlimited, 5m, 10m, 15m, 1h.")
         stop_loss_strategy = parse_stop_loss_strategy(str(payload.get("stop_loss_strategy", StopLossStrategy.NONE.value)))
         fixed_stop_pct_value = float(payload.get("fixed_stop_pct", payload.get("stop_loss", 0.02) * 100.0))
         if stop_loss_strategy in (StopLossStrategy.FIXED_PERCENTAGE, StopLossStrategy.TRAILING_STOP):
@@ -868,6 +872,7 @@ def create_app() -> "Flask":
             "sell_threshold": sell_threshold,
             "long_only": long_only,
             "daily_buy_timing": daily_buy_timing,
+            "intraday_trade_interval": intraday_trade_interval,
             "stop_loss": stop_loss_value,
             "take_profit": float(payload["take_profit"]),
             "execution_settings": execution_settings,
@@ -901,6 +906,11 @@ def create_app() -> "Flask":
             if daily_buy_timing not in {"start_of_day", "end_of_day"}:
                 raise ValueError("daily_buy_timing must be start_of_day or end_of_day.")
             updated["daily_buy_timing"] = daily_buy_timing
+        if "intraday_trade_interval" in payload:
+            intraday_trade_interval = str(payload.get("intraday_trade_interval", "")).strip().lower()
+            if intraday_trade_interval not in {"unlimited", "5m", "10m", "15m", "1h"}:
+                raise ValueError("intraday_trade_interval must be one of: unlimited, 5m, 10m, 15m, 1h.")
+            updated["intraday_trade_interval"] = intraday_trade_interval
 
         if "buy_threshold" in updated and not (0.0 <= float(updated["buy_threshold"]) <= 1.0):
             raise ValueError("buy_threshold must be between 0 and 1.")
@@ -933,6 +943,13 @@ def create_app() -> "Flask":
                 "daily_buy_timing_options": [
                     {"value": "start_of_day", "label": "Beginning of day"},
                     {"value": "end_of_day", "label": "Last minute (end of day)"},
+                ],
+                "intraday_trade_interval_options": [
+                    {"value": "unlimited", "label": "Unlimited"},
+                    {"value": "5m", "label": "Every 5 minutes"},
+                    {"value": "10m", "label": "Every 10 minutes"},
+                    {"value": "15m", "label": "Every 15 minutes"},
+                    {"value": "1h", "label": "Every hour"},
                 ],
                 "default_ticker": "AAPL",
             }
@@ -1230,6 +1247,15 @@ def create_app() -> "Flask":
                     <option value="end_of_day">Last minute (end of day)</option>
                   </select>
                 </label>
+                <label class="field-label">Intraday Trade Interval
+                  <select id="botIntradayTradeInterval" class="search-input">
+                    <option value="unlimited">Unlimited</option>
+                    <option value="5m">Every 5 minutes</option>
+                    <option value="10m">Every 10 minutes</option>
+                    <option value="15m">Every 15 minutes</option>
+                    <option value="1h">Every hour</option>
+                  </select>
+                </label>
                 <label class="field-label">Starting Money<input id="botStartingMoney" class="search-input" type="number" min="100" step="100" value="10000" /></label>
                 <label class="field-label">BUY if P(Up) &gt;<input id="botBuyThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.60" /></label>
                 <label class="field-label">SELL if P(Up) &lt;<input id="botSellThreshold" class="search-input" type="number" min="0" max="1" step="0.01" value="0.40" /></label>
@@ -1285,6 +1311,15 @@ def create_app() -> "Flask":
                   <select id="editBotDailyBuyTiming" class="search-input">
                     <option value="start_of_day">Beginning of day</option>
                     <option value="end_of_day">Last minute (end of day)</option>
+                  </select>
+                </label>
+                <label class="field-label">Intraday Trade Interval
+                  <select id="editBotIntradayTradeInterval" class="search-input">
+                    <option value="unlimited">Unlimited</option>
+                    <option value="5m">Every 5 minutes</option>
+                    <option value="10m">Every 10 minutes</option>
+                    <option value="15m">Every 15 minutes</option>
+                    <option value="1h">Every hour</option>
                   </select>
                 </label>
                 <label class="field-label">Fixed Stop Loss %<input id="editBotFixedStopPct" class="search-input" type="number" min="0.01" step="0.1" /></label>
@@ -1457,6 +1492,7 @@ def create_app() -> "Flask":
             const botTimeframe = document.getElementById("botTimeframe");
             const botDailyBuyTimingWrap = document.getElementById("botDailyBuyTimingWrap");
             const botDailyBuyTiming = document.getElementById("botDailyBuyTiming");
+            const botIntradayTradeInterval = document.getElementById("botIntradayTradeInterval");
             const botStartingMoney = document.getElementById("botStartingMoney");
             const botBuyThreshold = document.getElementById("botBuyThreshold");
             const botSellThreshold = document.getElementById("botSellThreshold");
@@ -1519,6 +1555,19 @@ def create_app() -> "Flask":
                 optEnd.textContent = "Last minute (end of day)";
                 botDailyBuyTiming.appendChild(optEnd);
               }
+              botIntradayTradeInterval.innerHTML = "";
+              (options.intraday_trade_interval_options || []).forEach((item) => {
+                const opt = document.createElement("option");
+                opt.value = String(item.value || "unlimited");
+                opt.textContent = String(item.label || item.value || "Unlimited");
+                botIntradayTradeInterval.appendChild(opt);
+              });
+              if (!botIntradayTradeInterval.options.length) {
+                const opt = document.createElement("option");
+                opt.value = "unlimited";
+                opt.textContent = "Unlimited";
+                botIntradayTradeInterval.appendChild(opt);
+              }
               botTicker.value = options.default_ticker || "AAPL";
               syncDailyBuyTimingVisibility();
             };
@@ -1539,6 +1588,7 @@ def create_app() -> "Flask":
               document.getElementById("editBotBuyThreshold").value = Number(bot.buy_threshold || 0.6).toString();
               document.getElementById("editBotSellThreshold").value = Number(bot.sell_threshold || 0.4).toString();
               document.getElementById("editBotDailyBuyTiming").value = String(bot.daily_buy_timing || "start_of_day");
+              document.getElementById("editBotIntradayTradeInterval").value = String(bot.intraday_trade_interval || "unlimited");
               document.getElementById("editBotFixedStopPct").value = (Number(bot.stop_loss || 0.02) * 100).toString();
               document.getElementById("editBotTakeProfit").value = Number(bot.take_profit || 0.05).toString();
               editBotModal.style.display = "flex";
@@ -1579,6 +1629,7 @@ def create_app() -> "Flask":
                 buy_threshold: Number(botBuyThreshold.value),
                 sell_threshold: Number(botSellThreshold.value),
                 daily_buy_timing: botDailyBuyTiming.value,
+                intraday_trade_interval: botIntradayTradeInterval.value,
                 stop_loss_strategy: botStopLossStrategy.value,
                 fixed_stop_pct: Number(botFixedStopPct.value),
                 take_profit: Number(botTakeProfit.value),
@@ -1609,6 +1660,7 @@ def create_app() -> "Flask":
                 buy_threshold: Number(document.getElementById("editBotBuyThreshold").value),
                 sell_threshold: Number(document.getElementById("editBotSellThreshold").value),
                 daily_buy_timing: document.getElementById("editBotDailyBuyTiming").value,
+                intraday_trade_interval: document.getElementById("editBotIntradayTradeInterval").value,
                 fixed_stop_pct: Number(document.getElementById("editBotFixedStopPct").value),
                 take_profit: Number(document.getElementById("editBotTakeProfit").value),
                 stop_loss_strategy: "fixed_percentage",
