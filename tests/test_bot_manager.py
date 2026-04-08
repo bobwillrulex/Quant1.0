@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import bot_manager
+from quant.live_trading.auth import QuestradeApiError
 
 
 @pytest.fixture(autouse=True)
@@ -136,6 +137,29 @@ def test_running_bot_loop_survives_fetch_errors(monkeypatch):
     assert created.last_polled_bid == pytest.approx(101.0)
     assert created.last_polled_ask == pytest.approx(101.3)
     assert getattr(created, "last_error", "") == "temporary quote failure"
+
+
+def test_running_bot_stops_on_terminal_questrade_auth_failure(monkeypatch):
+    calls = {"n": 0}
+
+    def fetcher(_):
+        calls["n"] += 1
+        raise QuestradeApiError(
+            "Questrade authentication failed (403/1010): refresh token is invalid or expired. "
+            "Generate a new token and update QUESTRADE_REFRESH_TOKEN."
+        )
+
+    monkeypatch.setattr(bot_manager, "is_market_open", lambda now=None: True)
+    monkeypatch.setattr(bot_manager, "_seconds_until_next_aligned_poll_tick", lambda *_args, **_kwargs: 0.01)
+
+    created = bot_manager.create_bot(_config("bot-auth-fail", fetcher))
+    bot_manager.start_bot("bot-auth-fail")
+    time.sleep(0.05)
+    bot_manager.stop_bot("bot-auth-fail")
+
+    assert calls["n"] == 1
+    assert created.status == "stopped"
+    assert "403/1010" in getattr(created, "last_error", "")
 
 
 def test_start_missing_bot_raises():

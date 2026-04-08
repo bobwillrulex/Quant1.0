@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from bot import TradingBot
 from quant.execution_engine import ExecutionEngine
+from quant.live_trading.auth import is_terminal_auth_failure
 from quant.live_trading.market import get_quote
 from quant.storage import db_path, ensure_db
 
@@ -185,6 +186,10 @@ def _bot_loop(bot: TradingBot, stop_event: threading.Event) -> None:
                 _save_bot_state(bot)
         except Exception as exc:  # noqa: BLE001
             setattr(bot, "last_error", str(exc))
+            if is_terminal_auth_failure(exc):
+                bot.status = "stopped"
+                _save_bot_state(bot)
+                _LOGGER.error("Bot %s stopped: terminal Questrade auth failure. Manual token refresh required.", bot.id)
             _LOGGER.exception("Bot loop error for %s: %s", bot.id, exc)
         stop_event.wait(timeout=wait_seconds)
 
