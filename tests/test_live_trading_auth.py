@@ -40,3 +40,19 @@ def test_resolve_refresh_token_prefers_env_over_persisted_state(monkeypatch):
     )
 
     assert client._resolve_refresh_token() == "env_refresh"
+
+
+def test_load_env_tokens_from_project_root_when_cwd_differs(tmp_path, monkeypatch):
+    fake_project_root = tmp_path / "repo_root"
+    fake_project_root.mkdir()
+    (fake_project_root / ".env").write_text("QUESTRADE_REFRESH_TOKEN=project_root_token\n", encoding="utf-8")
+
+    other_cwd = tmp_path / "other_cwd"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    monkeypatch.delenv("QUESTRADE_REFRESH_TOKEN", raising=False)
+    monkeypatch.setattr(auth, "_PROJECT_ROOT", fake_project_root)
+
+    auth._load_env_tokens_from_files()
+
+    assert auth.os.environ.get("QUESTRADE_REFRESH_TOKEN") == "project_root_token"
