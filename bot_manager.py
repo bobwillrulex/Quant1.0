@@ -30,6 +30,7 @@ _POLL_ALIGNMENT_SECONDS = 5.0
 _PRE_OPEN_WAKE_BUFFER_SECONDS = 5.0
 _EST_TZ = ZoneInfo("America/New_York")
 _LOGGER = logging.getLogger(__name__)
+_QUESTRADE_CLIENTS_BY_REFRESH_TOKEN: dict[str, Any] = {}
 
 
 def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
@@ -82,7 +83,12 @@ def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
                 "Missing optional dependency 'requests' required by questrade_client. "
                 "Install requests or configure a custom market_data_fetcher."
             ) from exc
-        client = QuestradeClient(refresh_token=refresh_token)
+        with _LOCK:
+            shared_client = _QUESTRADE_CLIENTS_BY_REFRESH_TOKEN.get(refresh_token)
+            if shared_client is None:
+                shared_client = QuestradeClient(refresh_token=refresh_token)
+                _QUESTRADE_CLIENTS_BY_REFRESH_TOKEN[refresh_token] = shared_client
+            client = shared_client
         questrade_error_type = QuestradeError
 
     def _fetch_quote(_: TradingBot) -> dict[str, Any] | None:

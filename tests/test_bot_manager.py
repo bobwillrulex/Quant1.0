@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ def reset_bot_manager_state():
         bot_manager.bots.pop(bot_id, None)
     bot_manager._BOT_THREADS.clear()
     bot_manager._BOT_STOP_EVENTS.clear()
+    bot_manager._QUESTRADE_CLIENTS_BY_REFRESH_TOKEN.clear()
     bot_manager.clear_persisted_bots()
     yield
     for bot_id in list(bot_manager.bots.keys()):
@@ -32,6 +34,7 @@ def reset_bot_manager_state():
         except KeyError:
             pass
         bot_manager.bots.pop(bot_id, None)
+    bot_manager._QUESTRADE_CLIENTS_BY_REFRESH_TOKEN.clear()
     bot_manager.clear_persisted_bots()
 
 
@@ -189,6 +192,32 @@ def test_create_bot_applies_execution_settings():
     assert bot.execution_engine.min_latency_ms == 50.0
     assert bot.execution_engine.max_latency_ms == 200.0
     assert bot.execution_engine.enable_spread_widening is True
+
+
+def test_default_fetcher_reuses_single_questrade_client_for_same_refresh_token(monkeypatch):
+    monkeypatch.setenv("QUESTRADE_REFRESH_TOKEN", "shared-refresh-token")
+
+    created_clients: list[object] = []
+
+    class _FakeQuestradeClient:
+        def __init__(self, refresh_token: str):
+            created_clients.append(self)
+            self.refresh_token = refresh_token
+
+        def get_quote(self, _ticker: str):
+            return {"bid": 100.0, "ask": 100.2, "last": 100.1, "timestamp": "2026-04-06T14:00:00Z"}
+
+    fake_module = types.ModuleType("questrade_client")
+    fake_module.QuestradeClient = _FakeQuestradeClient
+    fake_module.QuestradeError = Exception
+    monkeypatch.setitem(sys.modules, "questrade_client", fake_module)
+
+    fetcher_one = bot_manager._build_default_fetcher({"ticker": "AAPL"})
+    fetcher_two = bot_manager._build_default_fetcher({"ticker": "MSFT"})
+
+    assert fetcher_one is not None
+    assert fetcher_two is not None
+    assert len(created_clients) == 1
 
 
 def test_bot_state_persists_to_database_and_reloads():
