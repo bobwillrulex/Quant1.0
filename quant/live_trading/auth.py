@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 TOKEN_FILE = Path(os.environ.get("QUESTRADE_TOKEN_FILE", Path.home() / ".quant1_data" / "questrade_tokens.json"))
-_ENV_FILES = (Path(".env"), Path(".env.example"))
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class QuestradeApiError(RuntimeError):
@@ -187,7 +187,7 @@ class QuestradeAuthClient:
 
 
 def _load_env_tokens_from_files() -> None:
-    for env_file in _ENV_FILES:
+    for env_file in _env_files():
         if not env_file.exists():
             continue
         for raw_line in env_file.read_text(encoding="utf-8").splitlines():
@@ -199,6 +199,16 @@ def _load_env_tokens_from_files() -> None:
             if not clean_key or clean_key in os.environ:
                 continue
             os.environ[clean_key] = value.strip().strip("'\"")
+
+
+def _env_files() -> tuple[Path, ...]:
+    cwd = Path.cwd()
+    return (
+        cwd / ".env",
+        cwd / ".env.example",
+        _PROJECT_ROOT / ".env",
+        _PROJECT_ROOT / ".env.example",
+    )
 
 
 def _clean_refresh_token_candidate(raw_value: str | None) -> str:
