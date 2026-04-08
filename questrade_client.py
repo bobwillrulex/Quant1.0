@@ -6,11 +6,14 @@ for quote and candle data.
 
 from __future__ import annotations
 
+import json
+import os
 import random
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -65,6 +68,7 @@ class QuestradeClient:
         max_retries: int = 3,
         token_refresh_buffer_seconds: int = 60,
         session: Optional[Session] = None,
+        refresh_token_file: str | Path | None = None,
     ) -> None:
         if not refresh_token:
             raise ValueError("refresh_token is required")
@@ -75,6 +79,7 @@ class QuestradeClient:
         self._token_refresh_buffer = timedelta(seconds=token_refresh_buffer_seconds)
 
         self._session = session or requests.Session()
+        self._refresh_token_file = Path(refresh_token_file).expanduser() if refresh_token_file else None
 
         self._lock = threading.RLock()
         self._access_token: Optional[str] = None
@@ -84,7 +89,6 @@ class QuestradeClient:
         self._symbol_cache: Dict[str, int] = {}
         self._quote_cache: Dict[str, Quote] = {}
 
-        self._refresh_access_token()
 
     def get_quote(self, ticker: str) -> Dict[str, Any]:
         """Fetch a quote and normalize to a clean dict.
@@ -289,6 +293,14 @@ class QuestradeClient:
             new_refresh = data.get("refresh_token")
             if new_refresh:
                 self._refresh_token = str(new_refresh)
+                self._persist_refresh_token()
+
+
+    def _persist_refresh_token(self) -> None:
+        if self._refresh_token_file is None:
+            return
+        self._refresh_token_file.parent.mkdir(parents=True, exist_ok=True)
+        self._refresh_token_file.write_text(self._refresh_token, encoding="utf-8")
 
     def _get_access_token(self) -> str:
         with self._lock:
