@@ -23,6 +23,7 @@ def reset_bot_manager_state():
         bot_manager.bots.pop(bot_id, None)
     bot_manager._BOT_THREADS.clear()
     bot_manager._BOT_STOP_EVENTS.clear()
+    bot_manager.clear_persisted_bots()
     yield
     for bot_id in list(bot_manager.bots.keys()):
         try:
@@ -30,6 +31,7 @@ def reset_bot_manager_state():
         except KeyError:
             pass
         bot_manager.bots.pop(bot_id, None)
+    bot_manager.clear_persisted_bots()
 
 
 def _config(bot_id: str, fetcher):
@@ -101,3 +103,23 @@ def test_create_bot_applies_execution_settings():
     assert bot.execution_engine.min_latency_ms == 50.0
     assert bot.execution_engine.max_latency_ms == 200.0
     assert bot.execution_engine.enable_spread_widening is True
+
+
+def test_bot_state_persists_to_database_and_reloads():
+    def fetcher(_):
+        return None
+
+    created = bot_manager.create_bot(_config("persist-1", fetcher))
+    created.trades.append({"timestamp": "2026-04-06T14:00:00Z", "side": "BUY", "price": 100.0, "size": 1.0, "pnl": 0.0})
+    created.total_pnl = 12.5
+    created.status = "running"
+    bot_manager.persist_bot(created)
+
+    bot_manager.bots.clear()
+    bot_manager._load_persisted_bots()
+
+    reloaded = bot_manager.get_bot("persist-1")
+    assert reloaded is not None
+    assert reloaded.status == "running"
+    assert reloaded.total_pnl == pytest.approx(12.5)
+    assert len(reloaded.trades) == 1
