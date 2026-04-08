@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bot import TradingBot
@@ -69,3 +71,19 @@ def test_intraday_trade_interval_enforces_anchored_10_minute_boundaries():
     allowed = bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-07T14:10:00+00:00"})
     assert allowed["action"] == "BUY"
     assert bot.position_size > 0.0
+
+
+def test_tracks_last_polled_bid_ask_spread():
+    bot = TradingBot(
+        id="spread",
+        name="Spread",
+        model_name="noop",
+        ticker="AAPL",
+        timeframe="1m",
+        cash=1000,
+    )
+    bot.update_pnl({"bid": 100.10, "ask": 100.30, "timestamp": "2026-04-08T14:35:00+00:00"})
+    assert bot.last_polled_bid == 100.10
+    assert bot.last_polled_ask == 100.30
+    assert bot.last_polled_spread == pytest.approx(0.20)
+    assert bot.last_polled_timestamp == "2026-04-08T14:35:00+00:00"

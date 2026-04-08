@@ -727,6 +727,10 @@ def create_app() -> "Flask":
             "total_pnl": float(getattr(bot, "total_pnl", 0.0)),
             "position": float(getattr(bot, "position", 0.0)),
             "cash": float(getattr(bot, "cash", 0.0)),
+            "last_polled_bid": getattr(bot, "last_polled_bid", None),
+            "last_polled_ask": getattr(bot, "last_polled_ask", None),
+            "last_polled_spread": getattr(bot, "last_polled_spread", None),
+            "last_polled_timestamp": getattr(bot, "last_polled_timestamp", None),
         }
 
     def _parse_trade_timestamp(value: object) -> datetime | None:

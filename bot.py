@@ -45,6 +45,10 @@ class TradingBot:
     trades: list[dict[str, Any]] = field(init=False, default_factory=list)
 
     _day_start_total_pnl: float = field(init=False, default=0.0)
+    last_polled_bid: float | None = field(init=False, default=None)
+    last_polled_ask: float | None = field(init=False, default=None)
+    last_polled_spread: float | None = field(init=False, default=None)
+    last_polled_timestamp: str | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.position_size = float(self.position)
@@ -58,6 +62,7 @@ class TradingBot:
             return {"status": self.status, "action": "HOLD", "trade": None}
 
         quote = self._as_quote(data)
+        self._record_last_polled_quote(quote)
 
         # Risk-first: SL/TP exits take precedence over model entries.
         risk_trade = self._apply_risk_controls(quote)
@@ -87,6 +92,7 @@ class TradingBot:
 
     def update_pnl(self, current_quote: dict[str, Any]) -> float:
         """Continuously update total and day PnL using realized + unrealized."""
+        self._record_last_polled_quote(current_quote)
         mark = self._mark_price(current_quote)
         unrealized_pnl = 0.0
         if self.position_size != 0 and self.average_entry_price > 0:
@@ -183,6 +189,19 @@ class TradingBot:
     def _sync_public_state(self) -> None:
         self.position = float(self.position_size)
         self.avg_entry_price = float(self.average_entry_price)
+
+    def _record_last_polled_quote(self, quote: dict[str, Any]) -> None:
+        bid = quote.get("bid")
+        ask = quote.get("ask")
+        if bid is None or ask is None:
+            return
+        bid_value = float(bid)
+        ask_value = float(ask)
+        self.last_polled_bid = bid_value
+        self.last_polled_ask = ask_value
+        self.last_polled_spread = ask_value - bid_value
+        timestamp = quote.get("timestamp")
+        self.last_polled_timestamp = str(timestamp) if timestamp is not None else None
 
     def _allow_buy_now(self, data: dict[str, Any]) -> bool:
         timeframe = self.timeframe.strip().lower()

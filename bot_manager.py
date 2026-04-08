@@ -310,6 +310,10 @@ def _serialize_bot(bot: TradingBot) -> dict[str, Any]:
         "realized_pnl": float(bot.realized_pnl),
         "position_size": float(bot.position_size),
         "average_entry_price": float(bot.average_entry_price),
+        "last_polled_bid": bot.last_polled_bid,
+        "last_polled_ask": bot.last_polled_ask,
+        "last_polled_spread": bot.last_polled_spread,
+        "last_polled_timestamp": bot.last_polled_timestamp,
         "execution_settings": {
             "enable_slippage": bool(engine.enable_slippage),
             "max_slippage_pct": float(engine.max_slippage_pct),
@@ -373,6 +377,14 @@ def _create_bot_from_payload(payload: dict[str, Any]) -> None:
     bot.realized_pnl = float(payload.get("realized_pnl", bot.realized_pnl))
     bot.position_size = float(payload.get("position_size", bot.position))
     bot.average_entry_price = float(payload.get("average_entry_price", bot.avg_entry_price))
+    raw_bid = payload.get("last_polled_bid")
+    raw_ask = payload.get("last_polled_ask")
+    raw_spread = payload.get("last_polled_spread")
+    bot.last_polled_bid = float(raw_bid) if raw_bid is not None else None
+    bot.last_polled_ask = float(raw_ask) if raw_ask is not None else None
+    bot.last_polled_spread = float(raw_spread) if raw_spread is not None else None
+    raw_ts = payload.get("last_polled_timestamp")
+    bot.last_polled_timestamp = str(raw_ts) if raw_ts is not None else None
     bot._sync_public_state()
 
 
