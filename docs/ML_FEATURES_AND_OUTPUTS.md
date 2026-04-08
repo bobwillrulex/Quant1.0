@@ -39,6 +39,8 @@ Supported canonical sets:
 - `vwap_momentum_trend_5m_pullback`
 - `vwap_volume_long_momentum_5m`
 - `vwap_volume_regime_adaptive_5m`
+- `vwap_volume_first5_trend_momentum_5m`
+- `vwap_volume_profile_first5_trend_momentum_5m`
 - `hybrid_sharpe_core`
 - `hybrid_sharpe_core_no_stack`
 - `hybrid_sharpe_momentum`
