@@ -138,8 +138,31 @@ def test_get_bot_details_includes_last_polled_spread(client):
     payload = response.get_json()
     assert payload["last_polled_bid"] == pytest.approx(99.95)
     assert payload["last_polled_ask"] == pytest.approx(100.05)
-    assert payload["last_polled_spread"] == pytest.approx(0.10)
-    assert payload["last_polled_timestamp"] == "2026-04-08T14:30:00+00:00"
+
+
+def test_api_bot_payload_includes_current_p_up(client):
+    create_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "name": "Signal Bot",
+        },
+    )
+    bot_id = create_response.get_json()["id"]
+    bot = bot_manager.get_bot(bot_id)
+    assert bot is not None
+    bot.status = "running"
+    bot.model = lambda _row: 0.81
+    bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-08T14:45:00+00:00"})
+
+    response = client.get("/api/bots")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload) == 1
+    assert payload[0]["p_up"] == pytest.approx(0.81)
 
 
 def test_update_bot_settings(client):

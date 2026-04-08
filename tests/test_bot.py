@@ -87,3 +87,18 @@ def test_tracks_last_polled_bid_ask_spread():
     assert bot.last_polled_ask == 100.30
     assert bot.last_polled_spread == pytest.approx(0.20)
     assert bot.last_polled_timestamp == "2026-04-08T14:35:00+00:00"
+
+
+def test_tracks_last_p_up_from_model_signal():
+    bot = TradingBot(
+        id="p-up",
+        name="PUp",
+        model_name="noop",
+        ticker="AAPL",
+        timeframe="1m",
+        cash=1000,
+    )
+    bot.status = "running"
+    bot.model = lambda _row: 0.73
+    bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-08T14:40:00+00:00"})
+    assert bot.last_p_up == pytest.approx(0.73)

@@ -731,6 +731,7 @@ def create_app() -> "Flask":
             "last_polled_ask": getattr(bot, "last_polled_ask", None),
             "last_polled_spread": getattr(bot, "last_polled_spread", None),
             "last_polled_timestamp": getattr(bot, "last_polled_timestamp", None),
+            "p_up": float(getattr(bot, "last_p_up", 0.5)),
         }
 
     def _parse_trade_timestamp(value: object) -> datetime | None:
@@ -1205,6 +1206,17 @@ def create_app() -> "Flask":
             .muted { color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
             .clickable-row { cursor: pointer; }
             .clickable-row:hover { background: rgba(255,255,255,0.04); }
+            .p-up-cell { font-variant-numeric: tabular-nums; }
+            .flash-up { animation: flash-up 0.9s ease-out; }
+            .flash-down { animation: flash-down 0.9s ease-out; }
+            @keyframes flash-up {
+              0% { background: rgba(56, 214, 130, 0.35); }
+              100% { background: transparent; }
+            }
+            @keyframes flash-down {
+              0% { background: rgba(240, 82, 82, 0.35); }
+              100% { background: transparent; }
+            }
             .modal-backdrop {
               display: none;
               position: fixed;
@@ -1310,6 +1322,7 @@ def create_app() -> "Flask":
                     <th>Total PnL</th>
                     <th>Position</th>
                     <th>Cash</th>
+                    <th>P(Up)</th>
                     <th>Actions (Start/Stop)</th>
                   </tr>
                 </thead>
@@ -1443,11 +1456,13 @@ def create_app() -> "Flask":
             const contextDeleteBot = document.getElementById("contextDeleteBot");
             let allBots = [];
             let selectedBotId = null;
+            let previousPUpByBotId = {};
 
             const formatCurrency = (value) => {
               const number = Number(value || 0);
               return number.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
             };
+            const formatPercent = (value) => `${(Number(value || 0) * 100).toFixed(2)}%`;
             const hideContextMenu = () => { botContextMenu.style.display = "none"; };
             const showContextMenu = (x, y) => {
               botContextMenu.style.left = `${x}px`;
@@ -1550,6 +1565,7 @@ def create_app() -> "Flask":
                   <td></td>
                   <td></td>
                   <td></td>
+                  <td class="p-up-cell"></td>
                   <td></td>
                 `;
                 row.children[0].textContent = String(bot.name || "");
@@ -1558,6 +1574,17 @@ def create_app() -> "Flask":
                 row.children[3].textContent = formatCurrency(bot.total_pnl);
                 row.children[4].textContent = Number(bot.position || 0).toFixed(2);
                 row.children[5].textContent = formatCurrency(bot.cash);
+                const pUpCell = row.children[6];
+                const currentPUp = Number(bot.p_up || 0);
+                pUpCell.textContent = formatPercent(currentPUp);
+                const prevPUp = previousPUpByBotId[bot.id];
+                if (typeof prevPUp === "number") {
+                  if (currentPUp > prevPUp) {
+                    pUpCell.classList.add("flash-up");
+                  } else if (currentPUp < prevPUp) {
+                    pUpCell.classList.add("flash-down");
+                  }
+                }
                 row.addEventListener("click", () => openBotDetails(bot.id));
                 row.addEventListener("contextmenu", (event) => {
                   event.preventDefault();
@@ -1565,7 +1592,7 @@ def create_app() -> "Flask":
                   showContextMenu(event.clientX, event.clientY);
                 });
 
-                const actionsCell = row.children[6];
+                const actionsCell = row.children[7];
                 const startBtn = document.createElement("button");
                 startBtn.className = "btn btn-small btn-start";
                 startBtn.textContent = "Start";
@@ -1597,6 +1624,9 @@ def create_app() -> "Flask":
                 throw new Error("Failed to load bots");
               }
               const payload = await response.json();
+              previousPUpByBotId = Object.fromEntries(
+                allBots.map((bot) => [bot.id, Number(bot.p_up || 0)]),
+              );
               allBots = payload.map((bot) => ({
                 ...bot,
                 search_name: String(bot.name || "").toLowerCase(),
