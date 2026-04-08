@@ -250,50 +250,55 @@ class QuestradeClient:
 
     def _ensure_valid_token(self) -> None:
         with self._lock:
-            expiry = self._token_expiry
-            should_refresh = (
-                self._access_token is None
-                or self._api_server is None
-                or expiry is None
-                or datetime.now(timezone.utc) >= (expiry - self._token_refresh_buffer)
-            )
+            if not self._needs_token_refresh_locked():
+                return
+            self._refresh_access_token_locked()
 
-        if should_refresh:
-            self._refresh_access_token()
+    def _needs_token_refresh_locked(self) -> bool:
+        expiry = self._token_expiry
+        return (
+            self._access_token is None
+            or self._api_server is None
+            or expiry is None
+            or datetime.now(timezone.utc) >= (expiry - self._token_refresh_buffer)
+        )
 
     def _refresh_access_token(self) -> None:
         with self._lock:
-            params = {
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-            }
+            self._refresh_access_token_locked()
 
-            try:
-                response = self._session.get(self.TOKEN_URL, params=params, timeout=self._timeout)
-            except requests.RequestException as exc:
-                raise QuestradeAuthError(f"Token refresh network error: {exc}") from exc
+    def _refresh_access_token_locked(self) -> None:
+        params = {
+            "grant_type": "refresh_token",
+            "refresh_token": self._refresh_token,
+        }
 
-            if response.status_code >= 400:
-                raise QuestradeAuthError(
-                    f"Token refresh failed ({response.status_code}): {response.text}"
-                )
+        try:
+            response = self._session.get(self.TOKEN_URL, params=params, timeout=self._timeout)
+        except requests.RequestException as exc:
+            raise QuestradeAuthError(f"Token refresh network error: {exc}") from exc
 
-            data = response.json()
-            access_token = data.get("access_token")
-            api_server = data.get("api_server")
-            expires_in = data.get("expires_in")
+        if response.status_code >= 400:
+            raise QuestradeAuthError(
+                f"Token refresh failed ({response.status_code}): {response.text}"
+            )
 
-            if not access_token or not api_server or not expires_in:
-                raise QuestradeAuthError("Token refresh response missing required fields")
+        data = response.json()
+        access_token = data.get("access_token")
+        api_server = data.get("api_server")
+        expires_in = data.get("expires_in")
 
-            self._access_token = str(access_token)
-            self._api_server = str(api_server)
-            self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        if not access_token or not api_server or not expires_in:
+            raise QuestradeAuthError("Token refresh response missing required fields")
 
-            new_refresh = data.get("refresh_token")
-            if new_refresh:
-                self._refresh_token = str(new_refresh)
-                self._persist_refresh_token()
+        self._access_token = str(access_token)
+        self._api_server = str(api_server)
+        self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+
+        new_refresh = data.get("refresh_token")
+        if new_refresh:
+            self._refresh_token = str(new_refresh)
+            self._persist_refresh_token()
 
 
     def _persist_refresh_token(self) -> None:
