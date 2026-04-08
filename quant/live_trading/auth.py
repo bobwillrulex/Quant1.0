@@ -76,8 +76,9 @@ class QuestradeAuthClient:
 
     def refresh_access_token(self) -> TokenState:
         refresh_token = self._resolve_refresh_token()
-        url = f"https://login.questrade.com/oauth2/token?grant_type=refresh_token&refresh_token={refresh_token}"
-        request = Request(url, method="GET")
+        token_payload = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode("utf-8")
+        request = Request("https://login.questrade.com/oauth2/token", method="POST", data=token_payload)
+        request.add_header("Content-Type", "application/x-www-form-urlencoded")
         payload = self._request_with_retry(request=request, retry_on_auth=False)
 
         try:
@@ -101,6 +102,10 @@ class QuestradeAuthClient:
         return state
 
     def _resolve_refresh_token(self) -> str:
+        if self._token_state and self._token_state.refresh_token:
+            state_refresh = _clean_refresh_token_candidate(self._token_state.refresh_token)
+            if state_refresh:
+                return state_refresh
         env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
         if env_refresh:
             return env_refresh
@@ -108,10 +113,6 @@ class QuestradeAuthClient:
         env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
         if env_refresh:
             return env_refresh
-        if self._token_state and self._token_state.refresh_token:
-            state_refresh = _clean_refresh_token_candidate(self._token_state.refresh_token)
-            if state_refresh:
-                return state_refresh
         raise QuestradeApiError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN in environment.")
 
     def _request_with_retry(self, *, request: Request, retry_on_auth: bool) -> dict[str, Any]:
