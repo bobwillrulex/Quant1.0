@@ -432,6 +432,44 @@ def test_war_shock_reversion_feature_set_is_supported() -> None:
     assert expected.issubset(set(names))
 
 
+def test_vwap_volume_first5_trend_momentum_5m_feature_set_is_supported() -> None:
+    assert normalize_feature_set("first5_vwap_volume_momentum") == "vwap_volume_first5_trend_momentum_5m"
+    builder = get_strategy_feature_builder("vwap_volume_first5_trend_momentum_5m")
+    names = builder.names()
+    expected = {
+        "session_bar_index_5m",
+        "first5_bar_window_ready",
+        "opening_range_breakout_up_15m",
+        "opening_range_breakdown_15m",
+        "price_vs_session_vwap_5m",
+        "vwap_breakout_strength_atr",
+        "vwap_breakdown_strength_atr",
+        "volume_spike_ratio",
+        "trade_count_today",
+        "trades_remaining_cap_2",
+        "avoid_overnight_bias",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_vwap_volume_profile_first5_trend_momentum_5m_feature_set_is_supported() -> None:
+    assert normalize_feature_set("first5_vwap_volume_profile_momentum") == "vwap_volume_profile_first5_trend_momentum_5m"
+    builder = get_strategy_feature_builder("vwap_volume_profile_first5_trend_momentum_5m")
+    names = builder.names()
+    expected = {
+        "first5_bar_window_ready",
+        "trades_remaining_cap_2",
+        "session_vwap_std_1_5m",
+        "session_vwap_std_2_5m",
+        "session_vwap_std_1_range_5m",
+        "session_vwap_std_2_range_5m",
+        "volume_profile_acceptance_1sigma",
+        "volume_profile_expansion_2sigma",
+        "volume_profile_momentum_bias",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_war_shock_momentum_feature_set_is_supported() -> None:
     assert normalize_feature_set("war-shock-momentum") == "war_shock_momentum"
     builder = get_strategy_feature_builder("war_shock_momentum")
