@@ -21,6 +21,7 @@ def reset_bot_manager_state():
         bot_manager.bots.pop(bot_id, None)
     bot_manager._BOT_THREADS.clear()
     bot_manager._BOT_STOP_EVENTS.clear()
+    bot_manager.clear_persisted_bots()
     yield
     for bot_id in list(bot_manager.bots.keys()):
         try:
@@ -28,6 +29,7 @@ def reset_bot_manager_state():
         except KeyError:
             pass
         bot_manager.bots.pop(bot_id, None)
+    bot_manager.clear_persisted_bots()
 
 
 @pytest.fixture

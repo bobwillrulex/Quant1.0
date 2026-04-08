@@ -60,7 +60,7 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
-from bot_manager import create_bot, get_all_bots, get_bot, start_bot, stop_bot
+from bot_manager import create_bot, get_all_bots, get_bot, persist_bot, start_bot, stop_bot
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -1641,6 +1641,7 @@ def create_app() -> "Flask":
             return jsonify({"error": str(exc)}), 400
         for field, value in updates.items():
             setattr(bot, field, value)
+        persist_bot(bot)
         return jsonify(_bot_details_payload(bot))
 
     @app.route("/manage-models", methods=["GET", "POST"])
