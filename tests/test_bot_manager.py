@@ -95,6 +95,49 @@ def test_create_get_start_stop_bot(monkeypatch):
     assert calls["n"] >= 1
 
 
+def test_running_bot_updates_quote_even_when_market_closed(monkeypatch):
+    calls = {"n": 0}
+
+    def fetcher(_):
+        calls["n"] += 1
+        return {"bid": 100.0, "ask": 100.2, "timestamp": "2026-04-06T12:00:00Z"}
+
+    monkeypatch.setattr(bot_manager, "is_market_open", lambda now=None: False)
+    monkeypatch.setattr(bot_manager, "_seconds_until_next_aligned_poll_tick", lambda *_args, **_kwargs: 0.01)
+
+    created = bot_manager.create_bot(_config("bot-closed", fetcher))
+    bot_manager.start_bot("bot-closed")
+    time.sleep(0.08)
+    bot_manager.stop_bot("bot-closed")
+
+    assert calls["n"] >= 1
+    assert created.last_polled_bid == pytest.approx(100.0)
+    assert created.last_polled_ask == pytest.approx(100.2)
+
+
+def test_running_bot_loop_survives_fetch_errors(monkeypatch):
+    calls = {"n": 0}
+
+    def fetcher(_):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("temporary quote failure")
+        return {"bid": 101.0, "ask": 101.3, "timestamp": "2026-04-06T14:05:00Z"}
+
+    monkeypatch.setattr(bot_manager, "is_market_open", lambda now=None: True)
+    monkeypatch.setattr(bot_manager, "_seconds_until_next_aligned_poll_tick", lambda *_args, **_kwargs: 0.01)
+
+    created = bot_manager.create_bot(_config("bot-errors", fetcher))
+    bot_manager.start_bot("bot-errors")
+    time.sleep(0.12)
+    bot_manager.stop_bot("bot-errors")
+
+    assert calls["n"] >= 2
+    assert created.last_polled_bid == pytest.approx(101.0)
+    assert created.last_polled_ask == pytest.approx(101.3)
+    assert getattr(created, "last_error", "") == "temporary quote failure"
+
+
 def test_start_missing_bot_raises():
     with pytest.raises(KeyError):
         bot_manager.start_bot("does-not-exist")

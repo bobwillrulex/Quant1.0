@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime, time, timedelta, timezone
@@ -26,6 +27,7 @@ _DEFAULT_POLL_SECONDS = 5.0
 _POLL_ALIGNMENT_SECONDS = 5.0
 _PRE_OPEN_WAKE_BUFFER_SECONDS = 5.0
 _EST_TZ = ZoneInfo("America/New_York")
+_LOGGER = logging.getLogger(__name__)
 
 
 def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
@@ -170,14 +172,20 @@ def _bot_loop(bot: TradingBot, stop_event: threading.Event) -> None:
     poll_interval = _extract_poll_interval(bot)
 
     while not stop_event.is_set():
-        if bot.status == "running" and is_market_open():
+        if bot.status != "running":
+            wait_seconds = _seconds_until_market_wakeup()
+            stop_event.wait(timeout=wait_seconds)
+            continue
+
+        wait_seconds = _seconds_until_next_aligned_poll_tick(poll_interval)
+        try:
             payload = fetcher(bot)
             if payload is not None:
-                bot.on_new_candle(payload)
+                bot.on_market_data(payload, allow_trades=is_market_open())
                 _save_bot_state(bot)
-            wait_seconds = _seconds_until_next_aligned_poll_tick(poll_interval)
-        else:
-            wait_seconds = _seconds_until_market_wakeup()
+        except Exception as exc:  # noqa: BLE001
+            setattr(bot, "last_error", str(exc))
+            _LOGGER.exception("Bot loop error for %s: %s", bot.id, exc)
         stop_event.wait(timeout=wait_seconds)
 
 
