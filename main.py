@@ -2980,6 +2980,7 @@ def create_app() -> "Flask":
         present_max_hold_bars_raw = request.form.get("present_max_hold_bars", max_hold_bars_raw).strip()
         mode = request.form.get("mode", "train")
         train_action = request.form.get("train_action", "train")
+        evaluate_like_actions = {"evaluate", "evaluate_historical", "evaluate_update"}
         evaluate_historical_only = train_action == "evaluate_historical"
         if evaluate_historical_only:
             split_style = "chronological"
@@ -3265,6 +3266,8 @@ def create_app() -> "Flask":
                         raise ValueError("Please enter at least one ticker symbol.")
                     model_names = parse_csv_values(model_name, uppercase=False) if model_name else []
                     if len(tickers) > 1:
+                        if train_action == "evaluate_update":
+                            raise ValueError("Evaluate + Update Preset currently supports single-ticker runs only.")
                         if use_manual_weights:
                             raise ValueError("Manual feature weights currently support single-ticker runs only.")
                         if selected_model != "__new__":
@@ -3380,7 +3383,7 @@ def create_app() -> "Flask":
                         anchored_eval_note = ""
                         if (
                             selected_model != "__new__"
-                            and train_action in ("evaluate", "evaluate_historical")
+                            and train_action in evaluate_like_actions
                             and split_style == "chronological"
                         ):
                             model_configs = load_model_configs(mode_key)
@@ -3407,7 +3410,7 @@ def create_app() -> "Flask":
                         )
                         if provider_notice:
                             provider_notices.append(provider_notice)
-                        if train_action in ("evaluate", "evaluate_historical"):
+                        if train_action in evaluate_like_actions:
                             if anchored_eval_note:
                                 rows_used_note = anchored_eval_note
                             else:
@@ -3474,7 +3477,7 @@ def create_app() -> "Flask":
                                 }
                                 x_test_raw = feature_builder.transform(eval_rows)
                             else:
-                                model_test_ratio = 0.0 if train_action in ("evaluate", "evaluate_historical") else evaluation_split
+                                model_test_ratio = 0.0 if train_action in evaluate_like_actions else evaluation_split
                                 bundle = train_strategy_models(
                                     dataset,
                                     split_style=split_style,
@@ -3482,7 +3485,7 @@ def create_app() -> "Flask":
                                     dqn_episodes=dqn_episodes,
                                     test_ratio=model_test_ratio,
                                 )
-                                if train_action in ("evaluate", "evaluate_historical"):
+                                if train_action in evaluate_like_actions:
                                     bundle_feature_set = infer_bundle_feature_set(bundle)
                                     feature_builder = get_strategy_feature_builder(bundle_feature_set)
                                     x_test_raw = feature_builder.transform(eval_rows)
@@ -3491,8 +3494,8 @@ def create_app() -> "Flask":
                             metrics = evaluate_bundle(
                                 bundle,
                                 x_test_raw,
-                                y_test_ret if use_manual_weights or train_action in ("evaluate", "evaluate_historical") else bundle["y_test_ret"],
-                                y_test_dir if use_manual_weights or train_action in ("evaluate", "evaluate_historical") else bundle["y_test_dir"],
+                                y_test_ret if use_manual_weights or train_action in evaluate_like_actions else bundle["y_test_ret"],
+                                y_test_dir if use_manual_weights or train_action in evaluate_like_actions else bundle["y_test_dir"],
                                 eval_rows=dataset,
                                 split_style=split_style,
                                 buy_threshold=buy_threshold,
@@ -3535,6 +3538,35 @@ def create_app() -> "Flask":
                                 save_model_configs(mode_key, model_configs)
                                 metrics["saved_model"] = model_name_to_save
                                 saved_models = list_saved_models(mode_key)
+
+                        if train_action == "evaluate_update":
+                            if selected_model == "__new__":
+                                raise ValueError("Evaluate + Update Preset requires selecting an existing saved model.")
+                            if use_manual_weights:
+                                raise ValueError("Evaluate + Update Preset cannot be used with manual feature weights.")
+                            model_configs = load_model_configs(mode_key)
+                            model_configs[selected_model] = {
+                                "ticker": ticker,
+                                "interval": interval,
+                                "rows": row_count,
+                                "include_in_run_all": True,
+                                "buy_threshold": buy_threshold,
+                                "sell_threshold": sell_threshold,
+                                "stop_loss_strategy": stop_loss_strategy.value,
+                                "fixed_stop_pct": fixed_stop_pct,
+                                "take_profit_pct": take_profit_pct,
+                                "max_hold_bars": max_hold_bars,
+                                "prediction_horizon": prediction_horizon,
+                            }
+                            save_model_configs(mode_key, model_configs)
+                            loaded_bundle = load_model_bundle(mode_key, selected_model)
+                            loaded_bundle["historical_monte_carlo"] = metrics.get("monte_carlo")
+                            loaded_bundle["forward_monte_carlo_train"] = metrics.get("forward_buy_now")
+                            save_model_bundle(mode_key, selected_model, loaded_bundle)
+                            message_html = (
+                                "<p style='color:#7bd88f;'><strong>Updated preset and Monte Carlo distributions</strong> "
+                                f"for model <strong>{escape(selected_model)}</strong>.</p>"
+                            )
     
                         preview_rows = "".join(
                             f"<tr><td>{idx + 1}</td><td>{p['expected_return']:+.4%}</td><td>{p['p_up']:.2%}</td><td>{p['actual_return']:+.4%}</td></tr>"
@@ -4475,6 +4507,7 @@ def create_app() -> "Flask":
                   <button type="submit" name="train_action" value="train">Download + Train</button>
                   <button type="submit" name="train_action" value="evaluate" class="secondary">Evaluate Only</button>
                   <button type="submit" name="train_action" value="evaluate_historical" class="secondary">Evaluate Real History</button>
+                  <button type="submit" name="train_action" value="evaluate_update" class="secondary">Evaluate + Update Preset</button>
                 </div>
               </label>
               </div>
@@ -4641,12 +4674,16 @@ def create_app() -> "Flask":
                   const submitter = evt.submitter;
                   const action = submitter?.value || "";
 
-                  if (mode === "train" && (action === "train" || action === "evaluate")) {{
+                  if (mode === "train" && (action === "train" || action === "evaluate" || action === "evaluate_historical" || action === "evaluate_update")) {{
                     const manualMode = (form.querySelector('select[name="use_manual_weights"]')?.value || "no") === "yes";
                     const seconds = estimateTrainOrEvalSeconds(form, action);
                     const title = action === "train"
                       ? (manualMode ? "Downloading data, saving manual-weight model, and evaluating..." : "Downloading data and training model...")
-                      : "Downloading data and evaluating model...";
+                      : action === "evaluate_historical"
+                        ? "Downloading data and evaluating on real historical split..."
+                        : action === "evaluate_update"
+                          ? "Evaluating model and updating preset + Monte Carlo distributions..."
+                          : "Downloading data and evaluating model...";
                     showLoading(title, seconds);
                   }} else if (mode === "present_all") {{
                     const modelCount = Math.max(1, document.querySelectorAll('table tr').length - 1);
