@@ -138,6 +138,17 @@ def get_bot(bot_id: str) -> TradingBot | None:
         return bots.get(bot_id)
 
 
+def delete_bot(bot_id: str) -> None:
+    """Delete a bot from memory and persisted storage."""
+    with _LOCK:
+        if bot_id not in bots:
+            raise KeyError(f"Bot '{bot_id}' not found")
+    stop_bot(bot_id)
+    with _LOCK:
+        bots.pop(bot_id, None)
+    _delete_persisted_bot(bot_id)
+
+
 def is_market_open(now: datetime | None = None) -> bool:
     """Check U.S. equity regular market hours (9:30–16:00 ET, weekdays)."""
     current = now or datetime.now(tz=_EST_TZ)
@@ -232,6 +243,12 @@ def _save_bot_state(bot: TradingBot) -> None:
             """,
             (bot.id, payload_json, now_iso),
         )
+
+
+def _delete_persisted_bot(bot_id: str) -> None:
+    _ensure_bots_table()
+    with sqlite3.connect(db_path()) as conn:
+        conn.execute("DELETE FROM paper_trading_bots WHERE id = ?", (bot_id,))
 
 
 def _serialize_bot(bot: TradingBot) -> dict[str, Any]:

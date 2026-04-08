@@ -105,6 +105,11 @@ def test_get_bot_details_includes_trade_metrics(client):
     payload = response.get_json()
     assert payload["metrics"]["trade_count"] == 2
     assert payload["metrics"]["max_drawdown"] >= 0.0
+    assert "sharpe" in payload["metrics"]
+    assert "win_rate" in payload["metrics"]
+    assert "avg_gain_per_trade" in payload["metrics"]
+    assert "stop_loss_exits" in payload["metrics"]
+    assert "hold_time_stats" in payload["metrics"]
     assert isinstance(payload["trades"], list)
 
 
@@ -240,6 +245,30 @@ def test_not_found_errors(client):
     assert start_response.status_code == 404
     stop_response = client.post("/bots/stop/not-real")
     assert stop_response.status_code == 404
+    delete_response = client.delete("/bots/not-real")
+    assert delete_response.status_code == 404
+
+
+def test_delete_bot(client):
+    create_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "name": "Delete Me",
+        },
+    )
+    bot_id = create_response.get_json()["id"]
+    delete_response = client.delete(f"/bots/{bot_id}")
+    assert delete_response.status_code == 200
+    assert delete_response.get_json()["ok"] is True
+    assert bot_manager.get_bot(bot_id) is None
 
 
 def test_bots_dashboard_page(client):
@@ -251,10 +280,11 @@ def test_bots_dashboard_page(client):
     assert 'id="searchInput"' in body
     assert 'id="botStopLossStrategy"' in body
     assert 'id="botFixedStopPctWrap"' in body
-    assert "Right-click a bot row to edit settings" in body
+    assert "Right-click a bot row to edit or delete" in body
     assert 'id="botDetailModal"' in body
     assert 'id="editBotModal"' in body
     assert 'id="botContextMenu"' in body
+    assert 'id="contextDeleteBot"' in body
     assert "searchInput.addEventListener(\"input\", renderRows)" in body
     assert "search_name: String(bot.name || \"\").toLowerCase()" in body
     assert "row.addEventListener(\"contextmenu\"" in body
