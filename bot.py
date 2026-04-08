@@ -49,6 +49,7 @@ class TradingBot:
     last_polled_ask: float | None = field(init=False, default=None)
     last_polled_spread: float | None = field(init=False, default=None)
     last_polled_timestamp: str | None = field(init=False, default=None)
+    last_p_up: float = field(init=False, default=0.5)
 
     def __post_init__(self) -> None:
         self.position_size = float(self.position)
@@ -71,6 +72,7 @@ class TradingBot:
             return {"status": self.status, "action": "RISK_EXIT", "trade": risk_trade}
 
         signal = self._predict_signal(data)
+        self.last_p_up = float(signal)
         action = self.decide_action(signal)
         if action == "BUY" and not self._allow_buy_now(data):
             action = "HOLD"
