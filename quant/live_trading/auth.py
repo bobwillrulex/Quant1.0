@@ -101,15 +101,17 @@ class QuestradeAuthClient:
         return state
 
     def _resolve_refresh_token(self) -> str:
-        env_refresh = os.environ.get("QUESTRADE_REFRESH_TOKEN", "").strip()
+        env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
         if env_refresh:
             return env_refresh
         _load_env_tokens_from_files()
-        env_refresh = os.environ.get("QUESTRADE_REFRESH_TOKEN", "").strip()
+        env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
         if env_refresh:
             return env_refresh
         if self._token_state and self._token_state.refresh_token:
-            return self._token_state.refresh_token
+            state_refresh = _clean_refresh_token_candidate(self._token_state.refresh_token)
+            if state_refresh:
+                return state_refresh
         raise QuestradeApiError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN in environment.")
 
     def _request_with_retry(self, *, request: Request, retry_on_auth: bool) -> dict[str, Any]:
@@ -191,3 +193,16 @@ def _load_env_tokens_from_files() -> None:
             if not clean_key or clean_key in os.environ:
                 continue
             os.environ[clean_key] = value.strip().strip("'\"")
+
+
+def _clean_refresh_token_candidate(raw_value: str | None) -> str:
+    if not raw_value:
+        return ""
+    value = str(raw_value).strip().strip("'\"")
+    prefix = "QUESTRADE_REFRESH_TOKEN="
+    if value.upper().startswith(prefix):
+        value = value[len(prefix) :].strip()
+    value = value.replace("\r", "").replace("\n", "")
+    while value.endswith("\\n") or value.endswith("\\r"):
+        value = value[:-2]
+    return value.strip()
