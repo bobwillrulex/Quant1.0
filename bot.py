@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Protocol
+from zoneinfo import ZoneInfo
 
 from quant.execution_engine import ExecutionEngine
 
@@ -30,6 +32,8 @@ class TradingBot:
     stop_loss: float = 0.02
     take_profit: float = 0.04
     trade_size: float = 1.0
+    long_only: bool = False
+    daily_buy_timing: str = "start_of_day"
     model: SupportsPredict | Callable[[dict[str, Any]], float] | None = None
     execution_engine: ExecutionEngine = field(default_factory=ExecutionEngine)
 
@@ -62,6 +66,8 @@ class TradingBot:
 
         signal = self._predict_signal(data)
         action = self.decide_action(signal)
+        if action == "BUY" and not self._allow_buy_now(data):
+            action = "HOLD"
         trade = self._execute_action(action, quote)
         self.update_pnl(quote)
         return {"status": self.status, "action": action, "trade": trade, "signal": signal}
@@ -71,6 +77,8 @@ class TradingBot:
         if signal >= self.buy_threshold:
             return "BUY"
         if signal <= self.sell_threshold:
+            if self.long_only and self.position_size <= 0:
+                return "HOLD"
             return "SELL"
         return "HOLD"
 
@@ -172,3 +180,36 @@ class TradingBot:
     def _sync_public_state(self) -> None:
         self.position = float(self.position_size)
         self.avg_entry_price = float(self.average_entry_price)
+
+    def _allow_buy_now(self, data: dict[str, Any]) -> bool:
+        timeframe = self.timeframe.strip().lower()
+        if timeframe not in {"1d", "d", "day", "daily"}:
+            return True
+        timing = self.daily_buy_timing.strip().lower()
+        if timing not in {"start_of_day", "end_of_day"}:
+            timing = "start_of_day"
+        timestamp = data.get("timestamp")
+        if timestamp is None:
+            return timing == "start_of_day"
+        parsed = self._parse_timestamp(timestamp)
+        if parsed is None:
+            return timing == "start_of_day"
+        et = parsed.astimezone(ZoneInfo("America/New_York"))
+        minutes = (et.hour * 60) + et.minute
+        if timing == "end_of_day":
+            return minutes >= (15 * 60 + 59)
+        return 9 * 60 + 30 <= minutes <= 9 * 60 + 31
+
+    @staticmethod
+    def _parse_timestamp(timestamp: Any) -> datetime | None:
+        text = str(timestamp or "").strip()
+        if not text:
+            return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=ZoneInfo("UTC"))
+        return parsed

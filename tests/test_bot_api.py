@@ -46,6 +46,7 @@ def test_create_and_list_and_get_bot(client):
             "model": "demo-model",
             "ticker": "AAPL",
             "timeframe": "1m",
+            "mode": "spot",
             "starting_money": 10000,
             "buy_threshold": 0.65,
             "sell_threshold": 0.35,
@@ -69,6 +70,7 @@ def test_create_and_list_and_get_bot(client):
     assert get_response.status_code == 200
     detail_payload = get_response.get_json()
     assert detail_payload["id"] == created["id"]
+    assert detail_payload["long_only"] is True
     assert "metrics" in detail_payload
     assert "trades" in detail_payload
 
@@ -266,3 +268,13 @@ def test_spot_bots_dashboard_page(client):
     assert 'href="/spot"' in body
     assert 'href="/spot/manage-models"' in body
     assert 'href="/spot/run-models"' in body
+    assert 'id="botDailyBuyTiming"' in body
+
+
+def test_bot_form_options_include_daily_buy_timing_choices(client):
+    response = client.get("/api/bots/form-options?mode=spot")
+    assert response.status_code == 200
+    payload = response.get_json()
+    choices = payload.get("daily_buy_timing_options", [])
+    assert {"value": "start_of_day", "label": "Beginning of day"} in choices
+    assert {"value": "end_of_day", "label": "Last minute (end of day)"} in choices
