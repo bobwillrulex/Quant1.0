@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from quant.constants import OPTIONS_MODE, SPOT_MODE
 from quant.data import fetch_market_rows, load_csv, synthetic_data
 from quant.discord_notify import send_discord_webhook
+from quant.env_bootstrap import load_local_env_files
 from quant.ml import (
     evaluate_bundle,
     get_strategy_feature_builder,
@@ -64,6 +65,8 @@ from bot_manager import create_bot, delete_bot, get_all_bots, get_bot, persist_b
 
 if TYPE_CHECKING:
     from flask import Flask
+
+load_local_env_files()
 
 DISPLAY_TIMEZONE = ZoneInfo("America/Vancouver")
 
