@@ -34,6 +34,7 @@ class TradingBot:
     trade_size: float = 1.0
     long_only: bool = False
     daily_buy_timing: str = "start_of_day"
+    intraday_trade_interval: str = "unlimited"
     model: SupportsPredict | Callable[[dict[str, Any]], float] | None = None
     execution_engine: ExecutionEngine = field(default_factory=ExecutionEngine)
 
@@ -67,6 +68,8 @@ class TradingBot:
         signal = self._predict_signal(data)
         action = self.decide_action(signal)
         if action == "BUY" and not self._allow_buy_now(data):
+            action = "HOLD"
+        if action in {"BUY", "SELL"} and not self._allow_intraday_trade_now(data):
             action = "HOLD"
         trade = self._execute_action(action, quote)
         self.update_pnl(quote)
@@ -199,6 +202,34 @@ class TradingBot:
         if timing == "end_of_day":
             return minutes >= (15 * 60 + 59)
         return 9 * 60 + 30 <= minutes <= 9 * 60 + 31
+
+    def _allow_intraday_trade_now(self, data: dict[str, Any]) -> bool:
+        timeframe = self.timeframe.strip().lower()
+        if timeframe in {"1d", "d", "day", "daily"}:
+            return True
+
+        interval = self.intraday_trade_interval.strip().lower()
+        if interval in {"", "unlimited"}:
+            return True
+
+        minute_interval = {
+            "5m": 5,
+            "10m": 10,
+            "15m": 15,
+            "1h": 60,
+        }.get(interval)
+        if minute_interval is None:
+            return True
+
+        timestamp = data.get("timestamp")
+        if timestamp is None:
+            return True
+        parsed = self._parse_timestamp(timestamp)
+        if parsed is None:
+            return True
+
+        et = parsed.astimezone(ZoneInfo("America/New_York"))
+        return et.minute % minute_interval == 0
 
     @staticmethod
     def _parse_timestamp(timestamp: Any) -> datetime | None:

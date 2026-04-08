@@ -130,6 +130,7 @@ def test_update_bot_settings(client):
             "name": "Edited Bot",
             "ticker": "MSFT",
             "timeframe": "5m",
+            "intraday_trade_interval": "15m",
             "buy_threshold": 0.7,
             "sell_threshold": 0.3,
             "trade_size": 2,
@@ -144,6 +145,7 @@ def test_update_bot_settings(client):
     updated_bot = bot_manager.get_bot(bot_id)
     assert updated_bot is not None
     assert updated_bot.ticker == "MSFT"
+    assert updated_bot.intraday_trade_interval == "15m"
     assert updated_bot.stop_loss == pytest.approx(0.015)
 
 
@@ -278,3 +280,6 @@ def test_bot_form_options_include_daily_buy_timing_choices(client):
     choices = payload.get("daily_buy_timing_options", [])
     assert {"value": "start_of_day", "label": "Beginning of day"} in choices
     assert {"value": "end_of_day", "label": "Last minute (end of day)"} in choices
+    intraday_choices = payload.get("intraday_trade_interval_options", [])
+    assert {"value": "unlimited", "label": "Unlimited"} in intraday_choices
+    assert {"value": "10m", "label": "Every 10 minutes"} in intraday_choices
