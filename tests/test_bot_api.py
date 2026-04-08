@@ -113,6 +113,35 @@ def test_get_bot_details_includes_trade_metrics(client):
     assert isinstance(payload["trades"], list)
 
 
+def test_get_bot_details_includes_last_polled_spread(client):
+    create_response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "name": "Spread Bot",
+        },
+    )
+    bot_id = create_response.get_json()["id"]
+    bot = bot_manager.get_bot(bot_id)
+    assert bot is not None
+    bot.update_pnl({"bid": 99.95, "ask": 100.05, "timestamp": "2026-04-08T14:30:00+00:00"})
+
+    response = client.get(f"/bots/{bot_id}")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["last_polled_bid"] == pytest.approx(99.95)
+    assert payload["last_polled_ask"] == pytest.approx(100.05)
+    assert payload["last_polled_spread"] == pytest.approx(0.10)
+    assert payload["last_polled_timestamp"] == "2026-04-08T14:30:00+00:00"
+
+
 def test_update_bot_settings(client):
     create_response = client.post(
         "/bots/create",
