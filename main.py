@@ -60,7 +60,7 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
-from bot_manager import create_bot, get_all_bots, get_bot, persist_bot, start_bot, stop_bot
+from bot_manager import create_bot, delete_bot, get_all_bots, get_bot, persist_bot, start_bot, stop_bot
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -782,6 +782,82 @@ def create_app() -> "Flask":
         max_drawdown = max(drawdowns) if drawdowns else 0.0
         non_zero_drawdowns = [value for value in drawdowns if value > 0.0]
         avg_drawdown = sum(non_zero_drawdowns) / len(non_zero_drawdowns) if non_zero_drawdowns else 0.0
+        closed_trade_pnls = [float(trade.get("pnl", 0.0)) for trade in trades if isinstance(trade, dict) and abs(float(trade.get("pnl", 0.0))) > 1e-12]
+        closed_trade_count = len(closed_trade_pnls)
+        winning_trade_count = sum(1 for pnl in closed_trade_pnls if pnl > 0.0)
+        avg_gain_per_trade = (sum(closed_trade_pnls) / closed_trade_count) if closed_trade_count else 0.0
+
+        equity_curve = [0.0]
+        cumulative_closed = 0.0
+        for pnl in closed_trade_pnls:
+            cumulative_closed += pnl
+            equity_curve.append(cumulative_closed)
+        returns: list[float] = []
+        for idx in range(1, len(equity_curve)):
+            prev = max(1.0, abs(equity_curve[idx - 1]))
+            returns.append((equity_curve[idx] - equity_curve[idx - 1]) / prev)
+        sharpe = 0.0
+        if len(returns) > 1:
+            mean_return = sum(returns) / len(returns)
+            variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
+            if variance > 1e-12:
+                sharpe = mean_return / (variance**0.5)
+
+        stop_loss_exits = 0
+        hold_bars: list[float] = []
+        open_ts: datetime | None = None
+        timeframe_text = str(getattr(bot, "timeframe", "1m")).strip().lower()
+        minutes_per_bar = 1.0
+        if timeframe_text.endswith("m"):
+            try:
+                minutes_per_bar = max(1.0, float(timeframe_text[:-1]))
+            except ValueError:
+                minutes_per_bar = 1.0
+        elif timeframe_text.endswith("h"):
+            try:
+                minutes_per_bar = max(60.0, float(timeframe_text[:-1]) * 60.0)
+            except ValueError:
+                minutes_per_bar = 60.0
+        elif timeframe_text in {"1d", "d", "day", "daily"}:
+            minutes_per_bar = 390.0
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            ts = _parse_trade_timestamp(trade.get("timestamp"))
+            pnl = float(trade.get("pnl", 0.0))
+            side = str(trade.get("side", "")).upper()
+            if open_ts is None and side in {"BUY", "SELL"}:
+                open_ts = ts
+            if pnl < -1e-12:
+                stop_loss_exits += 1
+            if abs(pnl) > 1e-12 and open_ts is not None and ts is not None:
+                elapsed_minutes = max(0.0, (ts - open_ts).total_seconds() / 60.0)
+                hold_bars.append(max(1.0, elapsed_minutes / minutes_per_bar))
+                open_ts = None
+
+        sorted_holds = sorted(hold_bars)
+
+        def _percentile(values: list[float], q: float) -> float:
+            if not values:
+                return 0.0
+            if len(values) == 1:
+                return values[0]
+            index = (len(values) - 1) * q
+            low = int(math.floor(index))
+            high = int(math.ceil(index))
+            if low == high:
+                return values[low]
+            ratio = index - low
+            return values[low] + (values[high] - values[low]) * ratio
+
+        hold_time_stats = {
+            "count": len(sorted_holds),
+            "min": float(sorted_holds[0]) if sorted_holds else 0.0,
+            "q1": _percentile(sorted_holds, 0.25),
+            "median": _percentile(sorted_holds, 0.5),
+            "q3": _percentile(sorted_holds, 0.75),
+            "max": float(sorted_holds[-1]) if sorted_holds else 0.0,
+        }
 
         return {
             "max_drawdown": max_drawdown,
@@ -790,6 +866,12 @@ def create_app() -> "Flask":
             "pnl_week": pnl_week,
             "pnl_month": pnl_month,
             "trade_count": len(trades),
+            "closed_trade_count": closed_trade_count,
+            "win_rate": (winning_trade_count / closed_trade_count) if closed_trade_count else 0.0,
+            "avg_gain_per_trade": avg_gain_per_trade,
+            "stop_loss_exits": stop_loss_exits,
+            "sharpe": sharpe,
+            "hold_time_stats": hold_time_stats,
         }
 
     def _bot_details_payload(bot: object) -> dict[str, object]:
@@ -1231,7 +1313,7 @@ def create_app() -> "Flask":
               </table>
             </div>
             <p id="botsEmptyState" class="muted" style="display:none;">No bots match that search.</p>
-            <div class="muted">Click a bot row for details. Right-click a bot row to edit settings. Auto-refreshes every 5 seconds.</div>
+            <div class="muted">Click a bot row for details. Right-click a bot row to edit or delete. Auto-refreshes every 5 seconds.</div>
           </div>
           <div id="createBotModal" class="modal-backdrop">
             <div class="modal-panel">
@@ -1333,6 +1415,7 @@ def create_app() -> "Flask":
           </div>
           <div id="botContextMenu" class="context-menu">
             <button id="contextEditBot" class="context-item">Edit settings</button>
+            <button id="contextDeleteBot" class="context-item">Delete bot</button>
           </div>
           <script>
             const tableBody = document.getElementById("botsTableBody");
@@ -1353,6 +1436,7 @@ def create_app() -> "Flask":
             const cancelEditBot = document.getElementById("cancelEditBot");
             const botContextMenu = document.getElementById("botContextMenu");
             const contextEditBot = document.getElementById("contextEditBot");
+            const contextDeleteBot = document.getElementById("contextDeleteBot");
             let allBots = [];
             let selectedBotId = null;
 
@@ -1369,6 +1453,38 @@ def create_app() -> "Flask":
             const metricCard = (label, value) => `
               <div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>
             `;
+            const renderHoldTimeBoxplot = (stats) => {
+              const count = Number(stats.count || 0);
+              if (count <= 0) return "<p class='muted'>No active hold streaks in this test window.</p>";
+              const min = Number(stats.min || 0);
+              const q1 = Number(stats.q1 || 0);
+              const median = Number(stats.median || 0);
+              const q3 = Number(stats.q3 || 0);
+              const max = Number(stats.max || 0);
+              const span = Math.max(1e-9, max - min);
+              const scale = (value) => 22 + ((value - min) / span) * 236;
+              const minX = scale(min);
+              const q1X = scale(q1);
+              const medX = scale(median);
+              const q3X = scale(q3);
+              const maxX = scale(max);
+              const label = (x, y, text) => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" fill="#cfd8e6" font-size="10" text-anchor="middle">${text}</text>`;
+              return `<div style="display:inline-flex; flex-direction:column; gap:0.35rem;">
+                <svg width="280" height="96" viewBox="0 0 280 96" xmlns="http://www.w3.org/2000/svg">
+                  <line x1="${minX.toFixed(1)}" y1="48" x2="${maxX.toFixed(1)}" y2="48" stroke="#8ca0bf" stroke-width="1.2"/>
+                  <line x1="${minX.toFixed(1)}" y1="39" x2="${minX.toFixed(1)}" y2="57" stroke="#8ca0bf" stroke-width="1.2"/>
+                  <line x1="${maxX.toFixed(1)}" y1="39" x2="${maxX.toFixed(1)}" y2="57" stroke="#8ca0bf" stroke-width="1.2"/>
+                  <rect x="${q1X.toFixed(1)}" y="34" width="${Math.max(2, q3X - q1X).toFixed(1)}" height="28" fill="none" stroke="#8ca0bf" stroke-width="1.4" rx="4"/>
+                  <line x1="${medX.toFixed(1)}" y1="31" x2="${medX.toFixed(1)}" y2="65" stroke="#cfd8e6" stroke-width="1.5"/>
+                  ${label(minX, 23, `min ${min.toFixed(1)}`)}
+                  ${label(q1X, 18, `q1 ${q1.toFixed(1)}`)}
+                  ${label(medX, 76, `med ${median.toFixed(1)}`)}
+                  ${label(q3X, 18, `q3 ${q3.toFixed(1)}`)}
+                  ${label(maxX, 23, `max ${max.toFixed(1)}`)}
+                </svg>
+                <span class="muted" style="font-size:0.82rem;">Hold streak samples: ${count}</span>
+              </div>`;
+            };
             const openBotDetails = async (botId) => {
               hideContextMenu();
               const response = await fetch(`/bots/${botId}`);
@@ -1378,6 +1494,8 @@ def create_app() -> "Flask":
               }
               const bot = await response.json();
               const metrics = bot.metrics || {};
+              const holdStats = metrics.hold_time_stats || {};
+              const holdChart = renderHoldTimeBoxplot(holdStats);
               botDetailTitle.textContent = `Bot Details: ${String(bot.name || "")}`;
               botDetailMeta.textContent = `Model ${String(bot.model_name || "")} • ${String(bot.ticker || "")} • ${String(bot.timeframe || "")}`;
               botMetricsGrid.innerHTML = [
@@ -1387,6 +1505,11 @@ def create_app() -> "Flask":
                 metricCard("PnL (7d)", formatCurrency(metrics.pnl_week)),
                 metricCard("PnL (30d)", formatCurrency(metrics.pnl_month)),
                 metricCard("Trades", String(metrics.trade_count || 0)),
+                metricCard("Sharpe", Number(metrics.sharpe || 0).toFixed(3)),
+                metricCard("Win Rate / Trades", `${(Number(metrics.win_rate || 0) * 100).toFixed(2)}% / ${Number(metrics.closed_trade_count || 0)}`),
+                metricCard("Average Gain per Trade", `${(Number(metrics.avg_gain_per_trade || 0) * 100).toFixed(4)}%`),
+                metricCard("Stop-loss Exits", String(metrics.stop_loss_exits || 0)),
+                `<div style="grid-column:1 / -1;"><p class="muted" style="margin-bottom:0.35rem;">Hold Time Distribution (bars/candles)</p>${holdChart}</div>`,
               ].join("");
               const trades = Array.isArray(bot.trades) ? bot.trades : [];
               botTradeHistoryBody.innerHTML = "";
@@ -1484,6 +1607,19 @@ def create_app() -> "Flask":
                 alert(payload.error || "Action failed.");
                 return;
               }
+              await loadBots();
+            };
+            const deleteSelectedBot = async () => {
+              if (!selectedBotId) return;
+              const confirmed = window.confirm("Delete this bot? This cannot be undone.");
+              if (!confirmed) return;
+              const response = await fetch(`/bots/${selectedBotId}`, { method: "DELETE" });
+              if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                alert(payload.error || "Delete failed.");
+                return;
+              }
+              hideContextMenu();
               await loadBots();
             };
 
@@ -1604,6 +1740,9 @@ def create_app() -> "Flask":
             cancelEditBot.addEventListener("click", () => { editBotModal.style.display = "none"; });
             contextEditBot.addEventListener("click", () => {
               if (selectedBotId) openEditModal(selectedBotId);
+            });
+            contextDeleteBot.addEventListener("click", () => {
+              deleteSelectedBot().catch(() => alert("Failed to delete bot."));
             });
             document.addEventListener("click", (event) => {
               if (!botContextMenu.contains(event.target)) {
@@ -1758,6 +1897,14 @@ def create_app() -> "Flask":
             setattr(bot, field, value)
         persist_bot(bot)
         return jsonify(_bot_details_payload(bot))
+
+    @app.route("/bots/<bot_id>", methods=["DELETE"])
+    def delete_bot_endpoint(bot_id: str) -> object:
+        try:
+            delete_bot(bot_id)
+            return jsonify({"ok": True})
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
 
     @app.route("/manage-models", methods=["GET", "POST"])
     @app.route("/spot/manage-models", methods=["GET", "POST"])
