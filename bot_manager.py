@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 from datetime import datetime, time, timedelta, timezone
@@ -10,8 +11,8 @@ from zoneinfo import ZoneInfo
 
 from bot import TradingBot
 from quant.execution_engine import ExecutionEngine
+from quant.env_bootstrap import load_local_env_files
 from quant.live_trading.auth import is_terminal_auth_failure
-from quant.live_trading.market import get_quote
 from quant.storage import db_path, ensure_db
 
 
@@ -69,19 +70,33 @@ def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
     ticker = str(config.get("ticker", "")).strip().upper()
     if not ticker:
         return lambda _bot: None
+    load_local_env_files()
+    refresh_token = str(config.get("questrade_refresh_token") or "").strip() or str(os.environ.get("QUESTRADE_REFRESH_TOKEN", "")).strip()
+    client = None
+    questrade_error_type: type[Exception] = Exception
+    if refresh_token:
+        try:
+            from questrade_client import QuestradeClient, QuestradeError
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Missing optional dependency 'requests' required by questrade_client. "
+                "Install requests or configure a custom market_data_fetcher."
+            ) from exc
+        client = QuestradeClient(refresh_token=refresh_token)
+        questrade_error_type = QuestradeError
 
     def _fetch_quote(_: TradingBot) -> dict[str, Any] | None:
-        quote = get_quote(ticker)
-        bid = quote.get("bidPrice", quote.get("bid"))
-        ask = quote.get("askPrice", quote.get("ask"))
-        if bid is None or ask is None:
-            return None
-        return {
-            "bid": float(bid),
-            "ask": float(ask),
-            "timestamp": str(quote.get("lastTradeTime") or datetime.now(tz=timezone.utc).isoformat()),
-            "last": float(quote.get("lastTradePrice") or quote.get("last") or (float(bid) + float(ask)) / 2.0),
-        }
+        if client is None:
+            raise RuntimeError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN before starting bots.")
+        try:
+            quote = client.get_quote(ticker)
+        except questrade_error_type as exc:
+            raise RuntimeError(f"Questrade quote fetch failed for {ticker}: {exc}") from exc
+        bid = float(quote.get("bid", 0.0))
+        ask = float(quote.get("ask", 0.0))
+        last = float(quote.get("last", 0.0)) or ((bid + ask) / 2.0 if (bid or ask) else 0.0)
+        timestamp = quote.get("timestamp")
+        return {"bid": bid, "ask": ask, "timestamp": str(timestamp or datetime.now(tz=timezone.utc).isoformat()), "last": last}
 
     return _fetch_quote
 
