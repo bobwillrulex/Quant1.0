@@ -102,17 +102,22 @@ class QuestradeAuthClient:
         return state
 
     def _resolve_refresh_token(self) -> str:
+        # Always prefer an explicit environment token so operators can recover
+        # from an invalid persisted refresh token without deleting local state.
+        env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
+        if env_refresh:
+            return env_refresh
+
         if self._token_state and self._token_state.refresh_token:
             state_refresh = _clean_refresh_token_candidate(self._token_state.refresh_token)
             if state_refresh:
                 return state_refresh
-        env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
-        if env_refresh:
-            return env_refresh
+
         _load_env_tokens_from_files()
         env_refresh = _clean_refresh_token_candidate(os.environ.get("QUESTRADE_REFRESH_TOKEN", ""))
         if env_refresh:
             return env_refresh
+
         raise QuestradeApiError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN in environment.")
 
     def _request_with_retry(self, *, request: Request, retry_on_auth: bool) -> dict[str, Any]:
