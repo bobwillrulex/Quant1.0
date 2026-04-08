@@ -14,7 +14,10 @@ from __future__ import annotations
 import os
 import sys
 
+from quant.env_bootstrap import load_local_env_files
 from questrade_client import QuestradeClient, QuestradeError
+
+load_local_env_files()
 
 
 def main() -> int:
