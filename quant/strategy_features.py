@@ -60,6 +60,8 @@ FeatureSet = Literal[
     "vwap_volume_regime_adaptive_5m",
     "vwap_volume_first5_trend_momentum_5m",
     "vwap_volume_profile_first5_trend_momentum_5m",
+    "vwap_volume_profile_value_area_5m",
+    "vwap_volume_profile_value_area_15m",
     "hybrid_sharpe_core",
     "hybrid_sharpe_core_no_stack",
     "hybrid_sharpe_momentum",
@@ -230,6 +232,20 @@ def normalize_feature_set(feature_set: str) -> FeatureSet:
         "first5_vwap_volume_profile_momentum",
     ):
         return "vwap_volume_profile_first5_trend_momentum_5m"
+    if value in (
+        "vwap_volume_profile_value_area_5m",
+        "vwap-volume-profile-value-area-5m",
+        "vwap_value_area_5m",
+        "value_area_vwap_5m",
+    ):
+        return "vwap_volume_profile_value_area_5m"
+    if value in (
+        "vwap_volume_profile_value_area_15m",
+        "vwap-volume-profile-value-area-15m",
+        "vwap_value_area_15m",
+        "value_area_vwap_15m",
+    ):
+        return "vwap_volume_profile_value_area_15m"
     if value in ("hybrid_sharpe_core", "hybrid-core", "hybrid_core", "sharpe_core", "core_hybrid"):
         return "hybrid_sharpe_core"
     if value in (
@@ -1091,6 +1107,70 @@ def build_vwap_volume_profile_first5_trend_momentum_5m_strategy_features() -> St
     return builder
 
 
+def build_vwap_volume_profile_value_area_5m_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("profile_poc_5m", lambda r: g(r, "profile_poc_5m"))
+    builder.add("profile_poc_distance_atr_5m", lambda r: g(r, "profile_poc_distance_5m") / atr_guard(r))
+    builder.add("profile_value_area_low_5m", lambda r: g(r, "profile_value_area_low_5m"))
+    builder.add("profile_value_area_high_5m", lambda r: g(r, "profile_value_area_high_5m"))
+    builder.add("profile_value_area_width_5m", lambda r: g(r, "profile_value_area_width_5m"))
+    builder.add("profile_inside_value_area_5m", lambda r: g(r, "profile_inside_value_area_5m"))
+    builder.add("profile_rejected_value_area_5m", lambda r: g(r, "profile_rejected_value_area_5m"))
+    builder.add("profile_single_print_5m", lambda r: g(r, "profile_single_print_5m"))
+    builder.add("session_vwap_5m", lambda r: g(r, "session_vwap_5m"))
+    builder.add("price_vs_session_vwap_5m", lambda r: g(r, "price_vs_session_vwap_5m"))
+    builder.add("session_vwap_delta_5m", lambda r: g(r, "session_vwap_delta_5m"))
+    builder.add("vwap_reclaim_long_signal_5m", lambda r: g(r, "vwap_reclaim_long_signal_5m"))
+    builder.add("vwap_reclaim_short_signal_5m", lambda r: g(r, "vwap_reclaim_short_signal_5m"))
+    builder.add("session_vwap_reversion_signal_5m", lambda r: g(r, "session_vwap_reversion_signal_5m"))
+    builder.add("vwap_breakout_strength_atr", lambda r: max(0.0, (g(r, "close") - g(r, "vwap_anchor_high")) / atr_guard(r)))
+    builder.add("vwap_breakdown_strength_atr", lambda r: max(0.0, (g(r, "vwap_anchor_low") - g(r, "close")) / atr_guard(r)))
+    builder.add("opening_range_breakout_up_15m", lambda r: g(r, "opening_range_breakout_up_15m"))
+    builder.add("opening_range_breakdown_15m", lambda r: g(r, "opening_range_breakdown_15m"))
+    builder.add("post_opening_range_window_15m", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
+def build_vwap_volume_profile_value_area_15m_strategy_features() -> StrategyFeatureBuilder:
+    def g(row: Row, key: str, default: float = 0.0) -> float:
+        return float(row.get(key, default))
+
+    def atr_guard(row: Row) -> float:
+        return max(1e-9, g(row, "atr_frac", 1.0))
+
+    builder = StrategyFeatureBuilder()
+    builder.add("profile_poc_15m", lambda r: g(r, "profile_poc_15m"))
+    builder.add("profile_poc_distance_atr_15m", lambda r: g(r, "profile_poc_distance_15m") / atr_guard(r))
+    builder.add("profile_value_area_low_15m", lambda r: g(r, "profile_value_area_low_15m"))
+    builder.add("profile_value_area_high_15m", lambda r: g(r, "profile_value_area_high_15m"))
+    builder.add("profile_value_area_width_15m", lambda r: g(r, "profile_value_area_width_15m"))
+    builder.add("profile_inside_value_area_15m", lambda r: g(r, "profile_inside_value_area_15m"))
+    builder.add("profile_rejected_value_area_15m", lambda r: g(r, "profile_rejected_value_area_15m"))
+    builder.add("profile_single_print_15m", lambda r: g(r, "profile_single_print_15m"))
+    builder.add("session_vwap_15m", lambda r: g(r, "session_vwap_15m"))
+    builder.add("price_vs_session_vwap_15m", lambda r: g(r, "price_vs_session_vwap_15m"))
+    builder.add("session_vwap_delta_15m", lambda r: g(r, "session_vwap_delta_15m"))
+    builder.add("session_vwap_reversion_signal_15m", lambda r: g(r, "session_vwap_reversion_signal_15m"))
+    builder.add("vwap_breakout_strength_atr", lambda r: max(0.0, (g(r, "close") - g(r, "vwap_anchor_high")) / atr_guard(r)))
+    builder.add("vwap_breakdown_strength_atr", lambda r: max(0.0, (g(r, "vwap_anchor_low") - g(r, "close")) / atr_guard(r)))
+    builder.add("opening_range_breakout_up_15m", lambda r: g(r, "opening_range_breakout_up_15m"))
+    builder.add("opening_range_breakdown_15m", lambda r: g(r, "opening_range_breakdown_15m"))
+    builder.add("post_opening_range_window_15m", lambda r: g(r, "post_opening_range_window_15m"))
+    builder.add("intraday_trade_window_open", lambda r: g(r, "intraday_trade_window_open"))
+    builder.add("near_session_close_5m", lambda r: g(r, "near_session_close_5m"))
+    builder.add("atr_frac", lambda r: g(r, "atr_frac"))
+    return builder
+
+
 def build_adaptive_opening_range_momentum_daytrade_strategy_features() -> StrategyFeatureBuilder:
     def g(row: Row, key: str, default: float = 0.0) -> float:
         return float(row.get(key, default))
@@ -1449,6 +1529,10 @@ def get_strategy_feature_builder(feature_set: FeatureSet | str = "feature2") -> 
         return build_vwap_volume_first5_trend_momentum_5m_strategy_features()
     if normalized == "vwap_volume_profile_first5_trend_momentum_5m":
         return build_vwap_volume_profile_first5_trend_momentum_5m_strategy_features()
+    if normalized == "vwap_volume_profile_value_area_5m":
+        return build_vwap_volume_profile_value_area_5m_strategy_features()
+    if normalized == "vwap_volume_profile_value_area_15m":
+        return build_vwap_volume_profile_value_area_15m_strategy_features()
     if normalized == "hybrid_sharpe_core":
         return build_hybrid_sharpe_core_strategy_features()
     if normalized == "hybrid_sharpe_core_no_stack":
@@ -1529,6 +1613,10 @@ def infer_bundle_feature_set(bundle: Dict[str, object]) -> FeatureSet:
         return "vwap_volume_first5_trend_momentum_5m"
     if isinstance(names, list) and "volume_profile_acceptance_1sigma" in names and "volume_profile_momentum_bias" in names:
         return "vwap_volume_profile_first5_trend_momentum_5m"
+    if isinstance(names, list) and "profile_inside_value_area_5m" in names and "profile_single_print_5m" in names:
+        return "vwap_volume_profile_value_area_5m"
+    if isinstance(names, list) and "profile_inside_value_area_15m" in names and "profile_single_print_15m" in names:
+        return "vwap_volume_profile_value_area_15m"
     if isinstance(names, list) and "open5_ready_flag" in names and "open20_ready_flag" in names:
         return "adaptive_opening_range_momentum_daytrade"
     if isinstance(names, list) and "mean_revert_long_bias" in names and "mean_revert_short_bias" in names:
