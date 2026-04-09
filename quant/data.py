@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+import math
 from math import ceil
 from datetime import datetime, time, timedelta, timezone
 from urllib.error import URLError
@@ -87,6 +88,63 @@ def compute_strategy_rows_from_prices(
     prediction_horizon: int = 5,
     timestamps: Sequence[object] | None = None,
 ) -> List[Row]:
+    def _build_profile_snapshot(profile_prices: Sequence[float], profile_weights: Sequence[float], reference_price: float) -> dict[str, float]:
+        if not profile_prices or not profile_weights:
+            return {
+                "poc": reference_price,
+                "value_area_low": reference_price,
+                "value_area_high": reference_price,
+                "inside_value_area": 1.0,
+                "single_print": 0.0,
+                "rejected_value_area": 0.0,
+            }
+        tick = max(1e-6, reference_price * 0.001)
+        buckets: dict[float, float] = {}
+        counts: dict[float, int] = {}
+        for price, weight in zip(profile_prices, profile_weights):
+            bucket = round(price / tick) * tick
+            buckets[bucket] = buckets.get(bucket, 0.0) + max(1e-9, float(weight))
+            counts[bucket] = counts.get(bucket, 0) + 1
+        sorted_bins = sorted(buckets.items(), key=lambda item: item[0])
+        poc_price, _ = max(sorted_bins, key=lambda item: item[1])
+        total_weight = sum(weight for _, weight in sorted_bins)
+        if total_weight <= 1e-9:
+            value_area_low = poc_price
+            value_area_high = poc_price
+        else:
+            target = total_weight * 0.7
+            poc_index = next((idx for idx, (price, _) in enumerate(sorted_bins) if abs(price - poc_price) <= tick * 0.5), 0)
+            included = {poc_index}
+            running = sorted_bins[poc_index][1]
+            left = poc_index - 1
+            right = poc_index + 1
+            while running < target and (left >= 0 or right < len(sorted_bins)):
+                left_weight = sorted_bins[left][1] if left >= 0 else -1.0
+                right_weight = sorted_bins[right][1] if right < len(sorted_bins) else -1.0
+                if right_weight >= left_weight:
+                    included.add(right)
+                    running += max(0.0, right_weight)
+                    right += 1
+                else:
+                    included.add(left)
+                    running += max(0.0, left_weight)
+                    left -= 1
+            selected_prices = [sorted_bins[idx][0] for idx in included]
+            value_area_low = min(selected_prices)
+            value_area_high = max(selected_prices)
+        current_bucket = round(reference_price / tick) * tick
+        inside_value_area = 1.0 if value_area_low <= reference_price <= value_area_high else 0.0
+        single_print = 1.0 if counts.get(current_bucket, 0) <= 1 else 0.0
+        rejected_value_area = 1.0 if (inside_value_area == 0.0 and abs(reference_price - poc_price) > tick) else 0.0
+        return {
+            "poc": float(poc_price),
+            "value_area_low": float(value_area_low),
+            "value_area_high": float(value_area_high),
+            "inside_value_area": inside_value_area,
+            "single_print": single_print,
+            "rejected_value_area": rejected_value_area,
+        }
+
     n = len(closes)
     if prediction_horizon < 1:
         raise ValueError("Prediction horizon must be at least 1.")
@@ -185,6 +243,21 @@ def compute_strategy_rows_from_prices(
     price_to_session_vwap_std_2_lower_5m: List[float] = []
     session_vwap_std_2_range_5m: List[float] = []
     session_vwap_delta_to_mean_5m: List[float] = []
+    session_vwap_15m: List[float] = []
+    session_vwap_delta_15m: List[float] = []
+    session_vwap_std_1_15m: List[float] = []
+    profile_poc_5m: List[float] = []
+    profile_value_area_low_5m: List[float] = []
+    profile_value_area_high_5m: List[float] = []
+    profile_inside_value_area_5m: List[float] = []
+    profile_single_print_5m: List[float] = []
+    profile_rejected_value_area_5m: List[float] = []
+    profile_poc_15m: List[float] = []
+    profile_value_area_low_15m: List[float] = []
+    profile_value_area_high_15m: List[float] = []
+    profile_inside_value_area_15m: List[float] = []
+    profile_single_print_15m: List[float] = []
+    profile_rejected_value_area_15m: List[float] = []
     cumulative_weight = 0.0
     cumulative_weighted_price = 0.0
     session_count = 0
@@ -232,6 +305,51 @@ def compute_strategy_rows_from_prices(
         price_to_session_vwap_std_2_lower_5m.append(closes[i] - std_2_lower)
         session_vwap_std_2_range_5m.append(std_2_upper - std_2_lower)
         session_vwap_delta_to_mean_5m.append(closes[i] - vwap_now)
+        bars_per_regular_session_15m = 26
+        session_start = i - (i % bars_per_regular_session_5m)
+        fifteen_start = i - (i % bars_per_regular_session_15m)
+        fifteen_prices = hlc3[fifteen_start : i + 1]
+        fifteen_weights = range_weight[fifteen_start : i + 1]
+        fifteen_weight_sum = sum(fifteen_weights)
+        vwap_15 = (
+            sum(price * weight for price, weight in zip(fifteen_prices, fifteen_weights)) / (fifteen_weight_sum if fifteen_weight_sum != 0 else 1.0)
+        )
+        session_vwap_15m.append(vwap_15)
+        if i % bars_per_regular_session_15m == 0:
+            session_vwap_delta_15m.append(0.0)
+        else:
+            session_vwap_delta_15m.append(vwap_15 - session_vwap_15m[i - 1])
+        mean_15 = sum(fifteen_prices) / max(1, len(fifteen_prices))
+        var_15 = sum((value - mean_15) ** 2 for value in fifteen_prices) / max(1, len(fifteen_prices))
+        session_vwap_std_1_15m.append(math.sqrt(max(0.0, var_15)))
+        session_prices_5m = hlc3[session_start : i + 1]
+        session_weights_5m = range_weight[session_start : i + 1]
+        profile_5m = _build_profile_snapshot(session_prices_5m, session_weights_5m, closes[i])
+        profile_poc_5m.append(profile_5m["poc"])
+        profile_value_area_low_5m.append(profile_5m["value_area_low"])
+        profile_value_area_high_5m.append(profile_5m["value_area_high"])
+        profile_inside_value_area_5m.append(profile_5m["inside_value_area"])
+        profile_single_print_5m.append(profile_5m["single_print"])
+        profile_rejected_value_area_5m.append(profile_5m["rejected_value_area"])
+        session_prices_15m: list[float] = []
+        session_weights_15m: list[float] = []
+        for start in range(session_start, i + 1, 3):
+            stop = min(i + 1, start + 3)
+            segment_weights = range_weight[start:stop]
+            segment_prices = hlc3[start:stop]
+            segment_weight_sum = sum(segment_weights)
+            segment_price = (
+                sum(price * weight for price, weight in zip(segment_prices, segment_weights)) / (segment_weight_sum if segment_weight_sum != 0 else 1.0)
+            )
+            session_prices_15m.append(segment_price)
+            session_weights_15m.append(max(1e-9, segment_weight_sum))
+        profile_15m = _build_profile_snapshot(session_prices_15m, session_weights_15m, closes[i])
+        profile_poc_15m.append(profile_15m["poc"])
+        profile_value_area_low_15m.append(profile_15m["value_area_low"])
+        profile_value_area_high_15m.append(profile_15m["value_area_high"])
+        profile_inside_value_area_15m.append(profile_15m["inside_value_area"])
+        profile_single_print_15m.append(profile_15m["single_print"])
+        profile_rejected_value_area_15m.append(profile_15m["rejected_value_area"])
     rows: List[Row] = []
     last_bull_gap_low = 0.0
     last_bull_gap_high = 0.0
@@ -373,6 +491,26 @@ def compute_strategy_rows_from_prices(
                 "price_to_session_vwap_std_2_upper_5m": price_to_session_vwap_std_2_upper_5m[i],
                 "price_to_session_vwap_std_2_lower_5m": price_to_session_vwap_std_2_lower_5m[i],
                 "session_vwap_std_2_range_5m": session_vwap_std_2_range_5m[i],
+                "session_vwap_15m": session_vwap_15m[i],
+                "session_vwap_delta_15m": session_vwap_delta_15m[i],
+                "price_vs_session_vwap_15m": close_now - session_vwap_15m[i],
+                "session_vwap_reversion_signal_15m": 1.0 if abs(close_now - session_vwap_15m[i]) <= session_vwap_std_1_15m[i] else 0.0,
+                "profile_poc_5m": profile_poc_5m[i],
+                "profile_poc_distance_5m": close_now - profile_poc_5m[i],
+                "profile_value_area_low_5m": profile_value_area_low_5m[i],
+                "profile_value_area_high_5m": profile_value_area_high_5m[i],
+                "profile_value_area_width_5m": profile_value_area_high_5m[i] - profile_value_area_low_5m[i],
+                "profile_inside_value_area_5m": profile_inside_value_area_5m[i],
+                "profile_single_print_5m": profile_single_print_5m[i],
+                "profile_rejected_value_area_5m": profile_rejected_value_area_5m[i],
+                "profile_poc_15m": profile_poc_15m[i],
+                "profile_poc_distance_15m": close_now - profile_poc_15m[i],
+                "profile_value_area_low_15m": profile_value_area_low_15m[i],
+                "profile_value_area_high_15m": profile_value_area_high_15m[i],
+                "profile_value_area_width_15m": profile_value_area_high_15m[i] - profile_value_area_low_15m[i],
+                "profile_inside_value_area_15m": profile_inside_value_area_15m[i],
+                "profile_single_print_15m": profile_single_print_15m[i],
+                "profile_rejected_value_area_15m": profile_rejected_value_area_15m[i],
                 "session_bar_index_5m": float(session_bar_index),
                 "bars_remaining_in_session_5m": bars_remaining_in_session_5m,
                 "intraday_trade_window_open": intraday_trade_window_open,

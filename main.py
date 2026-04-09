@@ -3076,6 +3076,8 @@ def create_app() -> "Flask":
                 "vwap_volume_regime_adaptive_5m",
                 "vwap_volume_first5_trend_momentum_5m",
                 "vwap_volume_profile_first5_trend_momentum_5m",
+                "vwap_volume_profile_value_area_5m",
+                "vwap_volume_profile_value_area_15m",
                 "close_hold_reversion",
                 "close_hold_momentum",
                 "new",
@@ -4484,6 +4486,8 @@ def create_app() -> "Flask":
                   <option value="vwap_volume_regime_adaptive_5m" {"selected" if feature_set == "vwap_volume_regime_adaptive_5m" else ""}>VWAP + Volume Regime Adaptive 5m (trend vs mean-revert)</option>
                   <option value="vwap_volume_first5_trend_momentum_5m" {"selected" if feature_set == "vwap_volume_first5_trend_momentum_5m" else ""}>VWAP + Volume First-5 Trend Momentum 5m (target 1-2/day)</option>
                   <option value="vwap_volume_profile_first5_trend_momentum_5m" {"selected" if feature_set == "vwap_volume_profile_first5_trend_momentum_5m" else ""}>VWAP + Volume Profile First-5 Trend Momentum 5m (target 1-2/day)</option>
+                  <option value="vwap_volume_profile_value_area_5m" {"selected" if feature_set == "vwap_volume_profile_value_area_5m" else ""}>VWAP + Value Area/POC 5m (intraday)</option>
+                  <option value="vwap_volume_profile_value_area_15m" {"selected" if feature_set == "vwap_volume_profile_value_area_15m" else ""}>VWAP + Value Area/POC 15m (intraday)</option>
                   <option value="new" {"selected" if feature_set == "new" else ""}>Current feature set</option>
                   <option value="legacy" {"selected" if feature_set == "legacy" else ""}>Old legacy</option>
                 </select>
@@ -4773,6 +4777,8 @@ def create_app() -> "Flask":
                 vwap_volume_regime_adaptive_5m: "Built for 5m adaptive trading: VWAP displacement + volume classify trend-vs-reversion day type, then apply regime-aware momentum/reversion context with intraday-only bias.",
                 vwap_volume_first5_trend_momentum_5m: "Built for 5m day trading using the first 5 bars: VWAP + volume-confirmed trend momentum with max-2/day controls and explicit same-session exit bias.",
                 vwap_volume_profile_first5_trend_momentum_5m: "Built for 5m day trading using first-5-bar context plus session VWAP volume-profile bands (acceptance/expansion) for max-2/day intraday-only momentum decisions.",
+                vwap_volume_profile_value_area_5m: "Built for intraday 5m execution: session POC + 70% value area + single-print rejection with VWAP reclaim/breakout confirmation and trend-day gating.",
+                vwap_volume_profile_value_area_15m: "Built for intraday 15m context: smoother POC/value-area structure plus VWAP trend/reversion alignment to avoid overtrading noisy 5m rotations.",
               }};
 
               function parseSortValue(rawValue, sortType) {{
@@ -5096,6 +5102,8 @@ def parse_args() -> argparse.Namespace:
             "vwap_volume_regime_adaptive_5m",
             "vwap_volume_first5_trend_momentum_5m",
             "vwap_volume_profile_first5_trend_momentum_5m",
+            "vwap_volume_profile_value_area_5m",
+            "vwap_volume_profile_value_area_15m",
             "new",
             "legacy",
         ],

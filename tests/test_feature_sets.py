@@ -470,6 +470,42 @@ def test_vwap_volume_profile_first5_trend_momentum_5m_feature_set_is_supported()
     assert expected.issubset(set(names))
 
 
+def test_vwap_volume_profile_value_area_5m_feature_set_is_supported() -> None:
+    assert normalize_feature_set("vwap_value_area_5m") == "vwap_volume_profile_value_area_5m"
+    builder = get_strategy_feature_builder("vwap_volume_profile_value_area_5m")
+    names = builder.names()
+    expected = {
+        "profile_poc_5m",
+        "profile_poc_distance_atr_5m",
+        "profile_value_area_low_5m",
+        "profile_value_area_high_5m",
+        "profile_inside_value_area_5m",
+        "profile_single_print_5m",
+        "profile_rejected_value_area_5m",
+        "price_vs_session_vwap_5m",
+        "vwap_reclaim_long_signal_5m",
+    }
+    assert expected.issubset(set(names))
+
+
+def test_vwap_volume_profile_value_area_15m_feature_set_is_supported() -> None:
+    assert normalize_feature_set("vwap_value_area_15m") == "vwap_volume_profile_value_area_15m"
+    builder = get_strategy_feature_builder("vwap_volume_profile_value_area_15m")
+    names = builder.names()
+    expected = {
+        "profile_poc_15m",
+        "profile_poc_distance_atr_15m",
+        "profile_value_area_low_15m",
+        "profile_value_area_high_15m",
+        "profile_inside_value_area_15m",
+        "profile_single_print_15m",
+        "profile_rejected_value_area_15m",
+        "price_vs_session_vwap_15m",
+        "session_vwap_reversion_signal_15m",
+    }
+    assert expected.issubset(set(names))
+
+
 def test_war_shock_momentum_feature_set_is_supported() -> None:
     assert normalize_feature_set("war-shock-momentum") == "war_shock_momentum"
     builder = get_strategy_feature_builder("war_shock_momentum")
