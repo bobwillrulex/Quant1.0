@@ -220,6 +220,28 @@ def test_default_fetcher_reuses_single_questrade_client_for_same_refresh_token(m
     assert len(created_clients) == 1
 
 
+def test_create_bot_builds_default_model_predictor(monkeypatch):
+    monkeypatch.setattr(bot_manager, "load_model_bundle", lambda _mode, _name: {"fake": True})
+    monkeypatch.setattr(
+        bot_manager,
+        "predict_signal",
+        lambda _bundle, row, **_kwargs: {"p_up": float(row.get("close", 0.0)) / 100.0},
+    )
+
+    bot = bot_manager.create_bot(
+        {
+            **_config("bot-model", lambda _bot: {"close": 75.0, "bid": 74.9, "ask": 75.1, "timestamp": "2026-04-06T14:00:00Z"}),
+            "model_name": "demo-model",
+            "mode": "spot",
+        }
+    )
+    bot.status = "running"
+    bot.on_new_candle({"close": 75.0, "bid": 74.9, "ask": 75.1, "timestamp": "2026-04-06T14:00:00Z"})
+
+    assert callable(bot.model)
+    assert bot.last_p_up == pytest.approx(0.75)
+
+
 def test_bot_state_persists_to_database_and_reloads():
     def fetcher(_):
         return None
