@@ -955,6 +955,7 @@ def create_app() -> "Flask":
             "id": str(uuid.uuid4()),
             "name": name,
             "model_name": model_name,
+            "mode": mode,
             "ticker": ticker,
             "timeframe": timeframe,
             "cash": float(payload["starting_money"]),

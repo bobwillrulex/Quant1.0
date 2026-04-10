@@ -10,10 +10,14 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from bot import TradingBot
+from quant.constants import OPTIONS_MODE, SPOT_MODE
+from quant.data import compute_strategy_rows_from_prices
 from quant.execution_engine import ExecutionEngine
 from quant.env_bootstrap import load_local_env_files
 from quant.live_trading.auth import is_terminal_auth_failure
+from quant.ml import predict_signal
 from quant.storage import db_path, ensure_db
+from quant.storage import load_model_bundle
 
 
 MarketDataFetcher = Callable[[TradingBot], dict[str, Any] | None]
@@ -44,9 +48,14 @@ def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
       poll_interval: float (seconds)
     """
     runtime_config = dict(config)
+    mode = str(runtime_config.pop("mode", SPOT_MODE if bool(runtime_config.get("long_only", False)) else OPTIONS_MODE))
+    prediction_horizon = int(runtime_config.pop("prediction_horizon", 5) or 5)
     market_data_fetcher = runtime_config.pop("market_data_fetcher", None)
     if market_data_fetcher is None:
-        market_data_fetcher = _build_default_fetcher(runtime_config)
+        market_data_fetcher = _build_default_fetcher({**runtime_config, "prediction_horizon": prediction_horizon})
+    model_predictor = runtime_config.pop("model_predictor", None)
+    if model_predictor is None:
+        model_predictor = _build_default_model_predictor({**runtime_config, "mode": mode})
     poll_interval = runtime_config.pop("poll_interval", _DEFAULT_POLL_SECONDS)
     execution_settings = runtime_config.pop("execution_settings", None)
     if execution_settings is not None:
@@ -57,7 +66,11 @@ def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
     bot = TradingBot(**runtime_config)
     if market_data_fetcher is not None:
         setattr(bot, "market_data_fetcher", market_data_fetcher)
+    if callable(model_predictor):
+        setattr(bot, "model", model_predictor)
     setattr(bot, "poll_interval", poll_interval)
+    setattr(bot, "mode", mode)
+    setattr(bot, "prediction_horizon", prediction_horizon)
     with _LOCK:
         if bot.id in bots:
             raise ValueError(f"Bot with id '{bot.id}' already exists")
@@ -91,9 +104,44 @@ def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
             client = shared_client
         questrade_error_type = QuestradeError
 
+    timeframe = str(config.get("timeframe", "1m")).strip().lower()
+    prediction_horizon = int(config.get("prediction_horizon", 5) or 5)
+    interval_by_timeframe = {
+        "1m": "OneMinute",
+        "5m": "FiveMinutes",
+        "15m": "FifteenMinutes",
+        "30m": "ThirtyMinutes",
+        "1h": "OneHour",
+        "60m": "OneHour",
+        "1d": "OneDay",
+        "d": "OneDay",
+        "day": "OneDay",
+        "daily": "OneDay",
+    }
+    candle_interval = interval_by_timeframe.get(timeframe, "OneMinute")
+
     def _fetch_quote(_: TradingBot) -> dict[str, Any] | None:
         if client is None:
             raise RuntimeError("Missing Questrade refresh token. Set QUESTRADE_REFRESH_TOKEN before starting bots.")
+        latest_row: dict[str, Any] | None = None
+        try:
+            candles = client.get_candles(ticker, candle_interval)
+            if candles:
+                highs = [float(candle.get("high", 0.0)) for candle in candles]
+                lows = [float(candle.get("low", 0.0)) for candle in candles]
+                closes = [float(candle.get("close", 0.0)) for candle in candles]
+                timestamps = [candle.get("timestamp") for candle in candles]
+                rows = compute_strategy_rows_from_prices(
+                    highs,
+                    lows,
+                    closes,
+                    prediction_horizon=max(1, prediction_horizon),
+                    timestamps=timestamps,
+                )
+                if rows:
+                    latest_row = dict(rows[-1])
+        except Exception:
+            latest_row = None
         try:
             quote = client.get_quote(ticker)
         except questrade_error_type as exc:
@@ -102,9 +150,43 @@ def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
         ask = float(quote.get("ask", 0.0))
         last = float(quote.get("last", 0.0)) or ((bid + ask) / 2.0 if (bid or ask) else 0.0)
         timestamp = quote.get("timestamp")
-        return {"bid": bid, "ask": ask, "timestamp": str(timestamp or datetime.now(tz=timezone.utc).isoformat()), "last": last}
+        payload = dict(latest_row or {})
+        payload.update(
+            {
+                "bid": bid,
+                "ask": ask,
+                "last": last,
+                "close": float(payload.get("close", last)),
+                "timestamp": str(timestamp or datetime.now(tz=timezone.utc).isoformat()),
+            }
+        )
+        return payload
 
     return _fetch_quote
+
+
+def _build_default_model_predictor(config: dict[str, Any]) -> Callable[[dict[str, Any]], float] | None:
+    model_name = str(config.get("model_name", "")).strip()
+    if not model_name:
+        return None
+    mode_text = str(config.get("mode", "")).strip().lower()
+    if mode_text not in {"spot", "options"}:
+        mode_text = "spot" if bool(config.get("long_only", False)) else "options"
+    mode = SPOT_MODE if mode_text == "spot" else OPTIONS_MODE
+    long_only = mode == SPOT_MODE
+    try:
+        bundle = load_model_bundle(mode, model_name)
+    except Exception:
+        return None
+
+    def _predict(row: dict[str, Any]) -> float:
+        try:
+            prediction = predict_signal(bundle, row, long_only=long_only)
+            return float(prediction.get("p_up", 0.5))
+        except Exception:
+            return 0.5
+
+    return _predict
 
 
 def start_bot(bot_id: str) -> TradingBot:
@@ -335,10 +417,12 @@ def _serialize_bot(bot: TradingBot) -> dict[str, Any]:
         "buy_threshold": float(bot.buy_threshold),
         "sell_threshold": float(bot.sell_threshold),
         "long_only": bool(bot.long_only),
+        "mode": SPOT_MODE if bool(bot.long_only) else OPTIONS_MODE,
         "daily_buy_timing": str(bot.daily_buy_timing),
         "intraday_trade_interval": str(getattr(bot, "intraday_trade_interval", "unlimited")),
         "stop_loss": float(bot.stop_loss),
         "take_profit": float(bot.take_profit),
+        "prediction_horizon": int(getattr(bot, "prediction_horizon", 5)),
         "trade_size": float(bot.trade_size),
         "trades": list(bot.trades),
         "realized_pnl": float(bot.realized_pnl),
@@ -397,10 +481,12 @@ def _create_bot_from_payload(payload: dict[str, Any]) -> None:
             "buy_threshold": float(payload.get("buy_threshold", 0.6)),
             "sell_threshold": float(payload.get("sell_threshold", 0.4)),
             "long_only": bool(payload.get("long_only", False)),
+            "mode": str(payload.get("mode", SPOT_MODE if bool(payload.get("long_only", False)) else OPTIONS_MODE)),
             "daily_buy_timing": str(payload.get("daily_buy_timing", "start_of_day")),
             "intraday_trade_interval": str(payload.get("intraday_trade_interval", "unlimited")),
             "stop_loss": float(payload.get("stop_loss", 0.02)),
             "take_profit": float(payload.get("take_profit", 0.04)),
+            "prediction_horizon": int(payload.get("prediction_horizon", 5)),
             "trade_size": float(payload.get("trade_size", 1.0)),
             "execution_settings": payload.get("execution_settings", {}),
         },
