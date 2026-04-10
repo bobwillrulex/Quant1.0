@@ -37,6 +37,46 @@ _LOGGER = logging.getLogger(__name__)
 _QUESTRADE_CLIENTS_BY_REFRESH_TOKEN: dict[str, Any] = {}
 
 
+def _normalize_timeframe(value: object) -> str:
+    token = str(value or "").strip().lower()
+    if not token:
+        return "1m"
+
+    compact = token.replace(" ", "")
+    aliases = {
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
+        "30min": "30m",
+        "60min": "1h",
+        "1hr": "1h",
+        "1hour": "1h",
+        "daily": "1d",
+        "day": "1d",
+        "d": "1d",
+    }
+    return aliases.get(compact, compact)
+
+
+def _default_poll_interval_for_timeframe(timeframe: object) -> float:
+    normalized = _normalize_timeframe(timeframe)
+    if normalized.endswith("m"):
+        try:
+            minutes = float(normalized[:-1])
+            return max(_POLL_ALIGNMENT_SECONDS, minutes * 60.0)
+        except ValueError:
+            return _DEFAULT_POLL_SECONDS
+    if normalized.endswith("h"):
+        try:
+            hours = float(normalized[:-1])
+            return max(_POLL_ALIGNMENT_SECONDS, hours * 3600.0)
+        except ValueError:
+            return _DEFAULT_POLL_SECONDS
+    if normalized in {"1d"}:
+        return 24.0 * 3600.0
+    return _DEFAULT_POLL_SECONDS
+
+
 def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
     """Create and register a bot from config.
 
@@ -48,6 +88,7 @@ def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
       poll_interval: float (seconds)
     """
     runtime_config = dict(config)
+    runtime_config["timeframe"] = _normalize_timeframe(runtime_config.get("timeframe", "1m"))
     mode = str(runtime_config.pop("mode", SPOT_MODE if bool(runtime_config.get("long_only", False)) else OPTIONS_MODE))
     prediction_horizon = int(runtime_config.pop("prediction_horizon", 5) or 5)
     market_data_fetcher = runtime_config.pop("market_data_fetcher", None)
@@ -56,7 +97,10 @@ def create_bot(config: dict[str, Any], *, persist: bool = True) -> TradingBot:
     model_predictor = runtime_config.pop("model_predictor", None)
     if model_predictor is None:
         model_predictor = _build_default_model_predictor({**runtime_config, "mode": mode})
-    poll_interval = runtime_config.pop("poll_interval", _DEFAULT_POLL_SECONDS)
+    poll_interval = runtime_config.pop(
+        "poll_interval",
+        _default_poll_interval_for_timeframe(runtime_config.get("timeframe", "1m")),
+    )
     execution_settings = runtime_config.pop("execution_settings", None)
     if execution_settings is not None:
         if not isinstance(execution_settings, dict):
@@ -104,7 +148,7 @@ def _build_default_fetcher(config: dict[str, Any]) -> MarketDataFetcher:
             client = shared_client
         questrade_error_type = QuestradeError
 
-    timeframe = str(config.get("timeframe", "1m")).strip().lower()
+    timeframe = _normalize_timeframe(config.get("timeframe", "1m"))
     prediction_horizon = int(config.get("prediction_horizon", 5) or 5)
     interval_by_timeframe = {
         "1m": "OneMinute",
@@ -462,6 +506,17 @@ def _load_persisted_bots() -> None:
             _create_bot_from_payload(payload)
         except Exception:
             continue
+    _resume_running_bots()
+
+
+def _resume_running_bots() -> None:
+    for bot in list(get_all_bots()):
+        if str(getattr(bot, "status", "")).strip().lower() != "running":
+            continue
+        try:
+            start_bot(bot.id)
+        except Exception:
+            _LOGGER.exception("Failed to resume running bot %s during startup.", bot.id)
 
 
 def _create_bot_from_payload(payload: dict[str, Any]) -> None:

@@ -260,3 +260,50 @@ def test_bot_state_persists_to_database_and_reloads():
     assert reloaded.status == "running"
     assert reloaded.total_pnl == pytest.approx(12.5)
     assert len(reloaded.trades) == 1
+
+
+def test_default_poll_interval_uses_timeframe_when_not_provided():
+    bot = bot_manager.create_bot(
+        {
+            "id": "tf-interval",
+            "name": "Timeframe Interval",
+            "model_name": "noop",
+            "ticker": "AAPL",
+            "timeframe": "5 min",
+            "cash": 10_000,
+            "market_data_fetcher": lambda _bot: None,
+        }
+    )
+
+    assert bot.timeframe == "5m"
+    assert getattr(bot, "poll_interval") == pytest.approx(300.0)
+
+
+def test_load_persisted_bots_resumes_running_threads(monkeypatch):
+    started: list[str] = []
+
+    original_start_bot = bot_manager.start_bot
+
+    def tracked_start(bot_id: str):
+        started.append(bot_id)
+        return original_start_bot(bot_id)
+
+    monkeypatch.setattr(bot_manager, "start_bot", tracked_start)
+    monkeypatch.setattr(bot_manager, "_seconds_until_next_aligned_poll_tick", lambda *_args, **_kwargs: 0.01)
+    monkeypatch.setattr(bot_manager, "is_market_open", lambda now=None: False)
+
+    created = bot_manager.create_bot(_config("resume-1", lambda _bot: {"bid": 100.0, "ask": 100.1, "timestamp": "2026-04-06T14:00:00Z"}))
+    created.status = "running"
+    bot_manager.persist_bot(created)
+
+    bot_manager.bots.clear()
+    bot_manager._BOT_THREADS.clear()
+    bot_manager._BOT_STOP_EVENTS.clear()
+    bot_manager._load_persisted_bots()
+
+    assert "resume-1" in started
+    reloaded = bot_manager.get_bot("resume-1")
+    assert reloaded is not None
+    assert reloaded.status == "running"
+
+    bot_manager.stop_bot("resume-1")
