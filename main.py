@@ -1462,6 +1462,8 @@ def create_app() -> "Flask":
             let allBots = [];
             let selectedBotId = null;
             let previousPUpByBotId = {};
+            let pollIteration = 0;
+            let isLoadBotsInFlight = false;
 
             const formatCurrency = (value) => {
               const number = Number(value || 0);
@@ -1633,12 +1635,51 @@ def create_app() -> "Flask":
               botsEmptyState.style.display = filtered.length ? "none" : "block";
             };
 
-            const loadBots = async () => {
-              const response = await fetch("/api/bots");
-              if (!response.ok) {
-                throw new Error("Failed to load bots");
+            const loadBots = async ({ reason = "manual" } = {}) => {
+              if (isLoadBotsInFlight) {
+                console.debug(`[bots] Skipping loadBots; request already in-flight (reason=${reason}).`);
+                return;
               }
-              const payload = await response.json();
+              isLoadBotsInFlight = true;
+              const startedAt = Date.now();
+              pollIteration += 1;
+              const pollTag = `poll#${pollIteration}`;
+              try {
+                console.debug(`[bots] ${pollTag} requesting /api/bots (reason=${reason})`);
+                const response = await fetch(`/api/bots?_ts=${Date.now()}`, {
+                  cache: "no-store",
+                  headers: { "Cache-Control": "no-cache" },
+                });
+                if (!response.ok) {
+                  throw new Error(`Failed to load bots (status=${response.status})`);
+                }
+                const payload = await response.json();
+                const elapsed = Date.now() - startedAt;
+                console.debug(`[bots] ${pollTag} loaded ${payload.length} bot(s) in ${elapsed}ms.`);
+                const previousById = Object.fromEntries(allBots.map((bot) => [String(bot.id), bot]));
+                const changedIds = [];
+                payload.forEach((bot) => {
+                  const previous = previousById[String(bot.id)];
+                  if (!previous) {
+                    changedIds.push(String(bot.id));
+                    return;
+                  }
+                  if (
+                    Number(previous.last_polled_bid || 0) !== Number(bot.last_polled_bid || 0)
+                    || Number(previous.last_polled_ask || 0) !== Number(bot.last_polled_ask || 0)
+                    || Number(previous.p_up || 0) !== Number(bot.p_up || 0)
+                    || Number(previous.day_pnl || 0) !== Number(bot.day_pnl || 0)
+                    || Number(previous.total_pnl || 0) !== Number(bot.total_pnl || 0)
+                    || String(previous.status || "") !== String(bot.status || "")
+                  ) {
+                    changedIds.push(String(bot.id));
+                  }
+                });
+                if (changedIds.length) {
+                  console.debug(`[bots] ${pollTag} detected updates for bot ids: ${changedIds.join(", ")}`);
+                } else {
+                  console.debug(`[bots] ${pollTag} no bot field deltas detected.`);
+                }
               previousPUpByBotId = Object.fromEntries(
                 allBots.map((bot) => [bot.id, Number(bot.p_up || 0)]),
               );
@@ -1647,6 +1688,12 @@ def create_app() -> "Flask":
                 search_name: String(bot.name || "").toLowerCase(),
               }));
               renderRows();
+              } catch (error) {
+                console.error(`[bots] ${pollTag} failed`, error);
+                throw error;
+              } finally {
+                isLoadBotsInFlight = false;
+              }
             };
 
             const botAction = async (url) => {
@@ -1656,7 +1703,7 @@ def create_app() -> "Flask":
                 alert(payload.error || "Action failed.");
                 return;
               }
-              await loadBots();
+              await loadBots({ reason: "action" });
             };
             const deleteSelectedBot = async () => {
               if (!selectedBotId) return;
@@ -1669,7 +1716,7 @@ def create_app() -> "Flask":
                 return;
               }
               hideContextMenu();
-              await loadBots();
+              await loadBots({ reason: "delete" });
             };
 
             const botModel = document.getElementById("botModel");
@@ -1835,7 +1882,7 @@ def create_app() -> "Flask":
               }
               createBotModal.style.display = "none";
               botName.value = "";
-              await loadBots();
+              await loadBots({ reason: "create" });
             });
 
             submitEditBot.addEventListener("click", async () => {
@@ -1864,14 +1911,18 @@ def create_app() -> "Flask":
                 return;
               }
               editBotModal.style.display = "none";
-              await loadBots();
+              await loadBots({ reason: "edit" });
             });
 
             searchInput.addEventListener("input", renderRows);
-            loadBots().catch((err) => {
+            loadBots({ reason: "initial" }).catch((err) => {
               tableBody.innerHTML = `<tr><td colspan="9">${String(err.message || err)}</td></tr>`;
             });
-            setInterval(() => { loadBots().catch(() => {}); }, 5000);
+            setInterval(() => {
+              loadBots({ reason: "interval" }).catch((err) => {
+                console.error("[bots] interval refresh failed", err);
+              });
+            }, 5000);
           </script>
         </body>
         </html>
