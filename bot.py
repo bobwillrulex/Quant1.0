@@ -87,6 +87,8 @@ class TradingBot:
         if action in {"BUY", "SELL"} and not self._allow_intraday_trade_now(data):
             action = "HOLD"
         trade = self._execute_action(action, quote)
+        if action in {"BUY", "SELL"} and trade is None:
+            action = "HOLD"
         self.update_pnl(quote)
         return {"status": self.status, "action": action, "trade": trade, "signal": signal}
 
@@ -141,10 +143,14 @@ class TradingBot:
 
     def _execute_action(self, action: str, quote: dict[str, Any]) -> dict[str, Any] | None:
         if action == "BUY":
+            if self.position_size > 0:
+                return None
             trade = self.execution_engine.execute_market_buy(self, quote)
             self._sync_public_state()
             return trade
         if action == "SELL":
+            if self.position_size < 0:
+                return None
             trade = self.execution_engine.execute_market_sell(self, quote)
             self._sync_public_state()
             return trade

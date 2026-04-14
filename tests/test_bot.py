@@ -102,3 +102,25 @@ def test_tracks_last_p_up_from_model_signal():
     bot.model = lambda _row: 0.73
     bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-08T14:40:00+00:00"})
     assert bot.last_p_up == pytest.approx(0.73)
+
+
+def test_does_not_stack_same_direction_positions_for_paper_trading():
+    bot = TradingBot(
+        id="single-position",
+        name="SinglePosition",
+        model_name="noop",
+        ticker="AAPL",
+        timeframe="1m",
+        cash=1000,
+        trade_size=1.0,
+    )
+    bot.status = "running"
+    bot.model = lambda _row: 0.95
+
+    first = bot.on_new_candle({"close": 100.0, "timestamp": "2026-04-08T14:40:00+00:00"})
+    second = bot.on_new_candle({"close": 101.0, "timestamp": "2026-04-08T14:41:00+00:00"})
+
+    assert first["action"] == "BUY"
+    assert second["action"] == "HOLD"
+    assert bot.position_size == pytest.approx(1.0)
+    assert len(bot.trades) == 1
