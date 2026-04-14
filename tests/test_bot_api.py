@@ -240,6 +240,53 @@ def test_create_bot_validation_error(client):
     assert "error" in payload
 
 
+
+
+def test_create_bot_uses_saved_model_prediction_horizon_when_missing(client, monkeypatch):
+    monkeypatch.setattr(
+        "main.load_model_configs",
+        lambda _mode: {"demo-model": {"prediction_horizon": 9}},
+    )
+    response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "take_profit": 0.05,
+            "name": "Horizon Bot",
+        },
+    )
+    assert response.status_code == 201
+    bot_id = response.get_json()["id"]
+    created_bot = bot_manager.get_bot(bot_id)
+    assert created_bot is not None
+    assert int(getattr(created_bot, "prediction_horizon", 0)) == 9
+
+
+def test_create_bot_rejects_non_positive_prediction_horizon(client):
+    response = client.post(
+        "/bots/create",
+        json={
+            "model": "demo-model",
+            "ticker": "AAPL",
+            "timeframe": "1m",
+            "starting_money": 10000,
+            "buy_threshold": 0.65,
+            "sell_threshold": 0.35,
+            "prediction_horizon": 0,
+            "take_profit": 0.05,
+            "name": "Bad Horizon Bot",
+        },
+    )
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert payload["error"] == "prediction_horizon must be at least 1."
+
+
 def test_create_bot_accepts_execution_settings(client):
     response = client.post(
         "/bots/create",
