@@ -933,6 +933,7 @@ def create_app() -> "Flask":
             raise ValueError("buy_threshold and sell_threshold must be between 0 and 1.")
         mode = str(payload.get("mode", "options")).strip().lower()
         long_only = mode == "spot"
+        mode_key = SPOT_MODE if long_only else OPTIONS_MODE
         daily_buy_timing = str(payload.get("daily_buy_timing", "start_of_day")).strip().lower()
         if daily_buy_timing not in {"start_of_day", "end_of_day"}:
             raise ValueError("daily_buy_timing must be start_of_day or end_of_day.")
@@ -951,6 +952,14 @@ def create_app() -> "Flask":
         if execution_settings is not None and not isinstance(execution_settings, dict):
             raise ValueError("execution_settings must be an object when provided.")
 
+        prediction_horizon_raw = payload.get("prediction_horizon")
+        if prediction_horizon_raw is None:
+            model_cfg = get_model_config(model_name, load_model_configs(mode_key))
+            prediction_horizon_raw = model_cfg.get("prediction_horizon", 5)
+        prediction_horizon = int(prediction_horizon_raw)
+        if prediction_horizon < 1:
+            raise ValueError("prediction_horizon must be at least 1.")
+
         return {
             "id": str(uuid.uuid4()),
             "name": name,
@@ -967,6 +976,7 @@ def create_app() -> "Flask":
             "stop_loss": stop_loss_value,
             "take_profit": float(payload["take_profit"]),
             "execution_settings": execution_settings,
+            "prediction_horizon": prediction_horizon,
         }
 
     def _parse_bot_update_payload(payload: object, *, existing_bot: object) -> dict[str, object]:
