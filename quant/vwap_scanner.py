@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import threading
 import time
@@ -9,11 +10,14 @@ from datetime import datetime, timezone
 from io import StringIO
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
+from .discord_notify import send_discord_webhook
 from .storage import load_vwap_scan_universe, save_vwap_scan_universe
 
 UNIVERSE_SOURCE_URL = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
+YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote?symbols="
 
 
 @dataclass
@@ -48,6 +52,44 @@ def _fetch_sp500_symbols(timeout_seconds: float = 8.0) -> list[str]:
         if symbol:
             symbols.append(symbol)
     return sorted(set(symbols))
+
+
+def _chunks(items: list[str], size: int) -> list[list[str]]:
+    if size <= 0:
+        return [items]
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _fetch_market_caps(symbols: list[str], timeout_seconds: float = 8.0) -> dict[str, float]:
+    market_caps: dict[str, float] = {}
+    if not symbols:
+        return market_caps
+
+    for symbol_batch in _chunks(symbols, 150):
+        joined = ",".join(symbol_batch)
+        if not joined:
+            continue
+        url = f"{YAHOO_QUOTE_URL}{quote(joined)}"
+        try:
+            req = urlopen(url, timeout=timeout_seconds)
+            payload = req.read().decode("utf-8")
+            parsed = json.loads(payload)
+            results = ((parsed.get("quoteResponse") or {}).get("result")) or []
+        except Exception:
+            continue
+
+        for row in results:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            cap = _safe_float(row.get("marketCap"))
+            market_caps[symbol] = cap if cap > 0 else 0.0
+
+    return market_caps
+
+
+def _sort_rows_by_market_cap(rows: list[dict[str, Any]]) -> None:
+    rows.sort(key=lambda row: (-_safe_float(row.get("market_cap")), str(row.get("symbol", ""))))
 
 
 def ensure_universe_symbols() -> list[str]:
@@ -131,6 +173,9 @@ class VwapScannerService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._last_refresh_unix = 0.0
+        self._market_caps: dict[str, float] = {}
+        self._market_caps_last_refresh_unix = 0.0
+        self._last_discord_push_unix = 0.0
         self._cache: dict[str, Any] = {
             "timestamp": "",
             "universe_size": 0,
@@ -153,6 +198,7 @@ class VwapScannerService:
 
     def _scan_now(self) -> dict[str, Any]:
         symbols = ensure_universe_symbols()
+        market_caps = self._get_market_caps(symbols)
         refresh_token = str(os.environ.get("QUESTRADE_REFRESH_TOKEN", "")).strip()
         if not refresh_token:
             return {
@@ -198,6 +244,7 @@ class VwapScannerService:
             payload = {
                 "symbol": result.symbol,
                 "price": round(result.price, 4),
+                "market_cap": round(market_caps.get(result.symbol, 0.0), 2),
                 "vwap": round(result.vwap, 4),
                 "upper_1": round(result.upper_1, 4),
                 "upper_2": round(result.upper_2, 4),
@@ -211,12 +258,11 @@ class VwapScannerService:
             if third:
                 col_three.append(payload)
 
-        key = lambda row: (row["symbol"])
-        col_one.sort(key=key)
-        col_two.sort(key=key)
-        col_three.sort(key=key)
+        _sort_rows_by_market_cap(col_one)
+        _sort_rows_by_market_cap(col_two)
+        _sort_rows_by_market_cap(col_three)
 
-        return {
+        snapshot = {
             "timestamp": _now_iso(),
             "universe_size": len(symbols),
             "errors": errors[:25],
@@ -224,6 +270,60 @@ class VwapScannerService:
             "column_two": col_two,
             "column_three": col_three,
         }
+        self._maybe_push_discord_updates(snapshot)
+        return snapshot
+
+    def _get_market_caps(self, symbols: list[str]) -> dict[str, float]:
+        with self._lock:
+            has_cache = bool(self._market_caps)
+            stale = (time.time() - self._market_caps_last_refresh_unix) >= (6 * 60 * 60)
+            if has_cache and not stale:
+                return dict(self._market_caps)
+        fresh = _fetch_market_caps(symbols)
+        if fresh:
+            with self._lock:
+                self._market_caps = dict(fresh)
+                self._market_caps_last_refresh_unix = time.time()
+                return dict(self._market_caps)
+        with self._lock:
+            return dict(self._market_caps)
+
+    def _maybe_push_discord_updates(self, snapshot: dict[str, Any]) -> None:
+        now = time.time()
+        with self._lock:
+            if (now - self._last_discord_push_unix) < 600:
+                return
+            self._last_discord_push_unix = now
+
+        webhook_one = str(os.environ.get("VWAP_DISCORD_WEBHOOK_COLUMN_ONE", "")).strip()
+        webhook_two = str(os.environ.get("VWAP_DISCORD_WEBHOOK_COLUMN_TWO", "")).strip()
+        webhook_three = str(os.environ.get("VWAP_DISCORD_WEBHOOK_COLUMN_THREE", "")).strip()
+
+        self._send_top_10(webhook_one, "Column 1 • Band Width > 0.5% of price", snapshot.get("column_one") or [])
+        self._send_top_10(webhook_two, "Column 2 • Price between Upper 1σ and Upper 2σ", snapshot.get("column_two") or [])
+        self._send_top_10(
+            webhook_three,
+            "Column 3 • Red candle then Green candle (Upper 1σ..2σ)",
+            snapshot.get("column_three") or [],
+        )
+
+    def _send_top_10(self, webhook_url: str, title: str, rows: list[dict[str, Any]]) -> None:
+        if not webhook_url:
+            return
+        top_rows = rows[:10]
+        lines = [f"**{title}**", f"Top 10 by market cap • {_now_iso()}"]
+        if not top_rows:
+            lines.append("No symbols matched this scan.")
+        else:
+            for idx, row in enumerate(top_rows, start=1):
+                symbol = str(row.get("symbol", ""))
+                price = _safe_float(row.get("price"))
+                market_cap = _safe_float(row.get("market_cap"))
+                lines.append(f"{idx}. {symbol} | price=${price:.2f} | market cap=${market_cap:,.0f}")
+        try:
+            send_discord_webhook(webhook_url, "\n".join(lines))
+        except Exception:
+            return
 
 
 VWAP_SCANNER_SERVICE = VwapScannerService()
