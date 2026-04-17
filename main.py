@@ -61,6 +61,7 @@ from quant.storage import (
     set_app_setting,
     delete_evaluation_snapshot,
 )
+from quant.vwap_scanner import VWAP_SCANNER_SERVICE
 from bot_manager import create_bot, delete_bot, get_all_bots, get_bot, persist_bot, start_bot, stop_bot
 
 if TYPE_CHECKING:
@@ -1068,6 +1069,7 @@ def create_app() -> "Flask":
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
         bots_href = "/spot/bots" if is_spot else "/bots"
+        vwap_href = "/spot/vwap" if is_spot else "/vwap"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -1316,6 +1318,7 @@ def create_app() -> "Flask":
                 <a href="__MANAGE_HREF__" class="tab-link">Manage Models</a>
                 <a href="__RUN_MODELS_HREF__" class="tab-link">Run Models</a>
                 <a href="__BOTS_HREF__" class="tab-link active">Bots</a>
+                <a href="__VWAP_HREF__" class="tab-link">VWAP Scan</a>
                 <a href="__MODE_SWITCH_HREF__" class="tab-link">__MODE_SWITCH_LABEL__</a>
               </div>
             </div>
@@ -1942,6 +1945,7 @@ def create_app() -> "Flask":
             .replace("__MANAGE_HREF__", manage_href)
             .replace("__RUN_MODELS_HREF__", run_models_href)
             .replace("__BOTS_HREF__", bots_href)
+            .replace("__VWAP_HREF__", vwap_href)
             .replace("__MODE_SWITCH_HREF__", mode_switch_href)
             .replace("__MODE_SWITCH_LABEL__", mode_switch_label)
             .replace("__BRAND_LABEL__", brand_label)
@@ -2026,6 +2030,7 @@ def create_app() -> "Flask":
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
         bots_href = "/spot/bots" if is_spot else "/bots"
+        vwap_href = "/spot/vwap" if is_spot else "/vwap"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -2313,6 +2318,7 @@ def create_app() -> "Flask":
                   <a href="{manage_href}" class="tab-link active">Manage Models</a>
                   <a href="{run_models_href}" class="tab-link">Run Models</a>
                   <a href="{bots_href}" class="tab-link">Bots</a>
+                  <a href="{vwap_href}" class="tab-link">VWAP Scan</a>
                   <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
                 </div>
               </div>
@@ -2686,6 +2692,7 @@ def create_app() -> "Flask":
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
         bots_href = "/spot/bots" if is_spot else "/bots"
+        vwap_href = "/spot/vwap" if is_spot else "/vwap"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -2888,6 +2895,7 @@ def create_app() -> "Flask":
               <a href="{manage_href}" class="tab-link">Manage Models</a>
               <a href="{run_models_href}" class="tab-link active">Run Models</a>
               <a href="{bots_href}" class="tab-link">Bots</a>
+              <a href="{vwap_href}" class="tab-link">VWAP Scan</a>
               <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
             </div>
         </div></nav>
@@ -3007,6 +3015,104 @@ def create_app() -> "Flask":
         </body></html>
         """
 
+    @app.route("/api/vwap-scan", methods=["GET"])
+    def api_vwap_scan() -> object:
+        return jsonify(VWAP_SCANNER_SERVICE.get_snapshot())
+
+    @app.route("/vwap", methods=["GET"])
+    @app.route("/spot/vwap", methods=["GET"])
+    def vwap_scan_dashboard() -> str:
+        is_spot = request.path.startswith("/spot")
+        home_href = "/spot" if is_spot else "/"
+        manage_href = "/spot/manage-models" if is_spot else "/manage-models"
+        run_models_href = "/spot/run-models" if is_spot else "/run-models"
+        bots_href = "/spot/bots" if is_spot else "/bots"
+        vwap_href = "/spot/vwap" if is_spot else "/vwap"
+        mode_switch_href = "/" if is_spot else "/spot"
+        mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
+        brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
+        theme_bg = "#100d07" if is_spot else "#090c12"
+        theme_text = "#efe0be" if is_spot else "#c6ccd7"
+        theme_panel = "#19130b" if is_spot else "#121722"
+        theme_panel2 = "#221b10" if is_spot else "#1a202c"
+        theme_border = "#4a3a20" if is_spot else "#3a4455"
+        theme_muted = "#b79f66" if is_spot else "#98a2b3"
+        theme_tab = "#c8ac60" if is_spot else "#aab3c2"
+        theme_tab_active = "#f3e2b5" if is_spot else "#e5e7eb"
+        theme_tab_hover_bg = "#2a210f" if is_spot else "#1a212f"
+        return f"""
+        <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>VWAP Scan</title>
+        <style>
+          body{{font-family:Inter,Arial,sans-serif;background:{theme_bg};color:{theme_text};margin:0;padding-top:80px;}}
+          .topbar{{position:fixed;top:0;left:0;right:0;background:{theme_panel};border-bottom:1px solid {theme_border};z-index:10;padding:12px 16px;display:flex;align-items:center;gap:12px;}}
+          .brand{{font-weight:700;color:{theme_text};text-decoration:none;margin-right:auto;}}
+          .nav-links{{display:flex;gap:.8rem;}}
+          .tab-link{{color:{theme_tab};text-decoration:none;padding:.4rem .65rem;border-radius:8px;border:1px solid transparent;}}
+          .tab-link:hover{{background:{theme_tab_hover_bg};}}
+          .tab-link.active{{color:{theme_tab_active};border-color:{theme_border};background:{theme_panel2};}}
+          .container{{padding:20px;}}
+          .meta{{color:{theme_muted};margin-bottom:12px;}}
+          .cols{{display:grid;grid-template-columns:repeat(3,minmax(250px,1fr));gap:14px;}}
+          .card{{background:{theme_panel};border:1px solid {theme_border};border-radius:12px;padding:12px;}}
+          .card h3{{margin:0 0 8px 0;}}
+          canvas{{width:100%;height:220px;}}
+          @media (max-width: 1050px){{.cols{{grid-template-columns:1fr;}}}}
+        </style>
+        </head><body>
+          <header class="topbar">
+            <a class="brand" href="{home_href}">{brand_label}</a>
+            <div class="nav-links">
+              <a href="{manage_href}" class="tab-link">Manage Models</a>
+              <a href="{run_models_href}" class="tab-link">Run Models</a>
+              <a href="{bots_href}" class="tab-link">Bots</a>
+              <a href="{vwap_href}" class="tab-link active">VWAP Scan</a>
+              <a href="{mode_switch_href}" class="tab-link">{mode_switch_label}</a>
+            </div>
+          </header>
+          <main class="container">
+            <h1>VWAP Band Scanner (5-minute candles, refresh every minute)</h1>
+            <p class="meta" id="scanMeta">Loading...</p>
+            <div class="cols">
+              <section class="card"><h3>Band Width &gt; 0.5% of price</h3><canvas id="chartOne"></canvas></section>
+              <section class="card"><h3>Current price between Upper 1σ and Upper 2σ</h3><canvas id="chartTwo"></canvas></section>
+              <section class="card"><h3>Red candle then Green candle, both in Upper 1σ..2σ</h3><canvas id="chartThree"></canvas></section>
+            </div>
+          </main>
+          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          <script>
+            const charts = {{}};
+            function upsertChart(id, rows, title) {{
+              const labels = rows.map((r) => r.symbol);
+              const prices = rows.map((r) => r.price);
+              if (charts[id]) {{
+                charts[id].data.labels = labels;
+                charts[id].data.datasets[0].data = prices;
+                charts[id].update();
+                return;
+              }}
+              charts[id] = new Chart(document.getElementById(id), {{
+                type: "bar",
+                data: {{ labels, datasets: [{{ label: title, data: prices, borderWidth: 1 }}] }},
+                options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ display: false }} }} }}
+              }});
+            }}
+            async function loadScan() {{
+              const resp = await fetch("/api/vwap-scan");
+              const payload = await resp.json();
+              const ts = payload.timestamp || "n/a";
+              const err = (payload.errors || []).length;
+              document.getElementById("scanMeta").textContent = `Universe: ${{payload.universe_size}} symbols (S&P 500 + SPY). Last refresh: ${{ts}}. Errors: ${{err}}`;
+              upsertChart("chartOne", payload.column_one || [], "Band width > 0.5%");
+              upsertChart("chartTwo", payload.column_two || [], "Price in U1-U2");
+              upsertChart("chartThree", payload.column_three || [], "Red→Green in U1-U2");
+            }}
+            loadScan().catch(console.error);
+            setInterval(() => loadScan().catch(console.error), 60000);
+          </script>
+        </body></html>
+        """
+
     @app.route("/", methods=["GET", "POST"])
     @app.route("/spot", methods=["GET", "POST"])
     def index() -> str:
@@ -3018,6 +3124,7 @@ def create_app() -> "Flask":
         manage_href = "/spot/manage-models" if is_spot else "/manage-models"
         run_models_href = "/spot/run-models" if is_spot else "/run-models"
         bots_href = "/spot/bots" if is_spot else "/bots"
+        vwap_href = "/spot/vwap" if is_spot else "/vwap"
         mode_switch_href = "/" if is_spot else "/spot"
         mode_switch_label = "Switch to Options Mode" if is_spot else "Switch to Spot Mode"
         brand_label = "Quant Trader • Spot Mode" if is_spot else "Quant Trader • Options Mode"
@@ -4465,6 +4572,7 @@ def create_app() -> "Flask":
                   <a href="{manage_href}" class="tab-link">Manage Models</a>
                   <a href="{run_models_href}" class="tab-link">Run Models</a>
                   <a href="{bots_href}" class="tab-link">Bots</a>
+                  <a href="{vwap_href}" class="tab-link">VWAP Scan</a>
                   <button type="button" id="openEvaluationsBtn" class="secondary topbar-btn">Saved</button>
                   <form method="post" style="margin:0;">
                     <input type="hidden" name="mode" value="provider_toggle" />

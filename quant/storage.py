@@ -68,6 +68,15 @@ def ensure_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vwap_scan_universe (
+                symbol TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
@@ -233,6 +242,28 @@ def load_model_bundle(mode: str, model_name: str) -> Dict[str, object]:
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def load_vwap_scan_universe() -> List[str]:
+    ensure_db()
+    with sqlite3.connect(db_path()) as conn:
+        rows = conn.execute(
+            "SELECT symbol FROM vwap_scan_universe ORDER BY symbol ASC"
+        ).fetchall()
+    return [str(row[0]).upper() for row in rows]
+
+
+def save_vwap_scan_universe(symbols: List[str], *, source: str) -> None:
+    ensure_db()
+    cleaned = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+    now = _utc_timestamp()
+    with sqlite3.connect(db_path()) as conn:
+        conn.execute("DELETE FROM vwap_scan_universe")
+        for symbol in cleaned:
+            conn.execute(
+                "INSERT OR REPLACE INTO vwap_scan_universe(symbol, source, created_at) VALUES (?, ?, ?)",
+                (symbol, source, now),
+            )
 
 
 def save_evaluation_snapshot(mode: str, snapshot_name: str, payload: Dict[str, object]) -> int:
