@@ -4743,6 +4743,42 @@ def create_app() -> "Flask":
               <p class="muted">Run single-model and run-all preset workflows have moved to their own page.</p>
               <a href="{run_models_href}" class="tab-link" style="display:inline-block;">Open Run Models Page</a>
             </div>
+            <div class="card">
+              <h2>TradingView PineScript Export</h2>
+              <p class="muted">Choose a model plus TP/SL behavior, then copy the generated PineScript to your clipboard.</p>
+              <div class="form-grid">
+                <label>Model:
+                  <select id="pineModelSelect">
+                    {"".join(f'<option value="{name}">{name}</option>' for name in saved_models) if saved_models else '<option value="default_quant_model">default_quant_model</option>'}
+                  </select>
+                </label>
+                <label>Stop Loss Kind:
+                  <select id="pineStopLossKind">
+                    <option value="none">None</option>
+                    <option value="fixed_percentage">Fixed Percentage</option>
+                    <option value="trailing_stop">Trailing Stop</option>
+                    <option value="atr">ATR Buffer</option>
+                    <option value="model_invalidation">Model Invalidation</option>
+                    <option value="time_decay">Time Decay</option>
+                  </select>
+                </label>
+                <label>Take Profit Kind:
+                  <select id="pineTakeProfitKind">
+                    <option value="none">None</option>
+                    <option value="fixed_percentage">Fixed Percentage</option>
+                    <option value="risk_reward_1_5">Risk:Reward 1:1.5</option>
+                    <option value="risk_reward_1_2">Risk:Reward 1:2.0</option>
+                  </select>
+                </label>
+                <label>&nbsp;
+                  <button type="button" id="copyPineScriptBtn">Copy PineScript</button>
+                </label>
+              </div>
+              <p id="copyPineScriptStatus" class="muted"></p>
+              <label style="display:block; margin-top:0.7rem;">Preview:
+                <textarea id="pineScriptPreview" rows="14" readonly style="width:100%; margin-top:0.45rem; background:{theme_surface}; color:{theme_text}; border:1px solid {theme_border}; border-radius:8px; padding:0.6rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
+              </label>
+            </div>
             {message_html}
             {error_html}
             {present_html}
@@ -5123,6 +5159,96 @@ def create_app() -> "Flask":
               updateFeaturePipelineHint();
               const presentStopLossStrategyEl = document.getElementById("presentStopLossStrategy");
               const presentFixedStopLossWrapEl = document.getElementById("presentFixedStopLossWrap");
+              const pineModelSelectEl = document.getElementById("pineModelSelect");
+              const pineStopLossKindEl = document.getElementById("pineStopLossKind");
+              const pineTakeProfitKindEl = document.getElementById("pineTakeProfitKind");
+              const pineScriptPreviewEl = document.getElementById("pineScriptPreview");
+              const copyPineScriptBtnEl = document.getElementById("copyPineScriptBtn");
+              const copyPineScriptStatusEl = document.getElementById("copyPineScriptStatus");
+
+              function pineStopLossSnippet(kind) {{
+                if (kind === "fixed_percentage") return "stopPrice = strategy.position_avg_price * (1 - slPct / 100.0)";
+                if (kind === "trailing_stop") return "stopPrice = math.max(strategy.position_avg_price * (1 - slPct / 100.0), close - ta.atr(14) * 0.5)";
+                if (kind === "atr") return "stopPrice = close - ta.atr(14) * atrMult";
+                if (kind === "model_invalidation") return "stopPrice = ta.lowest(low, 10)";
+                if (kind === "time_decay") return "stopPrice = bar_index - entryBar > maxHoldBars ? close : strategy.position_avg_price * (1 - slPct / 100.0)";
+                return "stopPrice = na";
+              }}
+
+              function pineTakeProfitSnippet(kind) {{
+                if (kind === "fixed_percentage") return "takeProfitPrice = strategy.position_avg_price * (1 + tpPct / 100.0)";
+                if (kind === "risk_reward_1_5") return "takeProfitPrice = strategy.position_avg_price + (strategy.position_avg_price - stopPrice) * 1.5";
+                if (kind === "risk_reward_1_2") return "takeProfitPrice = strategy.position_avg_price + (strategy.position_avg_price - stopPrice) * 2.0";
+                return "takeProfitPrice = na";
+              }}
+
+              function buildPineScript() {{
+                const modelName = String(pineModelSelectEl?.value || "default_quant_model");
+                const slKind = String(pineStopLossKindEl?.value || "none");
+                const tpKind = String(pineTakeProfitKindEl?.value || "none");
+                const safeTitle = modelName.replace(/[^a-zA-Z0-9_\\- ]/g, "_");
+                return `//@version=5
+strategy("Quant1.0 - ${safeTitle}", overlay=true, initial_capital=10000, pyramiding=0)
+
+// Generated from Quant1.0 UI
+// Model: ${modelName}
+// Stop Loss Kind: ${slKind}
+// Take Profit Kind: ${tpKind}
+
+buyThreshold = input.float(0.60, "BUY threshold", minval=0.0, maxval=1.0, step=0.01)
+sellThreshold = input.float(0.40, "SELL threshold", minval=0.0, maxval=1.0, step=0.01)
+slPct = input.float(2.0, "Stop Loss %", minval=0.01, step=0.1)
+tpPct = input.float(1.5, "Take Profit %", minval=0.01, step=0.1)
+atrMult = input.float(1.5, "ATR Multiplier", minval=0.1, step=0.1)
+maxHoldBars = input.int(12, "Max Hold Bars", minval=1)
+
+// Replace this proxy score with your real exported model score signal.
+score = ta.rsi(close, 14) / 100.0
+buySignal = score > buyThreshold
+sellSignal = score < sellThreshold
+
+var int entryBar = na
+if buySignal and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long)
+    entryBar := bar_index
+if sellSignal and strategy.position_size > 0
+    strategy.close("Long")
+
+${pineStopLossSnippet(slKind)}
+${pineTakeProfitSnippet(tpKind)}
+if strategy.position_size > 0
+    strategy.exit("Risk", "Long", stop=stopPrice, limit=takeProfitPrice)
+`;
+              }}
+
+              function refreshPineScriptPreview() {{
+                if (!pineScriptPreviewEl) return;
+                pineScriptPreviewEl.value = buildPineScript();
+              }}
+
+              async function copyPineScriptToClipboard() {{
+                if (!pineScriptPreviewEl) return;
+                const scriptText = pineScriptPreviewEl.value || "";
+                try {{
+                  if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    await navigator.clipboard.writeText(scriptText);
+                  }} else {{
+                    pineScriptPreviewEl.focus();
+                    pineScriptPreviewEl.select();
+                    document.execCommand("copy");
+                  }}
+                  if (copyPineScriptStatusEl) copyPineScriptStatusEl.textContent = "PineScript copied to clipboard.";
+                }} catch (_err) {{
+                  if (copyPineScriptStatusEl) copyPineScriptStatusEl.textContent = "Unable to access clipboard in this browser session.";
+                }}
+              }}
+
+              [pineModelSelectEl, pineStopLossKindEl, pineTakeProfitKindEl].forEach((el) => {{
+                if (el) el.addEventListener("change", refreshPineScriptPreview);
+              }});
+              if (copyPineScriptBtnEl) copyPineScriptBtnEl.addEventListener("click", copyPineScriptToClipboard);
+              refreshPineScriptPreview();
+
               function togglePresentFixedStopField() {{
                 if (!presentStopLossStrategyEl || !presentFixedStopLossWrapEl) return;
                 const fixedStopInput = presentFixedStopLossWrapEl.querySelector('input[name="present_fixed_stop_pct"]');
