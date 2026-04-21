@@ -5188,12 +5188,12 @@ def create_app() -> "Flask":
                 const tpKind = String(pineTakeProfitKindEl?.value || "none");
                 const safeTitle = modelName.replace(/[^a-zA-Z0-9_\\- ]/g, "_");
                 return `//@version=5
-strategy("Quant1.0 - ${safeTitle}", overlay=true, initial_capital=10000, pyramiding=0)
+strategy("Quant1.0 - ${{safeTitle}}", overlay=true, initial_capital=10000, pyramiding=0)
 
 // Generated from Quant1.0 UI
-// Model: ${modelName}
-// Stop Loss Kind: ${slKind}
-// Take Profit Kind: ${tpKind}
+// Model: ${{modelName}}
+// Stop Loss Kind: ${{slKind}}
+// Take Profit Kind: ${{tpKind}}
 
 buyThreshold = input.float(0.60, "BUY threshold", minval=0.0, maxval=1.0, step=0.01)
 sellThreshold = input.float(0.40, "SELL threshold", minval=0.0, maxval=1.0, step=0.01)
@@ -5214,8 +5214,8 @@ if buySignal and strategy.position_size <= 0
 if sellSignal and strategy.position_size > 0
     strategy.close("Long")
 
-${pineStopLossSnippet(slKind)}
-${pineTakeProfitSnippet(tpKind)}
+${{pineStopLossSnippet(slKind)}}
+${{pineTakeProfitSnippet(tpKind)}}
 if strategy.position_size > 0
     strategy.exit("Risk", "Long", stop=stopPrice, limit=takeProfitPrice)
 `;
