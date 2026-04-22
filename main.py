@@ -3209,6 +3209,8 @@ def create_app() -> "Flask":
         webhook_url = get_app_setting(mode_key, "discord_webhook_url", "")
         provider_notices: list[str] = []
         saved_models = list_saved_models(mode_key)
+        model_configs = load_model_configs(mode_key)
+        model_configs = {name: get_model_config(name, model_configs) for name in saved_models}
         saved_evaluations = list_evaluation_snapshots(mode_key)
         present_html = ""
         run_all_html = ""
