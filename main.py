@@ -4762,13 +4762,17 @@ def create_app() -> "Flask":
                     <option value="time_decay">Time Decay</option>
                   </select>
                 </label>
+                <label id="pineStopLossPctWrap">Stop Loss %:
+                  <input type="number" id="pineStopLossPct" min="0.01" step="0.1" value="2.0" />
+                </label>
                 <label>Take Profit Kind:
                   <select id="pineTakeProfitKind">
                     <option value="none">None</option>
                     <option value="fixed_percentage">Fixed Percentage</option>
-                    <option value="risk_reward_1_5">Risk:Reward 1:1.5</option>
-                    <option value="risk_reward_1_2">Risk:Reward 1:2.0</option>
                   </select>
+                </label>
+                <label id="pineTakeProfitPctWrap">Take Profit %:
+                  <input type="number" id="pineTakeProfitPct" min="0.01" step="0.1" value="1.5" />
                 </label>
                 <label>&nbsp;
                   <button type="button" id="copyPineScriptBtn">Copy PineScript</button>
@@ -5162,6 +5166,10 @@ def create_app() -> "Flask":
               const pineModelSelectEl = document.getElementById("pineModelSelect");
               const pineStopLossKindEl = document.getElementById("pineStopLossKind");
               const pineTakeProfitKindEl = document.getElementById("pineTakeProfitKind");
+              const pineStopLossPctWrapEl = document.getElementById("pineStopLossPctWrap");
+              const pineTakeProfitPctWrapEl = document.getElementById("pineTakeProfitPctWrap");
+              const pineStopLossPctEl = document.getElementById("pineStopLossPct");
+              const pineTakeProfitPctEl = document.getElementById("pineTakeProfitPct");
               const pineScriptPreviewEl = document.getElementById("pineScriptPreview");
               const copyPineScriptBtnEl = document.getElementById("copyPineScriptBtn");
               const copyPineScriptStatusEl = document.getElementById("copyPineScriptStatus");
@@ -5177,15 +5185,36 @@ def create_app() -> "Flask":
 
               function pineTakeProfitSnippet(kind) {{
                 if (kind === "fixed_percentage") return "takeProfitPrice = strategy.position_avg_price * (1 + tpPct / 100.0)";
-                if (kind === "risk_reward_1_5") return "takeProfitPrice = strategy.position_avg_price + (strategy.position_avg_price - stopPrice) * 1.5";
-                if (kind === "risk_reward_1_2") return "takeProfitPrice = strategy.position_avg_price + (strategy.position_avg_price - stopPrice) * 2.0";
                 return "takeProfitPrice = na";
+              }}
+
+              function togglePineRiskInputs() {{
+                if (pineStopLossKindEl && pineStopLossPctWrapEl && pineStopLossPctEl) {{
+                  const needsStopPct = pineStopLossKindEl.value === "fixed_percentage" || pineStopLossKindEl.value === "trailing_stop";
+                  pineStopLossPctWrapEl.style.display = needsStopPct ? "block" : "none";
+                  pineStopLossPctEl.disabled = !needsStopPct;
+                }}
+                if (pineTakeProfitKindEl && pineTakeProfitPctWrapEl && pineTakeProfitPctEl) {{
+                  const needsTpPct = pineTakeProfitKindEl.value === "fixed_percentage";
+                  pineTakeProfitPctWrapEl.style.display = needsTpPct ? "block" : "none";
+                  pineTakeProfitPctEl.disabled = !needsTpPct;
+                }}
               }}
 
               function buildPineScript() {{
                 const modelName = String(pineModelSelectEl?.value || "default_quant_model");
                 const slKind = String(pineStopLossKindEl?.value || "none");
                 const tpKind = String(pineTakeProfitKindEl?.value || "none");
+                const slPctRaw = Number(pineStopLossPctEl?.value || "2.0");
+                const tpPctRaw = Number(pineTakeProfitPctEl?.value || "1.5");
+                const slPct = Number.isFinite(slPctRaw) && slPctRaw > 0 ? slPctRaw : 2.0;
+                const tpPct = Number.isFinite(tpPctRaw) && tpPctRaw > 0 ? tpPctRaw : 1.5;
+                const slInputLine = (slKind === "fixed_percentage" || slKind === "trailing_stop")
+                  ? `slPct = input.float(${{slPct.toFixed(2)}}, "Stop Loss %", minval=0.01, step=0.1)`
+                  : "// Stop Loss % input not needed for selected stop kind";
+                const tpInputLine = tpKind === "fixed_percentage"
+                  ? `tpPct = input.float(${{tpPct.toFixed(2)}}, "Take Profit %", minval=0.01, step=0.1)`
+                  : "// Take Profit % input not needed for selected take-profit kind";
                 const safeTitle = modelName.replace(/[^a-zA-Z0-9_\\- ]/g, "_");
                 return `//@version=5
 strategy("Quant1.0 - ${{safeTitle}}", overlay=true, initial_capital=10000, pyramiding=0)
@@ -5197,8 +5226,8 @@ strategy("Quant1.0 - ${{safeTitle}}", overlay=true, initial_capital=10000, pyram
 
 buyThreshold = input.float(0.60, "BUY threshold", minval=0.0, maxval=1.0, step=0.01)
 sellThreshold = input.float(0.40, "SELL threshold", minval=0.0, maxval=1.0, step=0.01)
-slPct = input.float(2.0, "Stop Loss %", minval=0.01, step=0.1)
-tpPct = input.float(1.5, "Take Profit %", minval=0.01, step=0.1)
+${{slInputLine}}
+${{tpInputLine}}
 atrMult = input.float(1.5, "ATR Multiplier", minval=0.1, step=0.1)
 maxHoldBars = input.int(12, "Max Hold Bars", minval=1)
 
@@ -5243,9 +5272,15 @@ if strategy.position_size > 0
                 }}
               }}
 
-              [pineModelSelectEl, pineStopLossKindEl, pineTakeProfitKindEl].forEach((el) => {{
+              [pineModelSelectEl, pineStopLossKindEl, pineTakeProfitKindEl, pineStopLossPctEl, pineTakeProfitPctEl].forEach((el) => {{
                 if (el) el.addEventListener("change", refreshPineScriptPreview);
+                if (el) el.addEventListener("input", refreshPineScriptPreview);
               }});
+              if (pineStopLossKindEl || pineTakeProfitKindEl) {{
+                togglePineRiskInputs();
+                if (pineStopLossKindEl) pineStopLossKindEl.addEventListener("change", togglePineRiskInputs);
+                if (pineTakeProfitKindEl) pineTakeProfitKindEl.addEventListener("change", togglePineRiskInputs);
+              }}
               if (copyPineScriptBtnEl) copyPineScriptBtnEl.addEventListener("click", copyPineScriptToClipboard);
               refreshPineScriptPreview();
 

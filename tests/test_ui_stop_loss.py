@@ -60,6 +60,13 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn("Stop Price", html)
         self.assertIn("split(/[,\\\\n]/)", html)
         self.assertIn('value="evaluate_historical"', html)
+        self.assertIn('id="pineStopLossPctWrap"', html)
+        self.assertIn('id="pineTakeProfitPctWrap"', html)
+        self.assertIn('id="pineStopLossPct"', html)
+        self.assertIn('id="pineTakeProfitPct"', html)
+        self.assertIn("togglePineRiskInputs", html)
+        self.assertNotIn('option value="risk_reward_1_5"', html)
+        self.assertNotIn('option value="risk_reward_1_2"', html)
 
     def test_manage_models_disables_fixed_stop_input_when_not_fixed_strategy(self):
         response = self.app.get("/manage-models")
