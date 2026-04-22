@@ -3253,6 +3253,33 @@ def create_app() -> "Flask":
                 "legacy",
             )
         }
+        pine_model_exports: Dict[str, Dict[str, object]] = {}
+        for saved_model_name in saved_models:
+            cfg = get_model_config(saved_model_name, model_configs)
+            try:
+                bundle = load_model_bundle(mode_key, saved_model_name)
+            except Exception:
+                continue
+            feature_names = bundle.get("feature_names")
+            means = bundle.get("means")
+            stds = bundle.get("stds")
+            logit_weights = bundle.get("logit_weights")
+            logit_bias = bundle.get("logit_bias")
+            model_type = str(bundle.get("model_type", "linear_logistic"))
+            if not isinstance(feature_names, list) or not isinstance(means, list) or not isinstance(stds, list) or not isinstance(logit_weights, list):
+                continue
+            if not (len(feature_names) == len(means) == len(stds) == len(logit_weights)):
+                continue
+            pine_model_exports[saved_model_name] = {
+                "feature_names": [str(name) for name in feature_names],
+                "means": [float(value) for value in means],
+                "stds": [float(value) if float(value) != 0.0 else 1.0 for value in stds],
+                "logit_weights": [float(value) for value in logit_weights],
+                "logit_bias": float(logit_bias) if isinstance(logit_bias, (int, float)) else 0.0,
+                "buy_threshold": float(cfg.get("buy_threshold", 0.6)),
+                "sell_threshold": float(cfg.get("sell_threshold", 0.4)),
+                "model_type": model_type,
+            }
 
         if request.method == "POST":
             try:
@@ -4971,6 +4998,7 @@ def create_app() -> "Flask":
               const runAllTable = document.getElementById("runAllTable");
               const sortDirections = {{}};
               const featureNameMap = {json.dumps(feature_name_map)};
+              const pineModelExports = {json.dumps(pine_model_exports)};
               const featurePipelineDescriptions = {{
                 vwap_intraday_5m_session: "5m session reset VWAP with EMA 3/9/21 context, VWAP delta-to-mean, ±1/±2 standard-deviation envelopes, price-to-band distances, and envelope ranges.",
                 close_hold_reversion: "Built for market-close entries held 1-2 bars: overshoot/exhaustion cues using RSI/Stoch zones, Bollinger dislocation, and VWAP distance normalized by ATR.",
@@ -5188,6 +5216,100 @@ def create_app() -> "Flask":
                 return "takeProfitPrice = na";
               }}
 
+              function formatPineNumber(value, fallback = "0.0") {{
+                const num = Number(value);
+                if (!Number.isFinite(num)) return fallback;
+                const text = num.toFixed(10);
+                return text.includes(".") ? text.replace(/0+$/g, "").replace(/\.$/g, ".0") : text;
+              }}
+
+              function pineModelScoreSnippet(modelMeta) {{
+                if (!modelMeta || modelMeta.model_type === "dqn") {{
+                  return {{
+                    buyLine: "buyThreshold = input.float(0.60, \\"BUY threshold\\", minval=0.0, maxval=1.0, step=0.01)",
+                    sellLine: "sellThreshold = input.float(0.40, \\"SELL threshold\\", minval=0.0, maxval=1.0, step=0.01)",
+                    scoreBlock: "// Missing linear/logistic weights in this bundle.\\nscore = ta.rsi(close, 14) / 100.0",
+                  }};
+                }}
+                const featureNames = Array.isArray(modelMeta.feature_names) ? modelMeta.feature_names : [];
+                const means = Array.isArray(modelMeta.means) ? modelMeta.means : [];
+                const stds = Array.isArray(modelMeta.stds) ? modelMeta.stds : [];
+                const logitWeights = Array.isArray(modelMeta.logit_weights) ? modelMeta.logit_weights : [];
+                if (!featureNames.length || featureNames.length !== means.length || featureNames.length !== stds.length || featureNames.length !== logitWeights.length) {{
+                  return {{
+                    buyLine: "buyThreshold = input.float(0.60, \\"BUY threshold\\", minval=0.0, maxval=1.0, step=0.01)",
+                    sellLine: "sellThreshold = input.float(0.40, \\"SELL threshold\\", minval=0.0, maxval=1.0, step=0.01)",
+                    scoreBlock: "// Incomplete model metadata for Pine export.\\nscore = ta.rsi(close, 14) / 100.0",
+                  }};
+                }}
+                const expressionMap = {{
+                  stoch_rsi: "ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14)",
+                  stoch_velocity: "ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14) - ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14)[1]",
+                  stoch_low_zone: "math.max(0.2 - ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14), 0.0)",
+                  stoch_high_zone: "math.max(ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14) - 0.8, 0.0)",
+                  macd_hist: "ta.macd(close, 12, 26, 9)[2]",
+                  macd_delta: "ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]",
+                  macd_hist_delta: "ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]",
+                  ret_1: "close / close[1] - 1.0",
+                  ret_3: "close / close[3] - 1.0",
+                  ret_5: "close / close[5] - 1.0",
+                  trend_20: "(close - ta.sma(close, 20)) / ta.sma(close, 20)",
+                  vol_20: "ta.stdev(close / close[1] - 1.0, 20)",
+                  dist_to_bull_fvg: "(close - lastBullGapLow) / close",
+                  dist_to_bear_fvg: "(lastBearGapHigh - close) / close",
+                  inside_bull_fvg: "(close >= lastBullGapLow and close <= lastBullGapHigh) ? 1.0 : 0.0",
+                  inside_bear_fvg: "(close >= lastBearGapLow and close <= lastBearGapHigh) ? 1.0 : 0.0",
+                  oversold_reversal: "(ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14) < 0.2 and (ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]) > 0.0) ? 1.0 : 0.0",
+                  overbought_reversal: "(ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14) > 0.8 and (ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]) < 0.0) ? 1.0 : 0.0",
+                  bull_confluence: "((close >= lastBullGapLow and close <= lastBullGapHigh) and ta.macd(close, 12, 26, 9)[2] > 0.0 and (ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]) > 0.0) ? 1.0 : 0.0",
+                  bear_confluence: "((close >= lastBearGapLow and close <= lastBearGapHigh) and ta.macd(close, 12, 26, 9)[2] < 0.0 and (ta.macd(close, 12, 26, 9)[2] - ta.macd(close, 12, 26, 9)[2][1]) < 0.0) ? 1.0 : 0.0",
+                }};
+                const hasGapFeature = featureNames.some((name) => ["dist_to_bull_fvg", "dist_to_bear_fvg", "inside_bull_fvg", "inside_bear_fvg", "bull_confluence", "bear_confluence"].includes(String(name)));
+                const lines = [];
+                const unsupported = [];
+                if (hasGapFeature) {{
+                  lines.push(
+                    "var float lastBullGapLow = na",
+                    "var float lastBullGapHigh = na",
+                    "var float lastBearGapLow = na",
+                    "var float lastBearGapHigh = na",
+                    "if low > high[1]",
+                    "    lastBullGapLow := high[1]",
+                    "    lastBullGapHigh := low",
+                    "if high < low[1]",
+                    "    lastBearGapLow := high",
+                    "    lastBearGapHigh := low[1]"
+                  );
+                }}
+                featureNames.forEach((name, idx) => {{
+                  const key = String(name);
+                  const expr = expressionMap[key];
+                  if (!expr) {{
+                    unsupported.push(key);
+                    lines.push(`f_${{idx}} = na`);
+                  }} else {{
+                    lines.push(`f_${{idx}} = ${{expr}}`);
+                  }}
+                  const meanValue = formatPineNumber(means[idx], "0.0");
+                  const stdValue = formatPineNumber(stds[idx], "1.0");
+                  lines.push(`z_${{idx}} = (f_${{idx}} - ${{meanValue}}) / ${{stdValue}}`);
+                }});
+                const weightedTerms = logitWeights.map((weight, idx) => `${{formatPineNumber(weight, "0.0")}} * z_${{idx}}`);
+                const biasTerm = formatPineNumber(modelMeta.logit_bias, "0.0");
+                lines.push(`logit = ${{weightedTerms.join(" + ")}} + ${{biasTerm}}`);
+                lines.push("score = 1.0 / (1.0 + math.exp(-logit))");
+                if (unsupported.length > 0) {{
+                  lines.unshift(`// Unsupported features (set manually): ${{unsupported.join(", ")}}`);
+                }}
+                const buyDefault = formatPineNumber(modelMeta.buy_threshold, "0.60");
+                const sellDefault = formatPineNumber(modelMeta.sell_threshold, "0.40");
+                return {{
+                  buyLine: `buyThreshold = input.float(${{buyDefault}}, \\"BUY threshold\\", minval=0.0, maxval=1.0, step=0.01)`,
+                  sellLine: `sellThreshold = input.float(${{sellDefault}}, \\"SELL threshold\\", minval=0.0, maxval=1.0, step=0.01)`,
+                  scoreBlock: lines.join("\\n"),
+                }};
+              }}
+
               function togglePineRiskInputs() {{
                 if (pineStopLossKindEl && pineStopLossPctWrapEl && pineStopLossPctEl) {{
                   const needsStopPct = pineStopLossKindEl.value === "fixed_percentage" || pineStopLossKindEl.value === "trailing_stop";
@@ -5209,6 +5331,8 @@ def create_app() -> "Flask":
                 const tpPctRaw = Number(pineTakeProfitPctEl?.value || "1.5");
                 const slPct = Number.isFinite(slPctRaw) && slPctRaw > 0 ? slPctRaw : 2.0;
                 const tpPct = Number.isFinite(tpPctRaw) && tpPctRaw > 0 ? tpPctRaw : 1.5;
+                const modelMeta = pineModelExports[modelName] || null;
+                const scoreSnippet = pineModelScoreSnippet(modelMeta);
                 const slInputLine = (slKind === "fixed_percentage" || slKind === "trailing_stop")
                   ? `slPct = input.float(${{slPct.toFixed(2)}}, "Stop Loss %", minval=0.01, step=0.1)`
                   : "// Stop Loss % input not needed for selected stop kind";
@@ -5224,15 +5348,15 @@ strategy("Quant1.0 - ${{safeTitle}}", overlay=true, initial_capital=10000, pyram
 // Stop Loss Kind: ${{slKind}}
 // Take Profit Kind: ${{tpKind}}
 
-buyThreshold = input.float(0.60, "BUY threshold", minval=0.0, maxval=1.0, step=0.01)
-sellThreshold = input.float(0.40, "SELL threshold", minval=0.0, maxval=1.0, step=0.01)
+${{scoreSnippet.buyLine}}
+${{scoreSnippet.sellLine}}
 ${{slInputLine}}
 ${{tpInputLine}}
 atrMult = input.float(1.5, "ATR Multiplier", minval=0.1, step=0.1)
 maxHoldBars = input.int(12, "Max Hold Bars", minval=1)
 
-// Replace this proxy score with your real exported model score signal.
-score = ta.rsi(close, 14) / 100.0
+// Scoring section derived from exported model features/weights.
+${{scoreSnippet.scoreBlock}}
 buySignal = score > buyThreshold
 sellSignal = score < sellThreshold
 

@@ -65,6 +65,9 @@ class StopLossUITests(unittest.TestCase):
         self.assertIn('id="pineStopLossPct"', html)
         self.assertIn('id="pineTakeProfitPct"', html)
         self.assertIn("togglePineRiskInputs", html)
+        self.assertIn("pineModelExports", html)
+        self.assertIn("pineModelScoreSnippet", html)
+        self.assertIn("score = 1.0 / (1.0 + math.exp(-logit))", html)
         self.assertNotIn('option value="risk_reward_1_5"', html)
         self.assertNotIn('option value="risk_reward_1_2"', html)
 
